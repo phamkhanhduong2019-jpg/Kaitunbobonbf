@@ -1,54 +1,53 @@
+repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
+
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local LocalPlayer = Players.LocalPlayer
 
-local realGenv = getgenv()
-local bananaFakeGenv = {}
+getgenv().SettingFarm = {
+    ["Hide UI"] = false,
+    ["White Screen"] = false,
+    ["Lock Fps"] = { ["Enabled"] = false, ["FPS"] = 60 },
+    ["Reset Teleport"] = { ["Enabled"] = false },
+    ["Get Items"] = {},
+    ["Get Rare Items"] = {},
+    ["Farm Fragments"] = { ["Enabled"] = false },
+    ["Auto Chat"] = { ["Enabled"] = false },
+    ["Auto Summon Rip Indra"] = false,
+    ["Select Hop"] = {},
+    ["Farm Mastery"] = { ["Melee"] = false, ["Sword"] = false },
+    ["Buy Haki"] = {},
+    ["Sniper Fruit Shop"] = { ["Enabled"] = false },
+    ["Lock Fruit"] = {},
+    ["Webhook"] = { ["Enabled"] = false }
+}
 
-bananaFakeGenv.SettingFarm = setmetatable({}, {
-    __newindex = function(t, k, v)
-        if type(v) == "boolean" then
-            rawset(t, k, false)
-        else
-            rawset(t, k, v)
+local function disableBananaLogic()
+    for k, v in pairs(getgenv()) do
+        if type(v) == "function" and (
+            string.find(k:lower(), "farm") or 
+            string.find(k:lower(), "tween") or 
+            string.find(k:lower(), "teleport") or 
+            string.find(k:lower(), "attack") or
+            string.find(k:lower(), "hop")
+        ) then
+            getgenv()[k] = function() return end
         end
-    end,
-    __index = function(t, k)
-        return false
     end
-})
+end
 
-local gmt = getrawmetatable(game)
-local oldNamecall = gmt.__namecall
-setreadonly(gmt, false)
-
-local isBananaLoading = true
-
-gmt.__namecall = newcclosure(function(self, ...)
-    local method = getnamecallmethod()
-    if isBananaLoading and not checkcaller() then
-        if method == "FireServer" or method == "InvokeServer" then
-            return nil
-        end
-    end
-    return oldNamecall(self, ...)
-end)
-setreadonly(gmt, true)
+disableBananaLogic()
 
 task.spawn(function()
-    realGenv.SettingFarm = bananaFakeGenv.SettingFarm
     pcall(function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
     end)
 end)
 
-task.wait(6)
+task.wait(4)
 
-isBananaLoading = false
-realGenv.SettingFarm = nil
+disableBananaLogic()
 
-repeat task.wait() until game:IsLoaded() and LocalPlayer
-
-realGenv.Configs = {
+getgenv().Configs = {
     ["Auto Collect Berry"] = false,
     ["Auto Evo Race"] = false,
     ["Auto Pull Lever"] = false,
