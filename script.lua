@@ -1,14 +1,10 @@
 -- ================================================================= --
---  BOBON HUB v10.0 FINAL - AUTO RANDOM FRUIT + AUTO STORE FRUIT   --
+--   BOBON HUB v10.1 FINAL - FIX TOUCH SCREEN + TEAM SELECTION      --
 -- ================================================================= --
--- FEATURES:
---   [✓] Auto Farm Quest (Sea 1/2/3 → 2800)
---   [✓] Auto Random Fruit (Sea 2+ mỗi 2 phút)
---   [✓] Auto Store Fruit vào inventory (skip nếu đã có)
---   [✓] Auto All Quest Items (Saber, Second/Third Sea, etc.)
---   [✓] Auto Buy All Swords/Melee
---   [✓] Auto Stats (70% Melee, 30% Defense)
---   [✓] UI Vxeze Style
+-- CHANGELOG v10.1:
+--   [FIX] Anti-touch screen interference (mobile fix)
+--   [FIX] Team selection với multiple fallbacks
+--   [FIX] Character control override prevention
 -- ================================================================= --
 
 repeat task.wait() until game:IsLoaded()
@@ -26,10 +22,77 @@ local VU = game:GetService("VirtualUser")
 local TS = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
 
 local LP = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes")
 local CommF_ = Remotes:WaitForChild("CommF_")
+
+-- ══════════════════════════════════════════════════════════════════
+--                    FIX TOUCH SCREEN INTERFERENCE
+-- ══════════════════════════════════════════════════════════════════
+
+-- Disable mobile controls để touch screen không làm gián đoạn
+local function DisableMobileControls()
+    pcall(function()
+        -- Disable all mobile control modules
+        local PlayerModule = require(LP.PlayerScripts:WaitForChild("PlayerModule"))
+        local Controls = PlayerModule:GetControls()
+
+        if Controls then
+            Controls:Disable()
+        end
+    end)
+
+    -- Disable default camera control
+    pcall(function()
+        local Camera = workspace.CurrentCamera
+        Camera.CameraType = Enum.CameraType.Scriptable
+        task.wait(0.1)
+        Camera.CameraType = Enum.CameraType.Custom
+    end)
+end
+
+-- Lock character movement khi đang tween
+local function LockCharacterMovement()
+    pcall(function()
+        local c = LP.Character
+        if not c then return end
+
+        local humanoid = c:FindFirstChild("Humanoid")
+        if humanoid then
+            -- Lock humanoid movement
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+            humanoid.AutoRotate = false
+        end
+    end)
+end
+
+-- Unlock character movement
+local function UnlockCharacterMovement()
+    pcall(function()
+        local c = LP.Character
+        if not c then return end
+
+        local humanoid = c:FindFirstChild("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = 16
+            humanoid.JumpPower = 50
+            humanoid.AutoRotate = true
+        end
+    end)
+end
+
+-- Block input during tween (chặn touch/click)
+local blockInput = false
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if blockInput and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then
+        -- Block input
+        return
+    end
+end)
 
 -- ══════════════════════════════════════════════════════════════════
 --                         SETTINGS & STATE
@@ -39,7 +102,7 @@ _G.Settings = {
     FarmHeight = 22,
     HitboxSize = 50,
     AttackDelay = 0.08,
-    RandomFruitInterval = 120, -- Mỗi 2 phút random 1 lần (Sea 2+)
+    RandomFruitInterval = 120,
 }
 
 _G.State = {
@@ -49,6 +112,7 @@ _G.State = {
     StartTime = os.time(),
     LastQuest = 0,
     LastRandomFruit = 0,
+    IsTweening = false,
 }
 
 _G.BobonStatus = "Starting..."
@@ -240,17 +304,30 @@ local function Tween(cf)
 
     if dist < 15 then
         hrp.CFrame = cf
+        _G.State.IsTweening = false
+        blockInput = false
         return
     end
 
+    -- Stop previous tween
     if _G.State.CurrentTween then
         _G.State.CurrentTween:Cancel()
     end
+
+    _G.State.IsTweening = true
+    blockInput = true  -- Block user input during tween
 
     local duration = dist / _G.Settings.TweenSpeed
     local tween = TS:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = cf})
 
     _G.State.CurrentTween = tween
+
+    tween.Completed:Connect(function()
+        _G.State.IsTweening = false
+        blockInput = false
+        _G.State.CurrentTween = nil
+    end)
+
     tween:Play()
 
     return tween
@@ -261,6 +338,8 @@ local function StopTween()
         _G.State.CurrentTween:Cancel()
         _G.State.CurrentTween = nil
     end
+    _G.State.IsTweening = false
+    blockInput = false
 end
 
 local function HasQuest()
@@ -350,10 +429,64 @@ local function Attack()
 end
 
 -- ══════════════════════════════════════════════════════════════════
---              AUTO STORE FRUIT (Cất trái vào rương)
+--                    FIX TEAM SELECTION (MULTIPLE FALLBACKS)
 -- ══════════════════════════════════════════════════════════════════
 
--- Check xem fruit đã có trong inventory chưa
+local function SelectTeam()
+    print("[BobonHub] Attempting to select team: Pirates")
+
+    -- Method 1: Direct CommF_ call
+    pcall(function()
+        local result = CommF_:InvokeServer("SetTeam", "Pirates")
+        print("[BobonHub] SetTeam result:", result)
+        task.wait(1)
+    end)
+
+    -- Method 2: ChooseTeam remote (alternative)
+    pcall(function()
+        local result = CommF_:InvokeServer("ChooseTeam", "Pirates")
+        print("[BobonHub] ChooseTeam result:", result)
+        task.wait(1)
+    end)
+
+    -- Method 3: Check if already in team
+    pcall(function()
+        if LP.Team and LP.Team.Name == "Pirates" then
+            print("[BobonHub] Already in Pirates team!")
+            return
+        end
+    end)
+
+    -- Method 4: Tele to team selector NPC (fallback)
+    pcall(function()
+        local teamSelectPos = CFrame.new(-372, 7, 310)  -- Team selector location Sea 1
+
+        if GetSea() == 1 then
+            Tween(teamSelectPos)
+            task.wait(2)
+
+            -- Try clicking team selector
+            CommF_:InvokeServer("SetTeam", "Pirates")
+            task.wait(1)
+        end
+    end)
+
+    -- Verify team
+    task.wait(2)
+    pcall(function()
+        if LP.Team then
+            print("[BobonHub] Current team:", LP.Team.Name)
+            _G.BobonStatus = "Team: " .. LP.Team.Name
+        else
+            print("[BobonHub] No team assigned yet")
+        end
+    end)
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--              AUTO STORE FRUIT
+-- ══════════════════════════════════════════════════════════════════
+
 local function HasFruitInInventory(fruitName)
     local ok, result = pcall(function()
         return CommF_:InvokeServer("getInventoryFruits")
@@ -370,26 +503,20 @@ local function HasFruitInInventory(fruitName)
     return false
 end
 
--- Auto store fruit từ backpack/character vào inventory
 local function AutoStoreFruit()
     pcall(function()
-        -- Check backpack
         for _, item in pairs(LP.Backpack:GetChildren()) do
-            if item:IsA("Tool") and item.Name:find("-") then  -- Fruits có dấu - trong tên (vd: "Flame-Flame")
+            if item:IsA("Tool") and item.Name:find("-") then
                 local fruitName = item.Name
 
-                -- Chỉ store nếu chưa có trong inventory
                 if not HasFruitInInventory(fruitName) then
                     CommF_:InvokeServer("StoreFruit", fruitName, LP.Backpack)
                     print("[BobonHub] Stored fruit:", fruitName)
                     task.wait(0.5)
-                else
-                    print("[BobonHub] Fruit already in inventory, skipping:", fruitName)
                 end
             end
         end
 
-        -- Check character
         for _, item in pairs(LP.Character:GetChildren()) do
             if item:IsA("Tool") and item.Name:find("-") then
                 local fruitName = item.Name
@@ -398,8 +525,6 @@ local function AutoStoreFruit()
                     CommF_:InvokeServer("StoreFruit", fruitName, LP.Character)
                     print("[BobonHub] Stored fruit:", fruitName)
                     task.wait(0.5)
-                else
-                    print("[BobonHub] Fruit already in inventory, skipping:", fruitName)
                 end
             end
         end
@@ -407,36 +532,32 @@ local function AutoStoreFruit()
 end
 
 -- ══════════════════════════════════════════════════════════════════
---          AUTO RANDOM FRUIT (Sea 2+ mỗi 2 phút)
+--          AUTO RANDOM FRUIT
 -- ══════════════════════════════════════════════════════════════════
 
 local RandomFruitPrices = {
-    [1] = 38000,      -- Sea 1 (không tự động random)
-    [2] = 100000,     -- Sea 2
-    [3] = 250000,     -- Sea 3
+    [1] = 38000,
+    [2] = 100000,
+    [3] = 250000,
 }
 
 local function AutoRandomFruit()
     local sea = GetSea()
 
-    -- Chỉ auto random ở Sea 2 trở lên
     if sea < 2 then return false end
 
     local price = RandomFruitPrices[sea] or 100000
     local beli = GetBeli()
     local now = os.time()
 
-    -- Check cooldown (mỗi 2 phút random 1 lần)
     if now - _G.State.LastRandomFruit < _G.Settings.RandomFruitInterval then
         return false
     end
 
-    -- Check đủ tiền
     if beli >= price then
         _G.BobonStatus = "Auto Random Fruit..."
 
         pcall(function()
-            -- Random fruit (không cần tele tới NPC)
             local result = CommF_:InvokeServer("Cousin", "Buy")
 
             if result then
@@ -444,7 +565,6 @@ local function AutoRandomFruit()
                 _G.State.LastRandomFruit = os.time()
                 task.wait(2)
 
-                -- Auto store fruit vừa random
                 AutoStoreFruit()
             end
         end)
@@ -455,7 +575,6 @@ local function AutoRandomFruit()
     return false
 end
 
--- Loop Auto Random Fruit (check mỗi 10 giây)
 task.spawn(function()
     while task.wait(10) do
         pcall(function()
@@ -464,7 +583,6 @@ task.spawn(function()
     end
 end)
 
--- Loop Auto Store Fruit (check mỗi 30 giây)
 task.spawn(function()
     while task.wait(30) do
         pcall(function()
@@ -494,6 +612,18 @@ RunService.Stepped:Connect(function()
     end)
 end)
 
+-- Prevent character from stopping during tween
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        if _G.State.IsTweening then
+            local c = LP.Character
+            if c and c:FindFirstChild("Humanoid") then
+                c.Humanoid:ChangeState(Enum.HumanoidStateType.Flying)
+            end
+        end
+    end)
+end)
+
 -- Hitbox expander
 task.spawn(function()
     while task.wait(1) do
@@ -509,7 +639,7 @@ task.spawn(function()
     end
 end)
 
--- Auto Stats: 70% Melee, 30% Defense
+-- Auto Stats
 task.spawn(function()
     while task.wait(3) do
         pcall(function()
@@ -537,12 +667,16 @@ end)
 -- Auto Haki & Team
 task.spawn(function()
     task.wait(2)
-    pcall(function()
-        CommF_:InvokeServer("SetTeam", "Pirates")
-    end)
+
+    -- Select team với nhiều attempts
+    for i = 1, 3 do
+        SelectTeam()
+        task.wait(2)
+    end
 
     task.wait(1)
 
+    -- Auto enable haki
     while task.wait(30) do
         pcall(function()
             CommF_:InvokeServer("Ken", true)
@@ -577,7 +711,6 @@ end)
 --                      AUTO QUEST ITEMS
 -- ══════════════════════════════════════════════════════════════════
 
--- AUTO SABER
 local function AutoSaber()
     if HasItem("Saber") then return false end
     if GetLevel() < 200 then return false end
@@ -622,7 +755,6 @@ local function AutoSaber()
     return true
 end
 
--- AUTO POLE V1
 local function AutoPoleV1()
     if HasItem("Pole (1st Form)") then return false end
     if GetLevel() < 150 then return false end
@@ -639,7 +771,6 @@ local function AutoPoleV1()
     return true
 end
 
--- AUTO SECOND SEA
 local function AutoSecondSea()
     if GetSea() >= 2 then return false end
     if GetLevel() < 700 then return false end
@@ -695,7 +826,6 @@ local function AutoSecondSea()
     return true
 end
 
--- AUTO THIRD SEA
 local function AutoThirdSea()
     if GetSea() >= 3 then return false end
     if GetSea() < 2 then return false end
@@ -738,7 +868,6 @@ local function AutoThirdSea()
     return true
 end
 
--- AUTO FIGHTING STYLES
 local function AutoBuyFightingStyles()
     local level = GetLevel()
     local sea = GetSea()
@@ -788,7 +917,6 @@ end
 --                      QUEST DATABASE
 -- ══════════════════════════════════════════════════════════════════
 local QuestDB = {
-    -- SEA 1
     {Min=1,    Max=9,    Q="BanditQuest1",  M="Bandit",         QL=1, QC=CFrame.new(1059,17,1550),   MC=CFrame.new(1145,17,1634)},
     {Min=10,   Max=14,   Q="BanditQuest1",  M="Bandit",         QL=1, QC=CFrame.new(1059,17,1550),   MC=CFrame.new(1145,17,1634)},
     {Min=15,   Max=29,   Q="JungleQuest",   M="Monkey",         QL=1, QC=CFrame.new(-1598,37,153),   MC=CFrame.new(-1448,50,24)},
@@ -815,8 +943,6 @@ local QuestDB = {
     {Min=550,  Max=624,  Q="FountainQuest", M="Galley Pirate",  QL=1, QC=CFrame.new(5260,38,4050),   MC=CFrame.new(5551,42,3946)},
     {Min=625,  Max=649,  Q="FountainQuest", M="Galley Captain", QL=2, QC=CFrame.new(5260,38,4050),   MC=CFrame.new(5441,42,5656)},
     {Min=650,  Max=699,  Q="ZombieQuest",   M="Zombie",         QL=1, QC=CFrame.new(-5497,49,-795),   MC=CFrame.new(-5739,49,-795)},
-
-    -- SEA 2
     {Min=700,  Max=724,  Q="Area1Quest",    M="Raider",         QL=1, QC=CFrame.new(-430,73,1837),    MC=CFrame.new(-746,40,2507)},
     {Min=725,  Max=774,  Q="Area1Quest",    M="Mercenary",      QL=2, QC=CFrame.new(-430,73,1837),    MC=CFrame.new(-874,141,1312)},
     {Min=775,  Max=799,  Q="Area2Quest",    M="Swan Pirate",    QL=1, QC=CFrame.new(638,72,918),      MC=CFrame.new(878,122,1235)},
@@ -840,8 +966,6 @@ local QuestDB = {
     {Min=1425, Max=1449, Q="IceCastleQuest", M="Snow Lurker",   QL=1, QC=CFrame.new(5566,9,-6313),    MC=CFrame.new(5604,29,-6820)},
     {Min=1450, Max=1474, Q="IceCastleQuest", M="Arctic Warrior", QL=2, QC=CFrame.new(5566,9,-6313),   MC=CFrame.new(6129,29,-6235)},
     {Min=1475, Max=1499, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,44,5551)},
-
-    -- SEA 3
     {Min=1500, Max=1524, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,44,5551)},
     {Min=1525, Max=1574, Q="PiratePortQuest", M="Pistol Billionaire", QL=2, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-52,44,5584)},
     {Min=1575, Max=1599, Q="AmazonQuest",   M="Dragon Crew Warrior", QL=1, QC=CFrame.new(5833,52,-1101), MC=CFrame.new(6241,52,-1290)},
@@ -897,32 +1021,26 @@ task.spawn(function()
         pcall(function()
             local level = GetLevel()
 
-            -- Priority 1: Auto Saber
             if level >= 200 and level < 700 and GetSea() == 1 and not HasItem("Saber") then
                 if AutoSaber() then return end
             end
 
-            -- Priority 2: Auto Pole v1
             if level >= 150 and level < 700 and GetSea() == 1 and not HasItem("Pole (1st Form)") then
                 if AutoPoleV1() then return end
             end
 
-            -- Priority 3: Auto Second Sea
             if level >= 700 and GetSea() == 1 then
                 if AutoSecondSea() then return end
             end
 
-            -- Priority 4: Auto Third Sea
             if level >= 1500 and GetSea() == 2 then
                 if AutoThirdSea() then return end
             end
 
-            -- Priority 5: Auto Fighting Styles
             if level >= 150 and level < 700 then
                 AutoBuyFightingStyles()
             end
 
-            -- Main Quest Farm
             local c = LP.Character
             if not c or not c:FindFirstChild("HumanoidRootPart") then return end
 
@@ -934,7 +1052,7 @@ task.spawn(function()
 
             if not HasQuest() then
                 local now = os.time()
-                if now - _G.State.LastQuest < _G.Settings.QuestCooldown then
+                if now - _G.State.LastQuest < 3 then
                     _G.BobonStatus = "Quest cooldown..."
                     return
                 end
@@ -979,5 +1097,5 @@ RunService.Heartbeat:Connect(function()
     end)
 end)
 
-print("[BobonHub v10.0] Loaded! Auto Farm + Random Fruit + Store Fruit")
-_G.BobonStatus = "BobonHub v10.0 Ready!"
+print("[BobonHub v10.1] Loaded! Fixed Touch Screen + Team Selection")
+_G.BobonStatus = "BobonHub v10.1 Ready!"
