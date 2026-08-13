@@ -1,5 +1,5 @@
 -- ================================================================= --
---  BOBON HUB v12.0 FINAL - FULL AUTO KAITUN                        --
+--  BOBON HUB v12.0 - FULL AUTO KAITUN                              --
 --  Auto Farm Quest | Auto Items | Auto Fruit | Always Visible UI   --
 -- ================================================================= --
 
@@ -20,7 +20,7 @@ local VU             = game:GetService("VirtualUser")
 local TS             = game:GetService("TweenService")
 local TeleportSvc    = game:GetService("TeleportService")
 local CoreGui        = game:GetService("CoreGui")
-local HttpService    = game:GetService("HttpService")
+local TweenService   = game:GetService("TweenService")
 local Lighting       = game:GetService("Lighting")
 
 local LP      = Players.LocalPlayer
@@ -41,8 +41,6 @@ _G.Settings = {
     HitboxSize           = 60,
     AttackDelay          = 0.05,
     RandomFruitInterval  = 120,
-    FastTravelDistance   = 1000,
-    RespawnWaitTime      = 2,
 }
 
 _G.State = {
@@ -53,17 +51,12 @@ _G.State = {
     LastQuest        = 0,
     LastRandomFruit  = 0,
     IsTweening       = false,
-    IsFastTraveling  = false,
-    TeleportTarget   = nil,
-    IsRespawning     = false,
-    CheckpointSet    = false,
-    LastIsland       = "",
 }
 
 _G.BobonStatus = "Starting..."
 
 -- ══════════════════════════════════════════════════════════════════
---           UI - ALWAYS VISIBLE + FADE-IN ANIMATION
+--           UI - Style đẹp, giữa màn hình, luôn hiển thị
 -- ══════════════════════════════════════════════════════════════════
 
 if CoreGui:FindFirstChild("BobonHubUI") then
@@ -78,162 +71,279 @@ ScreenGui.DisplayOrder    = 10000
 ScreenGui.IgnoreGuiInset  = true
 ScreenGui.Enabled         = true
 
--- Background Overlay
+-- Background Overlay (làm mờ màn hình)
 local Overlay = Instance.new("Frame")
 Overlay.Name                 = "Overlay"
 Overlay.Parent               = ScreenGui
 Overlay.Size                 = UDim2.new(1, 0, 1, 0)
 Overlay.Position             = UDim2.new(0, 0, 0, 0)
-Overlay.BackgroundColor3     = Color3.fromRGB(10, 15, 30)
-Overlay.BackgroundTransparency = 0.6
+Overlay.BackgroundColor3     = Color3.fromRGB(0, 0, 0)
+Overlay.BackgroundTransparency = 1
 Overlay.BorderSizePixel      = 0
 Overlay.ZIndex               = 1
 
--- Main Container
+-- Main Container - trong suốt, không viền
 local Container = Instance.new("Frame")
 Container.Name               = "Container"
 Container.Parent             = ScreenGui
 Container.AnchorPoint        = Vector2.new(0.5, 0.5)
 Container.Position           = UDim2.new(0.5, 0, 0.5, 0)
-Container.Size               = UDim2.new(0, 550, 0, 340)
-Container.BackgroundColor3   = Color3.fromRGB(15, 20, 40)
-Container.BackgroundTransparency = 0.15
-Container.BorderSizePixel    = 2
-Container.BorderColor3       = Color3.fromRGB(80, 200, 255)
-Container.ClipsDescendants   = true
+Container.Size               = UDim2.new(0, 400, 0, 240)
+Container.BackgroundTransparency = 1
+Container.BorderSizePixel    = 0
 Container.ZIndex             = 2
 
--- Title Bar
-local TitleBar = Instance.new("Frame")
-TitleBar.Name = "TitleBar"
-TitleBar.Parent = Container
-TitleBar.Size = UDim2.new(1, 0, 0, 40)
-TitleBar.Position = UDim2.new(0, 0, 0, 0)
-TitleBar.BackgroundColor3 = Color3.fromRGB(80, 200, 255)
-TitleBar.BackgroundTransparency = 0.3
-TitleBar.BorderSizePixel = 0
-TitleBar.ZIndex = 3
+-- ===== 1. BOBON HUB - Title chính =====
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "Title"
+TitleLabel.Parent = Container
+TitleLabel.AnchorPoint = Vector2.new(0.5, 0)
+TitleLabel.Position = UDim2.new(0.5, 0, 0, 5)
+TitleLabel.Size = UDim2.new(1, 0, 0, 50)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "BOBON HUB"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+TitleLabel.TextSize = 42
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Center
+TitleLabel.TextYAlignment = Enum.TextYAlignment.Center
+TitleLabel.TextTransparency = 1
+TitleLabel.TextStrokeTransparency = 0.3
+TitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+TitleLabel.ZIndex = 3
 
-local function CreateLabel(name, text, size, color, yOffset, bold, parent)
-    parent = parent or Container
-    local label = Instance.new("TextLabel")
-    label.Name                = name
-    label.Parent              = parent
-    label.AnchorPoint         = Vector2.new(0.5, 0)
-    label.Position            = UDim2.new(0.5, 0, 0, yOffset)
-    label.Size                = UDim2.new(1, -40, 0, size + 20)
-    label.BackgroundTransparency = 1
-    label.Text                = text
-    label.TextColor3          = color
-    label.TextSize            = size
-    label.Font                = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-    label.TextXAlignment      = Enum.TextXAlignment.Center
-    label.TextYAlignment      = Enum.TextYAlignment.Center
-    label.TextTransparency    = 0
-    label.TextStrokeTransparency = 0.5
-    label.TextStrokeColor3    = Color3.fromRGB(0, 0, 0)
-    label.ZIndex              = 3
-    return label
-end
+-- ===== 2. Subtitle - Kaitun Blox Fruit =====
+local SubtitleLabel = Instance.new("TextLabel")
+SubtitleLabel.Name = "Subtitle"
+SubtitleLabel.Parent = Container
+SubtitleLabel.AnchorPoint = Vector2.new(0.5, 0)
+SubtitleLabel.Position = UDim2.new(0.5, 0, 0, 52)
+SubtitleLabel.Size = UDim2.new(1, 0, 0, 25)
+SubtitleLabel.BackgroundTransparency = 1
+SubtitleLabel.Text = "Kaitun Blox Fruit"
+SubtitleLabel.TextColor3 = Color3.fromRGB(180, 190, 220)
+SubtitleLabel.TextSize = 16
+SubtitleLabel.Font = Enum.Font.Gotham
+SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Center
+SubtitleLabel.TextYAlignment = Enum.TextYAlignment.Center
+SubtitleLabel.TextTransparency = 1
+SubtitleLabel.TextStrokeTransparency = 0.5
+SubtitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+SubtitleLabel.ZIndex = 3
 
-local TitleLabel = CreateLabel("Title", "✦ BOBON HUB ✦", 36, Color3.fromRGB(80, 200, 255), 2, true)
-TitleLabel.TextStrokeTransparency = 0
-TitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 100, 200)
+-- ===== 3. Status - Hiển thị trạng thái nhân vật =====
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Name = "Status"
+StatusLabel.Parent = Container
+StatusLabel.AnchorPoint = Vector2.new(0.5, 0)
+StatusLabel.Position = UDim2.new(0.5, 0, 0, 88)
+StatusLabel.Size = UDim2.new(1, 0, 0, 30)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Status: Starting..."
+StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 150)
+StatusLabel.TextSize = 17
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
+StatusLabel.TextTransparency = 1
+StatusLabel.TextStrokeTransparency = 0.5
+StatusLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+StatusLabel.ZIndex = 3
 
-local SubtitleLabel = CreateLabel("Subtitle", "Blox Fruit Kaitun", 16, Color3.fromRGB(180, 210, 240), 42, false)
+-- ===== 4. Time - Thời gian đã hoạt động =====
+local TimeLabel = Instance.new("TextLabel")
+TimeLabel.Name = "Time"
+TimeLabel.Parent = Container
+TimeLabel.AnchorPoint = Vector2.new(0.5, 0)
+TimeLabel.Position = UDim2.new(0.5, 0, 0, 118)
+TimeLabel.Size = UDim2.new(1, 0, 0, 25)
+TimeLabel.BackgroundTransparency = 1
+TimeLabel.Text = "Time: 00:00:00"
+TimeLabel.TextColor3 = Color3.fromRGB(200, 210, 240)
+TimeLabel.TextSize = 15
+TimeLabel.Font = Enum.Font.Gotham
+TimeLabel.TextXAlignment = Enum.TextXAlignment.Center
+TimeLabel.TextYAlignment = Enum.TextYAlignment.Center
+TimeLabel.TextTransparency = 1
+TimeLabel.TextStrokeTransparency = 0.5
+TimeLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+TimeLabel.ZIndex = 3
 
--- Status Section
-local StatusFrame = Instance.new("Frame")
-StatusFrame.Name = "StatusFrame"
-StatusFrame.Parent = Container
-StatusFrame.Size = UDim2.new(1, -40, 0, 50)
-StatusFrame.Position = UDim2.new(0, 20, 0, 70)
-StatusFrame.BackgroundTransparency = 1
-StatusFrame.ZIndex = 3
-
-local StatusLabel = CreateLabel("Status", "Status: Loading...", 16, Color3.fromRGB(100, 255, 140), 0, false, StatusFrame)
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Size = UDim2.new(1, 0, 0, 25)
-StatusLabel.Position = UDim2.new(0, 0, 0, 0)
-
-local TimeLabel = CreateLabel("Time", "Time: 00:00:00", 15, Color3.fromRGB(200, 215, 240), 28, false, StatusFrame)
-TimeLabel.TextXAlignment = Enum.TextXAlignment.Left
-TimeLabel.Size = UDim2.new(1, 0, 0, 22)
-TimeLabel.Position = UDim2.new(0, 0, 0, 28)
-
--- Earned Section
+-- ===== 5. Earned - Beli và Frag =====
 local EarnedFrame = Instance.new("Frame")
 EarnedFrame.Name = "EarnedFrame"
 EarnedFrame.Parent = Container
 EarnedFrame.AnchorPoint = Vector2.new(0.5, 0)
-EarnedFrame.Position = UDim2.new(0.5, 0, 0, 135)
-EarnedFrame.Size = UDim2.new(1, -40, 0, 45)
-EarnedFrame.BackgroundColor3 = Color3.fromRGB(30, 40, 70)
-EarnedFrame.BackgroundTransparency = 0.5
+EarnedFrame.Position = UDim2.new(0.5, 0, 0, 152)
+EarnedFrame.Size = UDim2.new(0.9, 0, 0, 38)
+EarnedFrame.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+EarnedFrame.BackgroundTransparency = 1
 EarnedFrame.BorderSizePixel = 1
-EarnedFrame.BorderColor3 = Color3.fromRGB(60, 100, 180)
+EarnedFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
+EarnedFrame.BorderTransparency = 0.7
 EarnedFrame.ZIndex = 3
 
-local BeliLabel = CreateLabel("Beli", "💰 Beli: 0", 17, Color3.fromRGB(255, 185, 60), 0, true, EarnedFrame)
-BeliLabel.AnchorPoint = Vector2.new(0, 0.5)
-BeliLabel.Position = UDim2.new(0.05, 0, 0.5, 0)
-BeliLabel.TextXAlignment = Enum.TextXAlignment.Left
-BeliLabel.Size = UDim2.new(0.45, 0, 1, 0)
+-- Beli
+local BeliLabel = Instance.new("TextLabel")
+BeliLabel.Name = "Beli"
+BeliLabel.Parent = EarnedFrame
+BeliLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+BeliLabel.Position = UDim2.new(0.25, 0, 0.5, 0)
+BeliLabel.Size = UDim2.new(0.4, 0, 1, 0)
+BeliLabel.BackgroundTransparency = 1
+BeliLabel.Text = "💰 Beli: 0"
+BeliLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+BeliLabel.TextSize = 16
+BeliLabel.Font = Enum.Font.GothamBold
+BeliLabel.TextXAlignment = Enum.TextXAlignment.Center
+BeliLabel.TextYAlignment = Enum.TextYAlignment.Center
+BeliLabel.TextTransparency = 1
+BeliLabel.ZIndex = 3
 
-local FragLabel = CreateLabel("Frag", "💎 Frag: 0", 17, Color3.fromRGB(80, 170, 255), 0, true, EarnedFrame)
-FragLabel.AnchorPoint = Vector2.new(1, 0.5)
-FragLabel.Position = UDim2.new(0.95, 0, 0.5, 0)
-FragLabel.TextXAlignment = Enum.TextXAlignment.Right
-FragLabel.Size = UDim2.new(0.45, 0, 1, 0)
+-- Frag
+local FragLabel = Instance.new("TextLabel")
+FragLabel.Name = "Frag"
+FragLabel.Parent = EarnedFrame
+FragLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+FragLabel.Position = UDim2.new(0.75, 0, 0.5, 0)
+FragLabel.Size = UDim2.new(0.4, 0, 1, 0)
+FragLabel.BackgroundTransparency = 1
+FragLabel.Text = "💎 Frag: 0"
+FragLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
+FragLabel.TextSize = 16
+FragLabel.Font = Enum.Font.GothamBold
+FragLabel.TextXAlignment = Enum.TextXAlignment.Center
+FragLabel.TextYAlignment = Enum.TextYAlignment.Center
+FragLabel.TextTransparency = 1
+FragLabel.ZIndex = 3
 
--- Kill Counter
-local KillLabel = CreateLabel("Kills", "⚔️ Kills: 0", 15, Color3.fromRGB(255, 120, 120), 195, true)
+-- Divider line trong earned frame
+local Divider = Instance.new("Frame")
+Divider.Name = "Divider"
+Divider.Parent = EarnedFrame
+Divider.AnchorPoint = Vector2.new(0.5, 0.5)
+Divider.Position = UDim2.new(0.5, 0, 0.5, 0)
+Divider.Size = UDim2.new(0, 1, 0.6, 0)
+Divider.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+Divider.BackgroundTransparency = 0.6
+Divider.BorderSizePixel = 0
+Divider.ZIndex = 3
 
--- Bottom Decoration
-local BottomLine = Instance.new("Frame")
-BottomLine.Name = "BottomLine"
-BottomLine.Parent = Container
-BottomLine.Size = UDim2.new(0.8, 0, 0, 2)
-BottomLine.Position = UDim2.new(0.1, 0, 0, 330)
-BottomLine.BackgroundColor3 = Color3.fromRGB(80, 200, 255)
-BottomLine.BackgroundTransparency = 0.5
-BottomLine.BorderSizePixel = 0
-BottomLine.ZIndex = 3
+-- Footer - Version
+local FooterLabel = Instance.new("TextLabel")
+FooterLabel.Name = "Footer"
+FooterLabel.Parent = Container
+FooterLabel.AnchorPoint = Vector2.new(0.5, 0)
+FooterLabel.Position = UDim2.new(0.5, 0, 0, 202)
+FooterLabel.Size = UDim2.new(1, 0, 0, 20)
+FooterLabel.BackgroundTransparency = 1
+FooterLabel.Text = "v12.0 | Auto Farm + Auto Items"
+FooterLabel.TextColor3 = Color3.fromRGB(150, 150, 190)
+FooterLabel.TextSize = 12
+FooterLabel.Font = Enum.Font.Gotham
+FooterLabel.TextXAlignment = Enum.TextXAlignment.Center
+FooterLabel.TextYAlignment = Enum.TextYAlignment.Center
+FooterLabel.TextTransparency = 1
+FooterLabel.TextStrokeTransparency = 0.5
+FooterLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+FooterLabel.ZIndex = 3
 
--- Fade-in animation
-local function FadeIn(obj, duration, bgTransp, textTransp)
-    local props = {}
-    if bgTransp ~= nil then props.BackgroundTransparency = bgTransp end
-    if textTransp ~= nil then props.TextTransparency = textTransp end
-    local t = TS:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
-    t:Play()
-    return t
+-- ══════════════════════════════════════════════════════════════════
+--              HIỆU ỨNG XUẤT HIỆN MENU
+-- ══════════════════════════════════════════════════════════════════
+
+local function CreateFadeAnimation(obj, duration, delay, properties)
+    task.wait(delay or 0)
+    local tweens = {}
+    for prop, value in pairs(properties or {}) do
+        if prop == "TextTransparency" or prop == "BackgroundTransparency" then
+            local t = TweenService:Create(obj, TweenInfo.new(duration or 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                [prop] = value
+            })
+            table.insert(tweens, t)
+        end
+    end
+    for _, t in ipairs(tweens) do
+        t:Play()
+    end
 end
 
+-- Hiệu ứng xuất hiện menu
 task.spawn(function()
-    task.wait(0.3)
-    FadeIn(Overlay, 0.8, 0.6, nil)
-    task.wait(0.3)
-    FadeIn(Container, 0.8, 0.15, nil)
+    -- Fade in overlay
+    local tOverlay = TweenService:Create(Overlay, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.65
+    })
+    tOverlay:Play()
+    
     task.wait(0.2)
-    FadeIn(TitleLabel, 0.5, nil, 0)
+    
+    -- 1. Title BOBON HUB xuất hiện đầu tiên
+    local tTitle = TweenService:Create(TitleLabel, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tTitle:Play()
+    
+    task.wait(0.25)
+    
+    -- 2. Subtitle xuất hiện
+    local tSub = TweenService:Create(SubtitleLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tSub:Play()
+    
+    task.wait(0.2)
+    
+    -- 3. Status xuất hiện
+    local tStatus = TweenService:Create(StatusLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tStatus:Play()
+    
     task.wait(0.15)
-    FadeIn(SubtitleLabel, 0.5, nil, 0)
+    
+    -- 4. Time xuất hiện
+    local tTime = TweenService:Create(TimeLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tTime:Play()
+    
     task.wait(0.15)
-    FadeIn(StatusLabel, 0.4, nil, 0)
-    FadeIn(TimeLabel, 0.4, nil, 0)
-    task.wait(0.15)
-    FadeIn(EarnedFrame, 0.5, 0.5, nil)
+    
+    -- 5. Earned frame xuất hiện
+    local tFrame = TweenService:Create(EarnedFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.85
+    })
+    tFrame:Play()
+    
     task.wait(0.1)
-    FadeIn(BeliLabel, 0.4, nil, 0)
-    FadeIn(FragLabel, 0.4, nil, 0)
-    task.wait(0.1)
-    FadeIn(KillLabel, 0.4, nil, 0)
-    FadeIn(BottomLine, 0.5, 0.5, nil)
+    
+    -- Beli và Frag xuất hiện cùng lúc
+    local tBeli = TweenService:Create(BeliLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tBeli:Play()
+    
+    local tFrag = TweenService:Create(FragLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0
+    })
+    tFrag:Play()
+    
+    task.wait(0.15)
+    
+    -- 6. Footer xuất hiện
+    local tFooter = TweenService:Create(FooterLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TextTransparency = 0.5
+    })
+    tFooter:Play()
+    
     print("[BobonHub] UI Ready!")
 end)
 
--- UI update loop
+-- ══════════════════════════════════════════════════════════════════
+--                    UPDATE LOOP
+-- ══════════════════════════════════════════════════════════════════
+
 local function FormatNum(n)
     local s = tostring(math.floor(n or 0))
     return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
@@ -243,9 +353,13 @@ task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
             local e = os.time() - _G.State.StartTime
-            TimeLabel.Text = string.format("⏱️ Time: %02d:%02d:%02d", math.floor(e/3600), math.floor((e%3600)/60), e%60)
+            TimeLabel.Text = string.format("⏱️ Time: %02d:%02d:%02d", 
+                math.floor(e/3600), 
+                math.floor((e%3600)/60), 
+                e%60
+            )
             StatusLabel.Text = "📌 Status: " .. (_G.BobonStatus or "Idle")
-            KillLabel.Text = "⚔️ Kills: " .. FormatNum(_G.State.KillCount)
+            
             local data = LP:FindFirstChild("Data")
             if data then
                 local beli = data:FindFirstChild("Beli") and data.Beli.Value or 0
@@ -370,234 +484,14 @@ local function FindBoss(bossName)
 end
 
 -- ══════════════════════════════════════════════════════════════════
---              AUTO SET CHECKPOINT (RESPAWN POINT)
--- ══════════════════════════════════════════════════════════════════
-
-local function GetCurrentIsland()
-    local hrp = GetHRP()
-    if not hrp then return "Unknown" end
-    
-    local pos = hrp.Position
-    -- Xác định đảo dựa trên vị trí
-    local islands = {
-        {name = "Jungle", pos = Vector3.new(-1598, 37, 153), range = 500},
-        {name = "Pirate Village", pos = Vector3.new(1059, 17, 1550), range = 500},
-        {name = "Desert", pos = Vector3.new(894, 7, 4391), range = 500},
-        {name = "Snow", pos = Vector3.new(1389, 88, -1298), range = 500},
-        {name = "Marine Base", pos = Vector3.new(-5039, 29, 4324), range = 500},
-        {name = "Prison", pos = Vector3.new(5308, 2, 474), range = 500},
-        {name = "Colosseum", pos = Vector3.new(-1580, 7, 296), range = 500},
-        {name = "Magma", pos = Vector3.new(-5316, 12, 8515), range = 600},
-        {name = "Fishman", pos = Vector3.new(61123, 19, 1569), range = 600},
-        {name = "Sky", pos = Vector3.new(-4722, 845, -1954), range = 600},
-        {name = "Kingdom of Rose", pos = Vector3.new(-427, 73, 1837), range = 500},
-        {name = "Cafe", pos = Vector3.new(634, 73, 918), range = 500},
-        {name = "Graveyard", pos = Vector3.new(-2441, 73, 1891), range = 500},
-        {name = "Haunted Castle", pos = Vector3.new(-5494, 49, -795), range = 500},
-        {name = "Ice", pos = Vector3.new(-6061, 16, -4903), range = 600},
-        {name = "Sea of Treats", pos = Vector3.new(-2104, 38, -10192), range = 700},
-        {name = "Cake Land", pos = Vector3.new(-2022, 38, -12030), range = 500},
-        {name = "Chocolate", pos = Vector3.new(233, 25, -12201), range = 500},
-        {name = "Candy", pos = Vector3.new(-1149, 14, -14453), range = 500},
-    }
-    
-    local nearest = "Unknown"
-    local nearestDist = math.huge
-    
-    for _, island in ipairs(islands) do
-        local dist = (pos - island.pos).Magnitude
-        if dist < island.range and dist < nearestDist then
-            nearest = island.name
-            nearestDist = dist
-        end
-    end
-    
-    return nearest
-end
-
-local function AutoSetCheckpoint()
-    -- Tìm NPC Set Spawn trong workspace
-    local npcs = workspace:FindFirstChild("NPCs")
-    if not npcs then 
-        print("[BobonHub] No NPCs found!")
-        return false 
-    end
-    
-    local spawnNPCs = {}
-    
-    -- Tìm tất cả NPC có tên liên quan đến Spawn/Home
-    for _, npc in pairs(npcs:GetChildren()) do
-        if npc.Name and (
-            string.find(string.lower(npc.Name), "spawn") or 
-            string.find(string.lower(npc.Name), "home") or
-            string.find(string.lower(npc.Name), "respawn") or
-            npc.Name == "SpawnPoint" or
-            npc.Name == "SetHomePoint"
-        ) then
-            table.insert(spawnNPCs, npc)
-        end
-    end
-    
-    -- Nếu không tìm thấy, thử tìm NPC có thể đặt spawn
-    if #spawnNPCs == 0 then
-        for _, npc in pairs(npcs:GetChildren()) do
-            if npc:IsA("Model") and npc:FindFirstChild("Humanoid") then
-                -- Kiểm tra xem NPC có chứa remote để đặt spawn không
-                local clickDetector = npc:FindFirstChild("ClickDetector")
-                if clickDetector then
-                    table.insert(spawnNPCs, npc)
-                end
-            end
-        end
-    end
-    
-    if #spawnNPCs == 0 then
-        print("[BobonHub] No spawn NPC found on this island!")
-        return false
-    end
-    
-    local hrp = GetHRP()
-    if not hrp then return false end
-    
-    -- Tìm NPC gần nhất
-    local closestNPC = nil
-    local closestDist = math.huge
-    
-    for _, npc in ipairs(spawnNPCs) do
-        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
-        if npcHRP then
-            local dist = (npcHRP.Position - hrp.Position).Magnitude
-            if dist < closestDist then
-                closestDist = dist
-                closestNPC = npc
-            end
-        end
-    end
-    
-    if not closestNPC then return false end
-    
-    -- Di chuyển đến NPC
-    local npcHRP = closestNPC:FindFirstChild("HumanoidRootPart")
-    if not npcHRP then return false end
-    
-    print("[BobonHub] Moving to spawn NPC: " .. closestNPC.Name)
-    _G.BobonStatus = "Setting checkpoint..."
-    
-    Tween(CFrame.new(npcHRP.Position + Vector3.new(0, 3, 0)))
-    task.wait(1.5)
-    
-    -- Thử tương tác với NPC để đặt checkpoint
-    local success = false
-    
-    -- Cách 1: Dùng ClickDetector
-    local clickDetector = closestNPC:FindFirstChild("ClickDetector")
-    if clickDetector then
-        pcall(function()
-            fireclickdetector(clickDetector)
-            task.wait(0.5)
-            success = true
-        end)
-    end
-    
-    -- Cách 2: Dùng Remote CommF_
-    if not success then
-        pcall(function()
-            CommF_:InvokeServer("SetHomePoint")
-            task.wait(0.5)
-            success = true
-        end)
-    end
-    
-    -- Cách 3: Dùng Remote khác
-    if not success then
-        pcall(function()
-            CommF_:InvokeServer("SetSpawnPoint")
-            task.wait(0.5)
-            success = true
-        end)
-    end
-    
-    if success then
-        print("[BobonHub] Checkpoint set successfully!")
-        _G.BobonStatus = "Checkpoint set ✓"
-        _G.State.CheckpointSet = true
-        return true
-    else
-        print("[BobonHub] Failed to set checkpoint!")
-        return false
-    end
-end
-
--- ══════════════════════════════════════════════════════════════════
---           RESPAWN AT CHECKPOINT (Game tự respawn)
--- ══════════════════════════════════════════════════════════════════
-
-local function RespawnAtCheckpoint()
-    if _G.State.IsRespawning then return end
-    _G.State.IsRespawning = true
-    _G.BobonStatus = "Respawning at checkpoint..."
-    
-    print("[BobonHub] Respawning at checkpoint...")
-    
-    -- Đợi một chút để đảm bảo
-    task.wait(0.5)
-    
-    -- Tự sát để game respawn tại checkpoint
-    pcall(function()
-        local hum = GetHum()
-        if hum then
-            hum.Health = 0
-        end
-    end)
-    
-    -- Đợi respawn hoàn tất
-    local timeout = os.time() + 10
-    while os.time() < timeout do
-        local char = GetChar()
-        if char and char:FindFirstChild("HumanoidRootPart") then
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp and hrp.Position.Y > 0 then
-                break
-            end
-        end
-        task.wait(0.5)
-    end
-    
-    task.wait(1)
-    _G.State.IsRespawning = false
-    _G.BobonStatus = "Respawned at checkpoint ✓"
-    print("[BobonHub] Respawn complete!")
-end
-
--- ══════════════════════════════════════════════════════════════════
---           IMPROVED TWEEN (Ưu tiên respawn tại checkpoint)
+--                TWEEN - DI CHUYỂN THÔNG THƯỜNG
 -- ══════════════════════════════════════════════════════════════════
 
 local function Tween(cf)
-    if _G.State.IsFastTraveling or _G.State.IsRespawning then
-        task.wait(2)
-        return
-    end
-
     local hrp = GetHRP()
     if not hrp then return end
 
     local dist = (hrp.Position - cf.Position).Magnitude
-
-    -- Nếu quá xa, respawn tại checkpoint thay vì tele
-    if dist > _G.Settings.FastTravelDistance then
-        RespawnAtCheckpoint()
-        task.wait(2)
-        -- Sau khi respawn, thử tween lại
-        local newHRP = GetHRP()
-        if newHRP then
-            local newDist = (newHRP.Position - cf.Position).Magnitude
-            if newDist < dist then
-                -- Đã gần hơn, tween bình thường
-                dist = newDist
-            end
-        end
-    end
 
     if dist < 12 then
         hrp.CFrame = cf
@@ -777,7 +671,6 @@ task.spawn(function()
     end
 end)
 
--- Kill tracker
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -1004,17 +897,8 @@ end)
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
-            if _G.State.IsFastTraveling or _G.State.IsRespawning then return end
-
             local level = GetLevel()
-            
-            -- Kiểm tra và set checkpoint nếu chưa có
-            if not _G.State.CheckpointSet then
-                AutoSetCheckpoint()
-                task.wait(1)
-            end
 
-            -- Auto quest items
             if level >= 200 and level < 700 and GetSea() == 1 and not HasItem("Saber") then
                 if AutoSaber() then return end
             end
@@ -1071,7 +955,6 @@ task.spawn(function()
     end
 end)
 
--- Auto attack
 RunService.Heartbeat:Connect(function()
     pcall(function()
         if not _G.State.CurrentTarget then return end
