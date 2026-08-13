@@ -62,7 +62,7 @@ warn("[Banana Blocker] Da cat " .. cut .. " ket noi moi tu Banana")
 repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
 
 getgenv().Configs = {
-    ["Auto Collect Berry"] = true,
+    ["Auto Collect Berry"] = false,
     ["Auto Evo Race"] = false,
     ["Auto Pull Lever"] = false,
     ["Auto Saber"] = true,
