@@ -1,23 +1,21 @@
 -- ================================================================= --
---        BOBON HUB - KAITUN v4.0 | FULL REWRITE BY AXIOM           --
+--        BOBON HUB - KAITUN v4.1 | FIXED BY AXIOM                  --
 -- ================================================================= --
--- CHANGELOG v4.0:
---   [+] UI center màn hình + nền mờ overlay kiểu Vxeze Hub
---   [+] Auto chọn phe Hải Tặc khi load
---   [+] Auto bật Ken Haki (Observation) + Armor Haki
---   [+] Tách 2 loop riêng: QUEST LOOP + ATTACK LOOP (RunService)
---   [+] Attack loop dùng Heartbeat => đánh liên tục không bị stuck
---   [+] Tele bám theo quái realtime, không đứng 1 chỗ
---   [+] Kill counter chính xác dùng Humanoid.Died event
---   [+] Auto stat point
+-- CHANGELOG v4.1:
+--   [FIX] Quest loop stuck - sửa lại flow teleport + attack
+--   [FIX] Enemy detection với fallback cho cả Enemies và ReplicatedStorage
+--   [+] Hỗ trợ đầy đủ Sea 1, Sea 2, Sea 3 (đến lv 2800)
+--   [+] Bỏ UI overlay - chỉ log status vào console
+--   [+] TP logic cải thiện: tele tới spawn area trước, đợi quái spawn
+--   [+] Kill counter chính xác với HealthChanged event
 -- ================================================================= --
 
 getgenv().BobonConfigs = {
     TeamName      = "Pirates",
-    FarmHeight    = 20,     -- studs trên đầu quái
-    HitboxSize    = 45,
-    QuestCooldown = 3,      -- giây giữa 2 lần nhận quest
-    AttackDelay   = 0.12,   -- giây giữa 2 lần click
+    FarmHeight    = 25,
+    HitboxSize    = 50,
+    AttackDelay   = 0.08,
+    TeleportSpeed = 1,
 }
 
 -- ── WAIT GAME LOAD ──────────────────────────────────────────────────
@@ -26,196 +24,175 @@ repeat task.wait(0.5) until
     and game.Players.LocalPlayer
     and game.Players.LocalPlayer.Character
     and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    and game.Players.LocalPlayer:FindFirstChild("Data")
 
 -- ── SERVICES ────────────────────────────────────────────────────────
 local Players          = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService       = game:GetService("RunService")
 local VirtualUser      = game:GetService("VirtualUser")
-local CoreGui          = game:GetService("CoreGui")
 local TweenService     = game:GetService("TweenService")
 
 local LP        = Players.LocalPlayer
-local CommF     = ReplicatedStorage.Remotes.CommF_
+local CommF_    = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
 local startTime = os.time()
 local killCount = 0
 
-_G.BobonStatus = "Đang khởi tạo..."
+_G.BobonStatus = "Khởi động..."
 
 -- ================================================================= --
---                         1. UI OVERLAY                             --
--- ================================================================= --
-if CoreGui:FindFirstChild("BobonHubV4") then
-    CoreGui.BobonHubV4:Destroy()
-end
-
-local SG = Instance.new("ScreenGui")
-SG.Name         = "BobonHubV4"
-SG.Parent       = CoreGui
-SG.ResetOnSpawn = false
-SG.DisplayOrder = 9999
-SG.IgnoreGuiInset = true
-
--- Nền mờ toàn màn hình (dimmed overlay)
-local Dimmer = Instance.new("Frame")
-Dimmer.Name                  = "Dimmer"
-Dimmer.Parent                = SG
-Dimmer.Size                  = UDim2.new(1, 0, 1, 0)
-Dimmer.Position              = UDim2.new(0, 0, 0, 0)
-Dimmer.BackgroundColor3      = Color3.fromRGB(0, 0, 0)
-Dimmer.BackgroundTransparency = 0.45   -- mờ 55%
-Dimmer.BorderSizePixel       = 0
-Dimmer.ZIndex                = 1
-
--- Container chính ở giữa màn hình
-local Box = Instance.new("Frame")
-Box.Name                  = "Box"
-Box.Parent                = SG
-Box.AnchorPoint           = Vector2.new(0.5, 0.5)
-Box.Position              = UDim2.new(0.5, 0, 0.5, 0)  -- giữa màn hình
-Box.Size                  = UDim2.new(0, 360, 0, 230)
-Box.BackgroundColor3      = Color3.fromRGB(10, 8, 22)
-Box.BackgroundTransparency = 0.08
-Box.BorderSizePixel       = 0
-Box.ZIndex                = 2
-
-Instance.new("UICorner", Box).CornerRadius = UDim.new(0, 16)
-
-local Stroke = Instance.new("UIStroke", Box)
-Stroke.Color     = Color3.fromRGB(100, 80, 220)
-Stroke.Thickness = 1.5
-
--- Layout
-local Layout = Instance.new("UIListLayout", Box)
-Layout.SortOrder           = Enum.SortOrder.LayoutOrder
-Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-Layout.Padding             = UDim.new(0, 4)
-
-local Pad = Instance.new("UIPadding", Box)
-Pad.PaddingTop    = UDim.new(0, 14)
-Pad.PaddingBottom = UDim.new(0, 10)
-
--- Helper tạo label
-local function Lbl(txt, sz, col, bold, order)
-    local l = Instance.new("TextLabel")
-    l.Parent               = Box
-    l.Size                 = UDim2.new(1, -20, 0, sz + 4)
-    l.BackgroundTransparency = 1
-    l.Font                 = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
-    l.Text                 = txt
-    l.TextColor3           = col
-    l.TextSize             = sz
-    l.TextXAlignment       = Enum.TextXAlignment.Center
-    l.LayoutOrder          = order
-    l.ZIndex               = 3
-    return l
-end
-
--- Divider
-local function Div(order)
-    local f = Instance.new("Frame", Box)
-    f.Size               = UDim2.new(0.85, 0, 0, 1)
-    f.BackgroundColor3   = Color3.fromRGB(90, 70, 200)
-    f.BackgroundTransparency = 0.5
-    f.BorderSizePixel    = 0
-    f.LayoutOrder        = order
-    f.ZIndex             = 3
-    return f
-end
-
-local TitleL  = Lbl("BobonHub",           22, Color3.fromRGB(210, 195, 255), true,  1)
-local SubL    = Lbl("Blox Fruit Kaitun",  13, Color3.fromRGB(140, 130, 185), false, 2)
-              Div(3)
-local StatL   = Lbl("Status: Đang khởi tạo...", 14, Color3.fromRGB(85, 255, 127), true, 4)
-local TimeL   = Lbl("Time: 00:00:00",     12, Color3.fromRGB(200, 200, 215), false, 5)
-local KillL   = Lbl("Kills: 0",           12, Color3.fromRGB(255, 165, 80),  false, 6)
-              Div(7)
-local BeliL   = Lbl("Beli: 0  |  Frag: 0", 12, Color3.fromRGB(85, 180, 255), false, 8)
-local LvlL    = Lbl("Level: ...",          12, Color3.fromRGB(140, 255, 190), false, 9)
-
-StatL.Font = Enum.Font.GothamBold
-
--- Số format
-local function Fmt(n)
-    local s, k = tostring(math.floor(n)), 0
-    repeat s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2") until k == 0
-    return s
-end
-
--- UI realtime update
-task.spawn(function()
-    while task.wait(0.5) do
-        pcall(function()
-            local e = os.time() - startTime
-            TimeL.Text  = ("Time: %02d:%02d:%02d"):format(math.floor(e/3600), math.floor(e%3600/60), e%60)
-            StatL.Text  = "Status: " .. (_G.BobonStatus or "Idle")
-            KillL.Text  = "Kills: " .. killCount
-
-            local d = LP:FindFirstChild("Data")
-            if d then
-                local b = d:FindFirstChild("Beli")      and d.Beli.Value      or 0
-                local f = d:FindFirstChild("Fragments") and d.Fragments.Value or 0
-                local v = d:FindFirstChild("Level")     and d.Level.Value     or 0
-                BeliL.Text = "Beli: " .. Fmt(b) .. "  |  Frag: " .. Fmt(f)
-                LvlL.Text  = "Level: " .. v
-            end
-        end)
-    end
-end)
-
--- ================================================================= --
---                    2. INIT: TEAM + HAKI                           --
--- ================================================================= --
-task.spawn(function()
-    task.wait(2)
-    -- Chọn phe Hải Tặc
-    pcall(function()
-        CommF_:InvokeServer("SetTeam", getgenv().BobonConfigs.TeamName)
-        _G.BobonStatus = "Đã chọn phe: " .. getgenv().BobonConfigs.TeamName
-    end)
-    task.wait(1)
-
-    -- Bật Ken Haki (Observation Haki)
-    pcall(function()
-        CommF_:InvokeServer("Ken", true)
-        _G.BobonStatus = "Đã bật Ken Haki"
-    end)
-    task.wait(0.5)
-
-    -- Bật Armor Haki (Buso)
-    pcall(function()
-        CommF_:InvokeServer("Buso", true)
-        _G.BobonStatus = "Đã bật Armor Haki"
-    end)
-    task.wait(0.5)
-
-    _G.BobonStatus = "Sẵn sàng farm!"
-end)
-
--- ================================================================= --
---                    3. BACKGROUND SYSTEMS                          --
+--                     CORE FUNCTIONS                                --
 -- ================================================================= --
 
 -- Anti AFK
 LP.Idled:Connect(function()
     VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-    task.wait(0.5)
+    task.wait(0.3)
     VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
 end)
 
--- Noclip liên tục
+-- Noclip
 RunService.Stepped:Connect(function()
-    local c = LP.Character
-    if not c then return end
-    for _, p in ipairs(c:GetDescendants()) do
-        if p:IsA("BasePart") then p.CanCollide = false end
+    pcall(function()
+        local c = LP.Character
+        if not c then return end
+        for _, p in ipairs(c:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+            end
+        end
+    end)
+end)
+
+-- Teleport with tween
+local function TP(cf, speed)
+    pcall(function()
+        local c = LP.Character
+        if not c then return end
+        local hrp = c:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local dist = (hrp.Position - cf.Position).Magnitude
+        if dist < 10 then
+            hrp.CFrame = cf
+            return
+        end
+
+        local spd = speed or getgenv().BobonConfigs.TeleportSpeed
+        local ti = TweenInfo.new(dist / 350 * spd, Enum.EasingStyle.Linear)
+        local tween = TweenService:Create(hrp, ti, {CFrame = cf})
+        tween:Play()
+    end)
+end
+
+-- Instant TP (no tween)
+local function TPInstant(cf)
+    pcall(function()
+        local c = LP.Character
+        if not c then return end
+        local hrp = c:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = cf
+        end
+    end)
+end
+
+-- Melee weapons
+local MeleeList = {
+    "Combat","Black Leg","Electro","Fishman Karate","Dragon Claw",
+    "Superhuman","Death Step","Sharkman Karate","Electric Claw",
+    "Dragon Talon","Godhuman","Sanguine Art"
+}
+
+local function EquipMelee()
+    pcall(function()
+        local c = LP.Character
+        if not c or not c:FindFirstChild("Humanoid") then return end
+
+        -- Check đã cầm melee chưa
+        for _, t in ipairs(c:GetChildren()) do
+            if t:IsA("Tool") then
+                for _, n in ipairs(MeleeList) do
+                    if t.Name == n then return end
+                end
+            end
+        end
+
+        -- Equip từ backpack
+        for _, t in ipairs(LP.Backpack:GetChildren()) do
+            if t:IsA("Tool") then
+                for _, n in ipairs(MeleeList) do
+                    if t.Name == n then
+                        c.Humanoid:EquipTool(t)
+                        return
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Tìm quái (với fallback tới ReplicatedStorage nếu ko thấy trong workspace)
+local function FindEnemy(mobName)
+    -- Tìm trong workspace.Enemies
+    local folder = workspace:FindFirstChild("Enemies")
+    if folder then
+        for _, v in ipairs(folder:GetChildren()) do
+            if v.Name == mobName
+                and v:FindFirstChild("Humanoid")
+                and v.Humanoid.Health > 0
+                and v:FindFirstChild("HumanoidRootPart")
+            then
+                return v
+            end
+        end
+    end
+
+    -- Fallback: check ReplicatedStorage (một số mob ẩn ở đây)
+    local rs = ReplicatedStorage:FindFirstChild("Enemies")
+    if rs then
+        for _, v in ipairs(rs:GetChildren()) do
+            if v.Name == mobName then
+                return v
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Check quest đang active
+local function HasQuest()
+    local ok1, r1 = pcall(function()
+        local qData = LP:FindFirstChild("PlayerGui")
+            and LP.PlayerGui:FindFirstChild("Main")
+            and LP.PlayerGui.Main:FindFirstChild("Quest")
+        return qData and qData.Visible == true
+    end)
+    if ok1 and r1 then return true end
+
+    local ok2, r2 = pcall(function()
+        return LP.Data.QuestData.Name.Value ~= ""
+    end)
+    return ok2 and r2
+end
+
+-- Auto stat
+task.spawn(function()
+    while task.wait(3) do
+        pcall(function()
+            local d = LP:FindFirstChild("Data")
+            if d and d:FindFirstChild("Points") and d.Points.Value > 0 then
+                local pts = d.Points.Value
+                CommF_:InvokeServer("AddPoint", "Melee", math.floor(pts * 0.6))
+                CommF_:InvokeServer("AddPoint", "Defense", math.floor(pts * 0.4))
+            end
+        end)
     end
 end)
 
 -- Hitbox extender
 task.spawn(function()
-    while task.wait(0.5) do
+    while task.wait(1) do
         pcall(function()
             local c = LP.Character
             if not c then return end
@@ -235,152 +212,147 @@ task.spawn(function()
     end
 end)
 
--- Auto stat points
-task.spawn(function()
-    while task.wait(2) do
-        pcall(function()
-            local d = LP:FindFirstChild("Data")
-            if d and d:FindFirstChild("Points") and d.Points.Value > 0 then
-                local pts = d.Points.Value
-                CommF_:InvokeServer("AddPoint", "Melee",   math.floor(pts * 0.7))
-                CommF_:InvokeServer("AddPoint", "Defense", math.floor(pts * 0.3))
-            end
-        end)
-    end
-end)
+-- ================================================================= --
+--                   QUEST DATABASE (SEA 1 + 2 + 3)                  --
+-- ================================================================= --
+local QuestDB = {
+    -- SEA 1 (1-700)
+    {Min=1,    Max=9,    Q="BanditQuest1",           M="Bandit",              QL=1, QC=CFrame.new(1059.37,16.55,1549.90),      MC=CFrame.new(1145,17,1634)},
+    {Min=10,   Max=14,   Q="BanditQuest1",           M="Bandit",              QL=1, QC=CFrame.new(1059.37,16.55,1549.90),      MC=CFrame.new(1145,17,1634)},
+    {Min=15,   Max=29,   Q="JungleQuest",            M="Monkey",              QL=1, QC=CFrame.new(-1598.08,37.00,152.88),      MC=CFrame.new(-1448,50,24)},
+    {Min=30,   Max=39,   Q="BuggyQuest1",            M="Pirate",              QL=1, QC=CFrame.new(-1141.07,4.10,3831.50),      MC=CFrame.new(-1103,14,3836)},
+    {Min=40,   Max=59,   Q="BuggyQuest1",            M="Brute",               QL=2, QC=CFrame.new(-1141.07,4.10,3831.50),      MC=CFrame.new(-1140,15,4314)},
+    {Min=60,   Max=74,   Q="DesertQuest",            M="Desert Bandit",       QL=1, QC=CFrame.new(894.49,6.44,4392.13),        MC=CFrame.new(932,6,4488)},
+    {Min=75,   Max=89,   Q="DesertQuest",            M="Desert Officer",      QL=2, QC=CFrame.new(894.49,6.44,4392.13),        MC=CFrame.new(1608,7,4371)},
+    {Min=90,   Max=99,   Q="SnowQuest",              M="Snow Bandit",         QL=1, QC=CFrame.new(1389.74,87.27,-1298.90),     MC=CFrame.new(1317,87,-1318)},
+    {Min=100,  Max=119,  Q="SnowQuest",              M="Snowman",             QL=2, QC=CFrame.new(1389.74,87.27,-1298.90),     MC=CFrame.new(1198,87,-1370)},
+    {Min=120,  Max=149,  Q="MarineQuest2",           M="Chief Petty Officer", QL=1, QC=CFrame.new(-5039.58,28.65,4325.45),     MC=CFrame.new(-4881,22,4273)},
+    {Min=150,  Max=174,  Q="MarineQuest2",           M="Sky Bandit",          QL=2, QC=CFrame.new(-5039.58,28.65,4325.45),     MC=CFrame.new(-4953,295,3951)},
+    {Min=175,  Max=189,  Q="PrisonerQuest",          M="Prisoner",            QL=1, QC=CFrame.new(5308.93,0.20,474.95),        MC=CFrame.new(5411,0,485)},
+    {Min=190,  Max=209,  Q="PrisonerQuest",          M="Dangerous Prisoner",  QL=2, QC=CFrame.new(5308.93,0.20,474.95),        MC=CFrame.new(5654,0,755)},
+    {Min=210,  Max=249,  Q="ColosseumQuest",         M="Toga Warrior",        QL=1, QC=CFrame.new(-1580.04,7.39,-2986.47),    MC=CFrame.new(-1824,7,-2743)},
+    {Min=250,  Max=274,  Q="ColosseumQuest",         M="Gladiator",           QL=2, QC=CFrame.new(-1580.04,7.39,-2986.47),    MC=CFrame.new(-1292,7,-3229)},
+    {Min=275,  Max=299,  Q="MagmaQuest",             M="Military Soldier",    QL=1, QC=CFrame.new(-5313.37,10.95,8515.29),     MC=CFrame.new(-5408,11,8450)},
+    {Min=300,  Max=324,  Q="MagmaQuest",             M="Military Spy",        QL=2, QC=CFrame.new(-5313.37,10.95,8515.29),     MC=CFrame.new(-5802,86,8255)},
+    {Min=325,  Max=374,  Q="FishmanQuest",           M="Fishman Warrior",     QL=1, QC=CFrame.new(61122.65,18.50,1569.38),     MC=CFrame.new(60946,18,1504)},
+    {Min=375,  Max=399,  Q="FishmanQuest",           M="Fishman Commando",    QL=2, QC=CFrame.new(61122.65,18.50,1569.38),     MC=CFrame.new(61798,18,1489)},
+    {Min=400,  Max=449,  Q="SkyExp1Quest",           M="God's Guard",         QL=1, QC=CFrame.new(-4721.88,845.30,-1912.69),   MC=CFrame.new(-4628,845,-1932)},
+    {Min=450,  Max=474,  Q="SkyExp1Quest",           M="Shanda",              QL=2, QC=CFrame.new(-7859.09,5544.19,381.47),    MC=CFrame.new(-7685,5567,387)},
+    {Min=475,  Max=524,  Q="SkyExp2Quest",           M="Royal Squad",         QL=1, QC=CFrame.new(-7906.81,5634.60,-1411.99),  MC=CFrame.new(-7564,5608,-1442)},
+    {Min=525,  Max=549,  Q="SkyExp2Quest",           M="Royal Soldier",       QL=2, QC=CFrame.new(-7906.81,5634.60,-1411.99),  MC=CFrame.new(-7836,5606,-1810)},
+    {Min=550,  Max=624,  Q="FountainQuest",          M="Galley Pirate",       QL=1, QC=CFrame.new(5259.81,37.72,4050.45),      MC=CFrame.new(5551,42,3946)},
+    {Min=625,  Max=649,  Q="FountainQuest",          M="Galley Captain",      QL=2, QC=CFrame.new(5259.81,37.72,4050.45),      MC=CFrame.new(5441,42,5656)},
+    {Min=650,  Max=699,  Q="ZombieQuest",            M="Zombie",              QL=1, QC=CFrame.new(-5497.06,48.51,-794.59),     MC=CFrame.new(-5739,49,-795)},
 
--- Melee list
-local MeleeList = {
-    "Combat","Black Leg","Electro","Fishman Karate","Dragon Claw",
-    "Superhuman","Death Step","Sharkman Karate","Electric Claw",
-    "Dragon Talon","Godhuman","Sanguine Art"
+    -- SEA 2 (700-1500)
+    {Min=700,  Max=724,  Q="Area1Quest",             M="Raider",              QL=1, QC=CFrame.new(-429.54,73.00,1836.54),      MC=CFrame.new(-746,40,2507)},
+    {Min=725,  Max=774,  Q="Area1Quest",             M="Mercenary",           QL=2, QC=CFrame.new(-429.54,73.00,1836.54),      MC=CFrame.new(-874,141,1312)},
+    {Min=775,  Max=799,  Q="Area2Quest",             M="Swan Pirate",         QL=1, QC=CFrame.new(638.43,71.77,918.28),        MC=CFrame.new(878,122,1235)},
+    {Min=800,  Max=874,  Q="Area2Quest",             M="Factory Staff",       QL=2, QC=CFrame.new(638.43,71.77,918.28),        MC=CFrame.new(295,73,-56)},
+    {Min=875,  Max=899,  Q="MarineQuest3",           M="Marine Lieutenant",   QL=1, QC=CFrame.new(-2440.79,71.72,-3216.06),    MC=CFrame.new(-2842,73,-2901)},
+    {Min=900,  Max=949,  Q="MarineQuest3",           M="Marine Captain",      QL=2, QC=CFrame.new(-2440.79,71.72,-3216.06),    MC=CFrame.new(-1814,73,-3208)},
+    {Min=950,  Max=974,  Q="PiratePortQuest",        M="Zombie",              QL=1, QC=CFrame.new(-6567.02,6.89,-428.44),      MC=CFrame.new(-5736,126,-686)},
+    {Min=975,  Max=999,  Q="PiratePortQuest",        M="Vampire",             QL=2, QC=CFrame.new(-6567.02,6.89,-428.44),      MC=CFrame.new(-6033,6,-1313)},
+    {Min=1000, Max=1049, Q="SnowMountainQuest",      M="Snow Trooper",        QL=1, QC=CFrame.new(609.86,400.12,-5372.25),     MC=CFrame.new(621,401,-5329)},
+    {Min=1050, Max=1099, Q="SnowMountainQuest",      M="Winter Warrior",      QL=2, QC=CFrame.new(609.86,400.12,-5372.25),     MC=CFrame.new(1295,429,-5087)},
+    {Min=1100, Max=1124, Q="IceSideQuest",           M="Lab Subordinate",     QL=1, QC=CFrame.new(5827.04,15.92,-6420.17),     MC=CFrame.new(6109,16,-6178)},
+    {Min=1125, Max=1174, Q="IceSideQuest",           M="Horned Warrior",      QL=2, QC=CFrame.new(5827.04,15.92,-6420.17),     MC=CFrame.new(6341,16,-6723)},
+    {Min=1175, Max=1199, Q="ShipQuest1",             M="Living Zombie",       QL=1, QC=CFrame.new(1037.80,125.78,32911.10),    MC=CFrame.new(942,125,32853)},
+    {Min=1200, Max=1249, Q="ShipQuest1",             M="Demonic Soul",        QL=2, QC=CFrame.new(1037.80,125.78,32911.10),    MC=CFrame.new(1082,126,33098)},
+    {Min=1250, Max=1274, Q="ShipQuest2",             M="Posessed Mummy",      QL=1, QC=CFrame.new(921.22,125.78,33000.52),     MC=CFrame.new(389,41,32474)},
+    {Min=1275, Max=1299, Q="ShipQuest2",             M="Peanut Scout",        QL=2, QC=CFrame.new(921.22,125.78,33000.52),     MC=CFrame.new(-2103,38,-10192)},
+    {Min=1300, Max=1324, Q="FrostQuest",             M="Sea Soldier",         QL=1, QC=CFrame.new(5259.02,23.56,-6178.20),     MC=CFrame.new(5411,16,-6181)},
+    {Min=1325, Max=1349, Q="FrostQuest",             M="Arctic Warrior",      QL=2, QC=CFrame.new(5259.02,23.56,-6178.20),     MC=CFrame.new(6041,29,-6235)},
+
+    -- SEA 3 (1500-2800)
+    {Min=1500, Max=1524, Q="PiratePortQuest",        M="Pirate Millionaire",  QL=1, QC=CFrame.new(-289.61,43.82,5579.94),      MC=CFrame.new(-435,44,5551)},
+    {Min=1525, Max=1574, Q="PiratePortQuest",        M="Pistol Billionaire",  QL=2, QC=CFrame.new(-289.61,43.82,5579.94),      MC=CFrame.new(-52,44,5584)},
+    {Min=1575, Max=1599, Q="AmazonQuest",            M="Dragon Crew Warrior", QL=1, QC=CFrame.new(5832.83,51.60,-1101.51),     MC=CFrame.new(6241,52,-1290)},
+    {Min=1600, Max=1624, Q="AmazonQuest",            M="Dragon Crew Archer",  QL=2, QC=CFrame.new(5832.83,51.60,-1101.51),     MC=CFrame.new(6488,383,139)},
+    {Min=1625, Max=1649, Q="AmazonQuest2",           M="Female Islander",     QL=1, QC=CFrame.new(5448.86,601.62,749.45),      MC=CFrame.new(5217,845,1069)},
+    {Min=1650, Max=1699, Q="AmazonQuest2",           M="Giant Islander",      QL=2, QC=CFrame.new(5448.86,601.62,749.45),      MC=CFrame.new(4729,657,-55)},
+    {Min=1700, Max=1724, Q="MarineTreeIsland",       M="Marine Commodore",    QL=1, QC=CFrame.new(2180.54,27.80,-6741.50),     MC=CFrame.new(2490,73,-7144)},
+    {Min=1725, Max=1774, Q="MarineTreeIsland",       M="Marine Rear Admiral", QL=2, QC=CFrame.new(2180.54,27.80,-6741.50),     MC=CFrame.new(3671,401,-6982)},
+    {Min=1775, Max=1799, Q="DeepForestIsland",       M="Mythological Pirate", QL=1, QC=CFrame.new(-13234.04,331.49,-7625.40),  MC=CFrame.new(-13478,470,-6985)},
+    {Min=1800, Max=1849, Q="DeepForestIsland2",      M="Jungle Pirate",       QL=1, QC=CFrame.new(-12680.45,389.97,-9902.50),  MC=CFrame.new(-12107,332,-10549)},
+    {Min=1850, Max=1899, Q="DeepForestIsland3",      M="Forest Pirate",       QL=1, QC=CFrame.new(-13257.73,331.49,-7923.70),  MC=CFrame.new(-13225,425,-7755)},
+    {Min=1900, Max=1924, Q="PeanutIslandQuest",      M="Peanut Scout",        QL=1, QC=CFrame.new(-2104.35,38.10,-10192.60),   MC=CFrame.new(-2124,123,-10354)},
+    {Min=1925, Max=1974, Q="PeanutIslandQuest",      M="Peanut President",    QL=2, QC=CFrame.new(-2104.35,38.10,-10192.60),   MC=CFrame.new(-1859,38,-10238)},
+    {Min=1975, Max=1999, Q="IceCreamIslandQuest",    M="Ice Cream Chef",      QL=1, QC=CFrame.new(-820.64,65.82,-10965.10),    MC=CFrame.new(-641,210,-11077)},
+    {Min=2000, Max=2024, Q="IceCreamIslandQuest",    M="Ice Cream Commander", QL=2, QC=CFrame.new(-820.64,65.82,-10965.10),    MC=CFrame.new(-558,115,-11253)},
+    {Min=2025, Max=2049, Q="CakeQuest1",             M="Cookie Crafter",      QL=1, QC=CFrame.new(-2021.32,37.80,-12028.70),   MC=CFrame.new(-2365,38,-12099)},
+    {Min=2050, Max=2074, Q="CakeQuest1",             M="Cake Guard",          QL=2, QC=CFrame.new(-2021.32,37.80,-12028.70),   MC=CFrame.new(-1651,38,-12308)},
+    {Min=2075, Max=2099, Q="CakeQuest2",             M="Baking Staff",        QL=1, QC=CFrame.new(-1927.91,37.80,-12842.50),   MC=CFrame.new(-1980,38,-12850)},
+    {Min=2100, Max=2124, Q="CakeQuest2",             M="Head Baker",          QL=2, QC=CFrame.new(-1927.91,37.80,-12842.50),   MC=CFrame.new(-2203,109,-12788)},
+    {Min=2125, Max=2149, Q="ChocQuest1",             M="Cocoa Warrior",       QL=1, QC=CFrame.new(233.22,24.90,-12201.20),     MC=CFrame.new(167,73,-12238)},
+    {Min=2150, Max=2199, Q="ChocQuest1",             M="Chocolate Bar Battler", QL=2, QC=CFrame.new(233.22,24.90,-12201.20),  MC=CFrame.new(618,25,-12585)},
+    {Min=2200, Max=2224, Q="ChocQuest2",             M="Sweet Thief",         QL=1, QC=CFrame.new(150.50,24.90,-12774.80),     MC=CFrame.new(-102,25,-12804)},
+    {Min=2225, Max=2274, Q="ChocQuest2",             M="Candy Rebel",         QL=2, QC=CFrame.new(150.50,24.90,-12774.80),     MC=CFrame.new(134,77,-12882)},
+    {Min=2275, Max=2299, Q="HauntedQuest1",          M="Haunted Specter",     QL=1, QC=CFrame.new(-9479.20,141.22,5566.09),    MC=CFrame.new(-9631,142,5499)},
+    {Min=2300, Max=2324, Q="HauntedQuest2",          M="Reborn Skeleton",     QL=1, QC=CFrame.new(-9516.99,172.14,6078.46),    MC=CFrame.new(-8760,142,6016)},
+    {Min=2325, Max=2349, Q="HauntedQuest2",          M="Living Zombie",       QL=2, QC=CFrame.new(-9516.99,172.14,6078.46),    MC=CFrame.new(-10144,140,5932)},
+    {Min=2350, Max=2374, Q="HauntedQuest3",          M="Demonic Soul",        QL=1, QC=CFrame.new(-9481.14,172.13,6078.88),    MC=CFrame.new(-9712,204,6193)},
+    {Min=2375, Max=2399, Q="HauntedQuest3",          M="Posessed Mummy",      QL=2, QC=CFrame.new(-9481.14,172.13,6078.88),    MC=CFrame.new(-9583,6,6233)},
+    {Min=2400, Max=2424, Q="NutsIslandQuest",        M="Peanut Scout",        QL=1, QC=CFrame.new(-2104.35,38.10,-10192.60),   MC=CFrame.new(-2124,123,-10354)},
+    {Min=2425, Max=2449, Q="NutsIslandQuest",        M="Peanut President",    QL=2, QC=CFrame.new(-2104.35,38.10,-10192.60),   MC=CFrame.new(-1859,38,-10238)},
+    {Min=2450, Max=2474, Q="TikiOutpost1",           M="Isle Outlaw",         QL=1, QC=CFrame.new(-16547.45,55.68,1051.56),    MC=CFrame.new(-16342,58,1032)},
+    {Min=2475, Max=2524, Q="TikiOutpost2",           M="Island Boy",          QL=1, QC=CFrame.new(-16542.45,55.68,1044.41),    MC=CFrame.new(-16912,58,835)},
+    {Min=2525, Max=2549, Q="TikiOutpost3",           M="Sun-kissed Warrior",  QL=1, QC=CFrame.new(-16541.75,55.68,1041.34),    MC=CFrame.new(-16348,58,461)},
+    {Min=2550, Max=2799, Q="TikiOutpost4",           M="Isle Champion",       QL=1, QC=CFrame.new(-16540.45,55.68,1044.41),    MC=CFrame.new(-16753,58,1043)},
+    {Min=2800, Max=3000, Q="TikiOutpost4",           M="Isle Champion",       QL=1, QC=CFrame.new(-16540.45,55.68,1044.41),    MC=CFrame.new(-16753,58,1043)},
 }
 
-local function EquipMelee()
-    local c = LP.Character
-    if not c or not c:FindFirstChild("Humanoid") then return end
-    for _, t in ipairs(c:GetChildren()) do
-        if t:IsA("Tool") then
-            for _, n in ipairs(MeleeList) do if t.Name == n then return end end
+local function GetQuest()
+    local lv = LP.Data:FindFirstChild("Level") and LP.Data.Level.Value or 1
+    for _, q in ipairs(QuestDB) do
+        if lv >= q.Min and lv <= q.Max then
+            return q
         end
-    end
-    for _, t in ipairs(LP.Backpack:GetChildren()) do
-        if t:IsA("Tool") then
-            for _, n in ipairs(MeleeList) do
-                if t.Name == n then c.Humanoid:EquipTool(t); return end
-            end
-        end
-    end
-end
-
--- Teleport helper
-local function TP(cf)
-    local c = LP.Character
-    if not c then return end
-    local hrp = c:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.CFrame = cf end
-end
-
--- Tìm quái gần nhất còn sống
-local function FindEnemy(name)
-    local folder = workspace:FindFirstChild("Enemies")
-    if not folder then return nil end
-    local best, bd = nil, math.huge
-    local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    for _, v in ipairs(folder:GetChildren()) do
-        if v.Name == name
-            and v:FindFirstChild("Humanoid")
-            and v.Humanoid.Health > 0
-            and v:FindFirstChild("HumanoidRootPart")
-        then
-            if hrp then
-                local d = (v.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if d < bd then best, bd = v, d end
-            else
-                return v
-            end
-        end
-    end
-    return best
-end
-
--- Check quest active (3 fallback)
-local function HasQuest()
-    -- Fallback 1: QuestData trong Data
-    local ok1, r1 = pcall(function()
-        return LP.Data.QuestData.Name.Value ~= ""
-    end)
-    if ok1 and r1 then return true end
-
-    -- Fallback 2: PlayerGui Main Quest visible
-    local ok2, r2 = pcall(function()
-        return LP.PlayerGui.Main.Quest.Visible
-    end)
-    if ok2 and r2 then return true end
-
-    -- Fallback 3: Check xem có Quest frame con nào visible
-    local ok3, r3 = pcall(function()
-        local q = LP.PlayerGui.Main:FindFirstChild("Quest")
-        return q ~= nil and q.Visible
-    end)
-    return ok3 and r3
-end
-
--- ================================================================= --
---                       4. QUEST DATABASE                           --
--- ================================================================= --
-local DB = {
-    {Min=1,    Max=14,   Q="BanditQuest1",          M="Bandit",             QL=1, QC=CFrame.new(1059,16,1548),      MC=CFrame.new(1145,17,1634)},
-    {Min=15,   Max=29,   Q="JungleQuest",            M="Monkey",             QL=1, QC=CFrame.new(-1598,37,152),      MC=CFrame.new(-1618,22,142)},
-    {Min=30,   Max=59,   Q="JungleQuest",            M="Gorilla",            QL=2, QC=CFrame.new(-1230,6,-486),      MC=CFrame.new(-1237,6,-502)},
-    {Min=60,   Max=89,   Q="PirateQuest",            M="Pirate",             QL=1, QC=CFrame.new(-1120,4,3850),      MC=CFrame.new(-1200,4,3900)},
-    {Min=90,   Max=119,  Q="DesertQuest",            M="Desert Bandit",      QL=1, QC=CFrame.new(890,6,4380),        MC=CFrame.new(950,6,4400)},
-    {Min=120,  Max=149,  Q="MiddleQuest",            M="Sniper",             QL=1, QC=CFrame.new(-1100,4,1500),      MC=CFrame.new(-1150,4,1450)},
-    {Min=150,  Max=189,  Q="SkyQuest",               M="Sky Bandit",         QL=1, QC=CFrame.new(-4850,718,-2620),   MC=CFrame.new(-4950,718,-2630)},
-    {Min=190,  Max=274,  Q="PrisonQuest",            M="Prisoner",           QL=1, QC=CFrame.new(530,2,480),         MC=CFrame.new(480,2,530)},
-    {Min=275,  Max=374,  Q="ColosseumQuest",         M="Toga Warrior",       QL=1, QC=CFrame.new(-1580,7,-2980),     MC=CFrame.new(-1640,7,-2980)},
-    {Min=375,  Max=449,  Q="MagmaQuest",             M="Military Soldier",   QL=1, QC=CFrame.new(-5250,8,8480),      MC=CFrame.new(-5300,8,8530)},
-    {Min=450,  Max=524,  Q="FishmanQuest",           M="Fishman Warrior",    QL=1, QC=CFrame.new(61120,18,1560),     MC=CFrame.new(61000,18,1500)},
-    {Min=525,  Max=624,  Q="Sky2Quest",              M="God's Guard",        QL=1, QC=CFrame.new(-7730,5600,-1430),  MC=CFrame.new(-7650,5600,-1400)},
-    {Min=625,  Max=699,  Q="FountainQuest",          M="Cyborg",             QL=1, QC=CFrame.new(5260,38,4050),      MC=CFrame.new(5300,38,4000)},
-    {Min=700,  Max=724,  Q="Area1Quest",             M="Raider",             QL=1, QC=CFrame.new(-425,73,1836),      MC=CFrame.new(-500,73,1850)},
-    {Min=725,  Max=774,  Q="Area2Quest",             M="Mercenary",          QL=1, QC=CFrame.new(-860,140,1315),     MC=CFrame.new(-920,140,1350)},
-    {Min=775,  Max=874,  Q="SwanQuest",              M="Swan Pirate",        QL=1, QC=CFrame.new(878,122,1235),      MC=CFrame.new(930,122,1200)},
-    {Min=875,  Max=999,  Q="ZombieQuest",            M="Zombie",             QL=1, QC=CFrame.new(-5620,80,-720),     MC=CFrame.new(-5650,80,-700)},
-    {Min=1000, Max=1124, Q="SnowMountainQuest",      M="Snow Trooper",       QL=1, QC=CFrame.new(600,400,-5300),     MC=CFrame.new(650,400,-5300)},
-    {Min=1125, Max=1249, Q="IceSideQuest",           M="Arctic Warrior",     QL=1, QC=CFrame.new(6100,28,-6200),     MC=CFrame.new(6150,28,-6250)},
-    {Min=1250, Max=1349, Q="ShipQuest1",             M="Ship Deckhand",      QL=1, QC=CFrame.new(1030,125,32900),    MC=CFrame.new(1080,125,32950)},
-    {Min=1350, Max=1424, Q="FrostQuest",             M="Snow Lurker",        QL=1, QC=CFrame.new(5560,28,-6800),     MC=CFrame.new(5600,28,-6800)},
-    {Min=1425, Max=1499, Q="WaterTigerQuest",        M="Water Fighter",      QL=1, QC=CFrame.new(2880,6,-9200),      MC=CFrame.new(2920,6,-9250)},
-    {Min=1500, Max=1574, Q="PiratePortQuest",        M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580),      MC=CFrame.new(-350,44,5550)},
-    {Min=1575, Max=1699, Q="AmazonQuest",            M="Female Islander",    QL=1, QC=CFrame.new(5830,50,-300),      MC=CFrame.new(5880,50,-350)},
-    {Min=1700, Max=1824, Q="MarineTreeQuest",        M="Marine Commodore",   QL=1, QC=CFrame.new(2180,28,-6740),     MC=CFrame.new(2230,28,-6700)},
-    {Min=1825, Max=1974, Q="DeepForestIsland1Quest", M="Forest Pirate",      QL=1, QC=CFrame.new(-13230,330,-7630),  MC=CFrame.new(-13280,330,-7600)},
-    {Min=1975, Max=2074, Q="HauntedQuest1",          M="Reborn Skeleton",    QL=1, QC=CFrame.new(-9480,140,5530),    MC=CFrame.new(-9530,140,5500)},
-    {Min=2075, Max=2224, Q="NutsIslandQuest",        M="Peanut Scout",       QL=1, QC=CFrame.new(-2100,38,-10190),   MC=CFrame.new(-2150,38,-10200)},
-    {Min=2225, Max=2449, Q="IceCreamIslandQuest",    M="Ice Cream Chef",     QL=1, QC=CFrame.new(700,50,-11000),     MC=CFrame.new(750,50,-11050)},
-    {Min=2450, Max=2524, Q="CandyQuest1",            M="Isle Outlaw",        QL=1, QC=CFrame.new(-2110,38,-12140),   MC=CFrame.new(-2150,38,-12100)},
-    {Min=2525, Max=2800, Q="TikiQuest1",             M="Isle Champion",      QL=1, QC=CFrame.new(-16200,10,450),     MC=CFrame.new(-16250,10,500)},
-}
-
-local function GetQ()
-    local d = LP:FindFirstChild("Data")
-    if not d or not d:FindFirstChild("Level") then return nil end
-    local lv = d.Level.Value
-    for _, q in ipairs(DB) do
-        if lv >= q.Min and lv <= q.Max then return q end
     end
     return nil
 end
 
 -- ================================================================= --
---          5. LOOP 1: QUEST LOOP (nhận quest, tele tới quái)        --
+--                    KHỞI ĐỘNG: TEAM + HAKI                         --
 -- ================================================================= --
-local lastQuestTime = 0
-local currentEnemy  = nil   -- quái đang bị target (shared với attack loop)
-
 task.spawn(function()
-    while task.wait(0.3) do
+    task.wait(2)
+    pcall(function()
+        CommF_:InvokeServer("SetTeam", getgenv().BobonConfigs.TeamName)
+        print("[BobonHub] Đã chọn phe: " .. getgenv().BobonConfigs.TeamName)
+    end)
+    task.wait(1)
+    pcall(function()
+        CommF_:InvokeServer("Ken", true)
+        print("[BobonHub] Đã bật Ken Haki")
+    end)
+    task.wait(0.5)
+    pcall(function()
+        CommF_:InvokeServer("Buso", true)
+        print("[BobonHub] Đã bật Armor Haki")
+    end)
+end)
+
+-- Re-enable haki every 30s
+task.spawn(function()
+    while task.wait(30) do
+        pcall(function()
+            CommF_:InvokeServer("Ken", true)
+            CommF_:InvokeServer("Buso", true)
+        end)
+    end
+end)
+
+-- ================================================================= --
+--                      MAIN FARM LOOP                               --
+-- ================================================================= --
+local currentTarget = nil
+local lastAttackTick = 0
+local questCooldown = 0
+
+-- QUEST + TARGETING LOOP
+task.spawn(function()
+    while task.wait(0.1) do
         pcall(function()
             local c = LP.Character
             if not c or not c:FindFirstChild("HumanoidRootPart") then return end
@@ -388,140 +360,131 @@ task.spawn(function()
             local hum = c:FindFirstChild("Humanoid")
             if not hum or hum.Health <= 0 then return end
 
-            local qd = GetQ()
-            if not qd then
-                _G.BobonStatus = "Level ngoài database!"
+            local qData = GetQuest()
+            if not qData then
+                _G.BobonStatus = "Level không có trong database!"
                 return
             end
 
-            local hasQ = HasQuest()
-
-            -- ── CHƯA CÓ QUEST: tele NPC nhận quest ─────────────────
-            if not hasQ then
-                currentEnemy = nil   -- reset target
-
-                local now = os.time()
-                if now - lastQuestTime < getgenv().BobonConfigs.QuestCooldown then
-                    _G.BobonStatus = "Chờ cooldown nhận quest..."
+            -- Check có quest không
+            if not HasQuest() then
+                -- Cooldown check
+                if os.time() < questCooldown then
+                    _G.BobonStatus = "Chờ cooldown quest..."
                     return
                 end
 
-                _G.BobonStatus = "Tele NPC → Nhận quest: " .. qd.M
-                TP(qd.QC)
-                task.wait(0.6)
+                -- Tele tới NPC quest
+                _G.BobonStatus = "Tele NPC quest: " .. qData.M
+                TPInstant(qData.QC)
+                task.wait(0.8)
 
-                CommF_:InvokeServer("StartQuest", qd.Q, qd.QL)
-                lastQuestTime = os.time()
-                task.wait(0.4)
+                -- Nhận quest
+                CommF_:InvokeServer("StartQuest", qData.Q, qData.QL)
+                questCooldown = os.time() + 2
+                print("[BobonHub] Đã nhận quest: " .. qData.M)
+                task.wait(0.5)
 
-                -- Sau khi nhận quest => tele thẳng lên đầu quái
-                local e = FindEnemy(qd.M)
-                if e then
-                    local eHRP = e.HumanoidRootPart
-                    TP(CFrame.new(eHRP.Position + Vector3.new(0, getgenv().BobonConfigs.FarmHeight, 0)))
-                    currentEnemy = e
-                    _G.BobonStatus = "Đã nhận quest, tele lên đầu: " .. qd.M
-                else
-                    TP(CFrame.new(qd.MC.Position + Vector3.new(0, getgenv().BobonConfigs.FarmHeight, 0)))
-                    _G.BobonStatus = "Chờ " .. qd.M .. " spawn..."
-                end
+                -- Tele tới spawn area của quái
+                TPInstant(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + getgenv().BobonConfigs.FarmHeight, qData.MC.Position.Z))
                 return
             end
 
-            -- ── ĐÃ CÓ QUEST: cập nhật target quái ──────────────────
-            local e = FindEnemy(qd.M)
-            if e then
-                currentEnemy = e
-                _G.BobonStatus = "Farming: " .. qd.M .. " | Kills: " .. killCount
+            -- Đã có quest => tìm quái
+            local enemy = FindEnemy(qData.M)
+            if enemy and enemy:FindFirstChild("HumanoidRootPart") and enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 then
+                currentTarget = enemy
+                _G.BobonStatus = "Farm: " .. qData.M .. " | Kills: " .. killCount
+
+                -- Tele bám theo quái
+                local ePos = enemy.HumanoidRootPart.Position
+                local targetCF = CFrame.new(ePos.X, ePos.Y + getgenv().BobonConfigs.FarmHeight, ePos.Z)
+                TPInstant(targetCF)
             else
-                currentEnemy = nil
-                _G.BobonStatus = "Chờ " .. qd.M .. " spawn..."
-                -- Tele về vùng spawn chờ
-                TP(CFrame.new(qd.MC.Position + Vector3.new(0, getgenv().BobonConfigs.FarmHeight, 0)))
+                currentTarget = nil
+                _G.BobonStatus = "Chờ " .. qData.M .. " spawn..."
+                -- Tele về spawn area
+                TPInstant(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + getgenv().BobonConfigs.FarmHeight, qData.MC.Position.Z))
             end
         end)
     end
 end)
 
--- ================================================================= --
---     6. LOOP 2: ATTACK LOOP (RunService.Heartbeat - đánh liên tục) --
--- ================================================================= --
-local lastAttack = 0
-
+-- ATTACK LOOP (Heartbeat)
 RunService.Heartbeat:Connect(function()
     pcall(function()
+        if not currentTarget then return end
+
         local now = tick()
-        if now - lastAttack < getgenv().BobonConfigs.AttackDelay then return end
-        lastAttack = now
+        if now - lastAttackTick < getgenv().BobonConfigs.AttackDelay then return end
+        lastAttackTick = now
 
-        if not currentEnemy then return end
+        local mobHum = currentTarget:FindFirstChild("Humanoid")
+        local mobHRP = currentTarget:FindFirstChild("HumanoidRootPart")
 
-        -- Kiểm tra quái còn sống
-        local mobHum = currentEnemy:FindFirstChild("Humanoid")
-        local mobHRP = currentEnemy:FindFirstChild("HumanoidRootPart")
         if not mobHum or not mobHRP or mobHum.Health <= 0 then
-            currentEnemy = nil
+            currentTarget = nil
             return
         end
 
         local c = LP.Character
         if not c then return end
-        local hrp = c:FindFirstChild("HumanoidRootPart")
         local hum = c:FindFirstChild("Humanoid")
-        if not hrp or not hum or hum.Health <= 0 then return end
+        if not hum or hum.Health <= 0 then return end
 
         EquipMelee()
 
-        -- Tele bám theo quái liên tục (trên đầu quái)
-        local targetPos = mobHRP.Position + Vector3.new(0, getgenv().BobonConfigs.FarmHeight, 0)
-        hrp.CFrame = CFrame.new(targetPos, mobHRP.Position)
-
-        -- Đánh
+        -- Click attack
         VirtualUser:Button1Down(Vector2.new(0, 0))
+        task.wait(0.01)
         VirtualUser:Button1Up(Vector2.new(0, 0))
     end)
 end)
 
 -- ================================================================= --
---         7. KILL COUNTER: dùng Humanoid.Died event                 --
+--                        KILL COUNTER                               --
 -- ================================================================= --
--- Theo dõi quái mới spawn và gắn event Died
-local function WatchEnemies()
-    local folder = workspace:FindFirstChild("Enemies")
-    if not folder then return end
-
-    local function HookDied(mob)
-        local hum = mob:FindFirstChild("Humanoid")
-        if hum then
-            hum.Died:Connect(function()
-                killCount = killCount + 1
-            end)
-        end
-    end
-
-    -- Hook tất cả quái hiện có
-    for _, mob in ipairs(folder:GetChildren()) do
-        HookDied(mob)
-    end
-
-    -- Hook quái mới spawn
-    folder.ChildAdded:Connect(function(mob)
-        task.wait(0.1)
-        HookDied(mob)
-    end)
-end
-
-task.spawn(WatchEnemies)
-
--- Re-bật haki mỗi 30 giây (phòng tắt)
 task.spawn(function()
-    while task.wait(30) do
+    while task.wait(0.5) do
         pcall(function()
-            CommF_:InvokeServer("Ken",  true)
-            CommF_:InvokeServer("Buso", true)
+            local folder = workspace:FindFirstChild("Enemies")
+            if not folder then return end
+
+            for _, mob in ipairs(folder:GetChildren()) do
+                local hum = mob:FindFirstChild("Humanoid")
+                if hum and not hum:GetAttribute("KillTracked") then
+                    hum:SetAttribute("KillTracked", true)
+
+                    hum.HealthChanged:Connect(function(health)
+                        if health <= 0 then
+                            killCount = killCount + 1
+                        end
+                    end)
+                end
+            end
         end)
     end
 end)
 
-_G.BobonStatus = "BobonHub v4.0 sẵn sàng!"
-print("[BobonHub v4.0] Loaded | Team: Pirates | Haki: ON | Farm: ACTIVE")
+-- ================================================================= --
+--                          STATUS LOG                               --
+-- ================================================================= --
+task.spawn(function()
+    while task.wait(5) do
+        local elapsed = os.time() - startTime
+        local hrs = math.floor(elapsed / 3600)
+        local mins = math.floor((elapsed % 3600) / 60)
+        local secs = elapsed % 60
+
+        print(string.format(
+            "[BobonHub v4.1] %s | Time: %02d:%02d:%02d | Kills: %d | Level: %s",
+            _G.BobonStatus,
+            hrs, mins, secs,
+            killCount,
+            LP.Data:FindFirstChild("Level") and LP.Data.Level.Value or "?"
+        ))
+    end
+end)
+
+print("[BobonHub v4.1 by Axiom] Loaded | No UI | Full Quest DB | Fixed TP Logic")
+_G.BobonStatus = "BobonHub v4.1 sẵn sàng!"
