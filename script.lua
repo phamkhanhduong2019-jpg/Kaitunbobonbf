@@ -1,118 +1,54 @@
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
-
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
--- 1. Lưu snapshot kết nối trước khi load
-local function snapshotConnections()
-    local snap = {}
-    local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
-    for _, ev in ipairs(events) do
-        local ok, conns = pcall(function() return getconnections(ev) end)
-        if ok then
-            snap[ev] = {}
-            for _, c in ipairs(conns) do
-                snap[ev][c] = true
-            end
+local realGenv = getgenv()
+local bananaFakeGenv = {}
+
+bananaFakeGenv.SettingFarm = setmetatable({}, {
+    __newindex = function(t, k, v)
+        if type(v) == "boolean" then
+            rawset(t, k, false)
+        else
+            rawset(t, k, v)
         end
+    end,
+    __index = function(t, k)
+        return false
     end
-    return snap
-end
+})
 
-local before = snapshotConnections()
-
--- 2. Khóa Config Banana
-getgenv().SettingFarm = {
-    ["Hide UI"] = false,
-    ["White Screen"] = false,
-    ["Lock Fps"] = { ["Enabled"] = false, ["FPS"] = 60 },
-    ["Reset Teleport"] = { ["Enabled"] = false },
-    ["Get Items"] = {},
-    ["Get Rare Items"] = {},
-    ["Farm Fragments"] = { ["Enabled"] = false },
-    ["Auto Chat"] = { ["Enabled"] = false },
-    ["Auto Summon Rip Indra"] = false,
-    ["Select Hop"] = {},
-    ["Farm Mastery"] = { ["Melee"] = false, ["Sword"] = false },
-    ["Buy Haki"] = {},
-    ["Sniper Fruit Shop"] = { ["Enabled"] = false },
-    ["Lock Fruit"] = {},
-    ["Webhook"] = { ["Enabled"] = false }
-}
-
--- 3. CHẶN METATABLE (Chặn Banana can thiệp CFrame/Position/RemoteEvent)
-local rawTweenCreate = TweenService.Create
-local rawTaskSpawn = task.spawn
-
--- Chặn Tween
-TweenService.Create = function(self, instance, info, properties)
-    if instance and (instance:IsA("BasePart") or instance:IsA("Model")) then
-        if properties.CFrame or properties.Position then
-            return { Play = function() end, Cancel = function() end, Destroy = function() end }
-        end
-    end
-    return rawTweenCreate(self, instance, info, properties)
-end
-
--- Tạm đóng task.spawn để không tạo thread ngầm
-task.spawn = function(...)
-    return nil
-end
-
--- Hook Metatable __index và __newindex để đóng băng di chuyển
 local gmt = getrawmetatable(game)
-local oldIndex = gmt.__index
-local oldNewIndex = gmt.__newindex
+local oldNamecall = gmt.__namecall
 setreadonly(gmt, false)
 
-gmt.__newindex = newcclosure(function(t, k, v)
-    -- Chặn các thao tác set CFrame/Position/Velocity lên nhân vật từ Banana
-    if not checkcaller() then
-        if (k == "CFrame" or k == "Position" or k == "Velocity") and t:IsDescendantOf(LocalPlayer.Character) then
-            return
+local isBananaLoading = true
+
+gmt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if isBananaLoading and not checkcaller() then
+        if method == "FireServer" or method == "InvokeServer" then
+            return nil
         end
     end
-    return oldNewIndex(t, k, v)
+    return oldNamecall(self, ...)
+end)
+setreadonly(gmt, true)
+
+task.spawn(function()
+    realGenv.SettingFarm = bananaFakeGenv.SettingFarm
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
+    end)
 end)
 
-setreadonly(gmt, true)
+task.wait(6)
 
--- 4. Load Banana Cat
-loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
+isBananaLoading = false
+realGenv.SettingFarm = nil
 
-task.wait(5)
-
--- 5. Cắt toàn bộ Event mới phát sinh từ Banana
-local function cutNewConnections(before)
-    local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
-    for _, ev in ipairs(events) do
-        local ok, conns = pcall(function() return getconnections(ev) end)
-        if ok then
-            for _, c in ipairs(conns) do
-                if not (before[ev] and before[ev][c]) then
-                    pcall(function() c:Disable() end)
-                end
-            end
-        end
-    end
-end
-cutNewConnections(before)
-
--- 6. MỞ KHÓA HOÀN TOÀN CHO SUGE CHẠY
-TweenService.Create = rawTweenCreate
-task.spawn = rawTaskSpawn
-
-setreadonly(gmt, false)
-gmt.__newindex = oldNewIndex
-setreadonly(gmt, true)
-
-warn("[System] Da xoa bỏ hoàn toàn quyền can thiệp của Banana Cat. Dang load Suge...")
-
--- 7. Cấu hình & Load Suge Script
 repeat task.wait() until game:IsLoaded() and LocalPlayer
 
-getgenv().Configs = {
+realGenv.Configs = {
     ["Auto Collect Berry"] = false,
     ["Auto Evo Race"] = false,
     ["Auto Pull Lever"] = false,
