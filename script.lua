@@ -21,7 +21,6 @@ local TS             = game:GetService("TweenService")
 local TeleportSvc    = game:GetService("TeleportService")
 local CoreGui        = game:GetService("CoreGui")
 local TweenService   = game:GetService("TweenService")
-local Lighting       = game:GetService("Lighting")
 
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
@@ -78,7 +77,7 @@ Overlay.Parent               = ScreenGui
 Overlay.Size                 = UDim2.new(1, 0, 1, 0)
 Overlay.Position             = UDim2.new(0, 0, 0, 0)
 Overlay.BackgroundColor3     = Color3.fromRGB(0, 0, 0)
-Overlay.BackgroundTransparency = 1
+Overlay.BackgroundTransparency = 0.65
 Overlay.BorderSizePixel      = 0
 Overlay.ZIndex               = 1
 
@@ -92,6 +91,7 @@ Container.Size               = UDim2.new(0, 400, 0, 240)
 Container.BackgroundTransparency = 1
 Container.BorderSizePixel    = 0
 Container.ZIndex             = 2
+Container.Visible = true
 
 -- ===== 1. BOBON HUB - Title chính =====
 local TitleLabel = Instance.new("TextLabel")
@@ -107,10 +107,11 @@ TitleLabel.TextSize = 42
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Center
 TitleLabel.TextYAlignment = Enum.TextYAlignment.Center
-TitleLabel.TextTransparency = 1
+TitleLabel.TextTransparency = 0
 TitleLabel.TextStrokeTransparency = 0.3
 TitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 TitleLabel.ZIndex = 3
+TitleLabel.Visible = true
 
 -- ===== 2. Subtitle - Kaitun Blox Fruit =====
 local SubtitleLabel = Instance.new("TextLabel")
@@ -126,10 +127,11 @@ SubtitleLabel.TextSize = 16
 SubtitleLabel.Font = Enum.Font.Gotham
 SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Center
 SubtitleLabel.TextYAlignment = Enum.TextYAlignment.Center
-SubtitleLabel.TextTransparency = 1
+SubtitleLabel.TextTransparency = 0
 SubtitleLabel.TextStrokeTransparency = 0.5
 SubtitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 SubtitleLabel.ZIndex = 3
+SubtitleLabel.Visible = true
 
 -- ===== 3. Status - Hiển thị trạng thái nhân vật =====
 local StatusLabel = Instance.new("TextLabel")
@@ -145,10 +147,11 @@ StatusLabel.TextSize = 17
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
 StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
-StatusLabel.TextTransparency = 1
+StatusLabel.TextTransparency = 0
 StatusLabel.TextStrokeTransparency = 0.5
 StatusLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 StatusLabel.ZIndex = 3
+StatusLabel.Visible = true
 
 -- ===== 4. Time - Thời gian đã hoạt động =====
 local TimeLabel = Instance.new("TextLabel")
@@ -164,10 +167,11 @@ TimeLabel.TextSize = 15
 TimeLabel.Font = Enum.Font.Gotham
 TimeLabel.TextXAlignment = Enum.TextXAlignment.Center
 TimeLabel.TextYAlignment = Enum.TextYAlignment.Center
-TimeLabel.TextTransparency = 1
+TimeLabel.TextTransparency = 0
 TimeLabel.TextStrokeTransparency = 0.5
 TimeLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 TimeLabel.ZIndex = 3
+TimeLabel.Visible = true
 
 -- ===== 5. Earned - Beli và Frag =====
 local EarnedFrame = Instance.new("Frame")
@@ -177,11 +181,12 @@ EarnedFrame.AnchorPoint = Vector2.new(0.5, 0)
 EarnedFrame.Position = UDim2.new(0.5, 0, 0, 152)
 EarnedFrame.Size = UDim2.new(0.9, 0, 0, 38)
 EarnedFrame.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
-EarnedFrame.BackgroundTransparency = 1
+EarnedFrame.BackgroundTransparency = 0.85
 EarnedFrame.BorderSizePixel = 1
 EarnedFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
 EarnedFrame.BorderTransparency = 0.7
 EarnedFrame.ZIndex = 3
+EarnedFrame.Visible = true
 
 -- Beli
 local BeliLabel = Instance.new("TextLabel")
@@ -197,8 +202,9 @@ BeliLabel.TextSize = 16
 BeliLabel.Font = Enum.Font.GothamBold
 BeliLabel.TextXAlignment = Enum.TextXAlignment.Center
 BeliLabel.TextYAlignment = Enum.TextYAlignment.Center
-BeliLabel.TextTransparency = 1
+BeliLabel.TextTransparency = 0
 BeliLabel.ZIndex = 3
+BeliLabel.Visible = true
 
 -- Frag
 local FragLabel = Instance.new("TextLabel")
@@ -214,8 +220,9 @@ FragLabel.TextSize = 16
 FragLabel.Font = Enum.Font.GothamBold
 FragLabel.TextXAlignment = Enum.TextXAlignment.Center
 FragLabel.TextYAlignment = Enum.TextYAlignment.Center
-FragLabel.TextTransparency = 1
+FragLabel.TextTransparency = 0
 FragLabel.ZIndex = 3
+FragLabel.Visible = true
 
 -- Divider line trong earned frame
 local Divider = Instance.new("Frame")
@@ -228,6 +235,7 @@ Divider.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
 Divider.BackgroundTransparency = 0.6
 Divider.BorderSizePixel = 0
 Divider.ZIndex = 3
+Divider.Visible = true
 
 -- Footer - Version
 local FooterLabel = Instance.new("TextLabel")
@@ -243,50 +251,43 @@ FooterLabel.TextSize = 12
 FooterLabel.Font = Enum.Font.Gotham
 FooterLabel.TextXAlignment = Enum.TextXAlignment.Center
 FooterLabel.TextYAlignment = Enum.TextYAlignment.Center
-FooterLabel.TextTransparency = 1
+FooterLabel.TextTransparency = 0.5
 FooterLabel.TextStrokeTransparency = 0.5
 FooterLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 FooterLabel.ZIndex = 3
+FooterLabel.Visible = true
+
+print("[BobonHub] UI Created!")
 
 -- ══════════════════════════════════════════════════════════════════
 --              HIỆU ỨNG XUẤT HIỆN MENU
 -- ══════════════════════════════════════════════════════════════════
 
-local function CreateFadeAnimation(obj, duration, delay, properties)
-    task.wait(delay or 0)
-    local tweens = {}
-    for prop, value in pairs(properties or {}) do
-        if prop == "TextTransparency" or prop == "BackgroundTransparency" then
-            local t = TweenService:Create(obj, TweenInfo.new(duration or 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                [prop] = value
-            })
-            table.insert(tweens, t)
-        end
-    end
-    for _, t in ipairs(tweens) do
-        t:Play()
-    end
-end
-
--- Hiệu ứng xuất hiện menu
+-- Fade in overlay từ từ
 task.spawn(function()
-    -- Fade in overlay
+    task.wait(0.1)
     local tOverlay = TweenService:Create(Overlay, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         BackgroundTransparency = 0.65
     })
     tOverlay:Play()
+end)
+
+-- Hiệu ứng xuất hiện cho từng phần tử
+task.spawn(function()
+    task.wait(0.3)
     
-    task.wait(0.2)
-    
-    -- 1. Title BOBON HUB xuất hiện đầu tiên
-    local tTitle = TweenService:Create(TitleLabel, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
+    -- 1. Title BOBON HUB xuất hiện với hiệu ứng scale
+    TitleLabel.TextTransparency = 0
+    TitleLabel.TextScaled = false
+    local tTitle = TweenService:Create(TitleLabel, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        TextSize = 42
     })
     tTitle:Play()
     
     task.wait(0.25)
     
-    -- 2. Subtitle xuất hiện
+    -- 2. Subtitle
+    SubtitleLabel.TextTransparency = 0
     local tSub = TweenService:Create(SubtitleLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         TextTransparency = 0
     })
@@ -294,7 +295,8 @@ task.spawn(function()
     
     task.wait(0.2)
     
-    -- 3. Status xuất hiện
+    -- 3. Status
+    StatusLabel.TextTransparency = 0
     local tStatus = TweenService:Create(StatusLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         TextTransparency = 0
     })
@@ -302,7 +304,8 @@ task.spawn(function()
     
     task.wait(0.15)
     
-    -- 4. Time xuất hiện
+    -- 4. Time
+    TimeLabel.TextTransparency = 0
     local tTime = TweenService:Create(TimeLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         TextTransparency = 0
     })
@@ -310,34 +313,25 @@ task.spawn(function()
     
     task.wait(0.15)
     
-    -- 5. Earned frame xuất hiện
-    local tFrame = TweenService:Create(EarnedFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    -- 5. Earned frame
+    EarnedFrame.BackgroundTransparency = 0.85
+    local tFrame = TweenService:Create(EarnedFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
         BackgroundTransparency = 0.85
     })
     tFrame:Play()
     
     task.wait(0.1)
     
-    -- Beli và Frag xuất hiện cùng lúc
-    local tBeli = TweenService:Create(BeliLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
-    })
-    tBeli:Play()
+    -- Beli và Frag
+    BeliLabel.TextTransparency = 0
+    FragLabel.TextTransparency = 0
     
-    local tFrag = TweenService:Create(FragLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
-    })
-    tFrag:Play()
+    task.wait(0.1)
     
-    task.wait(0.15)
+    -- 6. Footer
+    FooterLabel.TextTransparency = 0.5
     
-    -- 6. Footer xuất hiện
-    local tFooter = TweenService:Create(FooterLabel, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0.5
-    })
-    tFooter:Play()
-    
-    print("[BobonHub] UI Ready!")
+    print("[BobonHub] UI Animation Complete!")
 end)
 
 -- ══════════════════════════════════════════════════════════════════
