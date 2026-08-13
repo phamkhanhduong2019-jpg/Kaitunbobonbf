@@ -1,15 +1,16 @@
 -- ================================================================= --
---         BOBON HUB - BRING MOB & DISTANCE FARM (NO FAST ATTACK)    --
+--     BOBON HUB - FULL KAITUN SCRIPT (DISTANCE FARM & OVERLAY UI)   --
 -- ================================================================= --
 
 getgenv().Configs = {
-    ["Auto Collect Berry"] = true,
     ["Team"] = "Pirates",
-    ["Farm Distance"] = 10, -- Khoảng cách đứng xa đánh quái (Safety Range)
+    ["Farm Distance"] = 25, -- Đứng cách quái 25 studs (Trên cao an toàn)
+    ["Hitbox Size"] = 40,   -- Phạm vi tầm đánh xa
 }
 
 repeat task.wait(1) until game:IsLoaded() and game.Players.LocalPlayer and game.Players.LocalPlayer.Character
 
+local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,14 +18,139 @@ local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 local RunService = game:GetService("RunService")
 
--- 1. DANH SÁCH VÕ (MELEE) FULL
+-- Biến lưu trạng thái hiển thị UI
+_G.CurrentStatus = "Đang khởi tạo..."
+local startTime = os.time()
+
+-- ================================================================= --
+--                     1. TẠO OVERLAY UI STATUS                      --
+-- ================================================================= --
+if CoreGui:FindFirstChild("BobonHubKaitunUI") then
+    CoreGui.BobonHubKaitunUI:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BobonHubKaitunUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.AnchorPoint = Vector2.new(0.5, 0)
+MainFrame.Position = UDim2.new(0.5, 0, 0.05, 0)
+MainFrame.Size = UDim2.new(0, 320, 0, 160)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.BackgroundTransparency = 0.25
+MainFrame.BorderSizePixel = 0
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 12)
+UICorner.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = MainFrame
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout.Padding = UDim.new(0, 4)
+
+local UIPadding = Instance.new("UIPadding")
+UIPadding.Parent = MainFrame
+UIPadding.PaddingTop = UDim.new(0, 10)
+
+-- TITLE: BobonHub (Xám sáng)
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Parent = MainFrame
+TitleLabel.Size = UDim2.new(1, 0, 0, 28)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Text = "BobonHub"
+TitleLabel.TextColor3 = Color3.fromRGB(220, 225, 230)
+TitleLabel.TextSize = 22
+
+-- SUBTITLE: Kaitun for bobon status
+local SubTitleLabel = Instance.new("TextLabel")
+SubTitleLabel.Parent = MainFrame
+SubTitleLabel.Size = UDim2.new(1, 0, 0, 18)
+SubTitleLabel.BackgroundTransparency = 1
+SubTitleLabel.Font = Enum.Font.GothamMedium
+SubTitleLabel.Text = "Kaitun for bobon"
+SubTitleLabel.TextColor3 = Color3.fromRGB(160, 165, 175)
+SubTitleLabel.TextSize = 13
+
+-- STATUS
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Parent = MainFrame
+StatusLabel.Size = UDim2.new(1, 0, 0, 22)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Font = Enum.Font.GothamSemibold
+StatusLabel.Text = "Status: " .. _G.CurrentStatus
+StatusLabel.TextColor3 = Color3.fromRGB(85, 255, 127)
+StatusLabel.TextSize = 14
+
+-- TIME
+local TimeLabel = Instance.new("TextLabel")
+TimeLabel.Parent = MainFrame
+TimeLabel.Size = UDim2.new(1, 0, 0, 18)
+TimeLabel.BackgroundTransparency = 1
+TimeLabel.Font = Enum.Font.Gotham
+TimeLabel.Text = "Time: 00:00:00"
+TimeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+TimeLabel.TextSize = 12
+
+-- BELI & FRAG
+local CurrencyLabel = Instance.new("TextLabel")
+CurrencyLabel.Parent = MainFrame
+CurrencyLabel.Size = UDim2.new(1, 0, 0, 20)
+CurrencyLabel.BackgroundTransparency = 1
+CurrencyLabel.Font = Enum.Font.GothamMedium
+CurrencyLabel.Text = "Beli: 0 | Frag: 0"
+CurrencyLabel.TextColor3 = Color3.fromRGB(85, 170, 255)
+CurrencyLabel.TextSize = 13
+
+local function FormatNumber(val)
+    local formatted = tostring(val)
+    while true do  
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if (k==0) then break end
+    end
+    return formatted
+end
+
+-- Vòng lặp cập nhật UI Realtime
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            local elapsed = os.time() - startTime
+            local hours = math.floor(elapsed / 3600)
+            local mins = math.floor((elapsed % 3600) / 60)
+            local secs = elapsed % 60
+            TimeLabel.Text = string.format("Time: %02d:%02d:%02d", hours, mins, secs)
+
+            StatusLabel.Text = "Status: " .. (_G.CurrentStatus or "Idle")
+
+            local beli = 0
+            local frag = 0
+            if LocalPlayer:FindFirstChild("Data") then
+                if LocalPlayer.Data:FindFirstChild("Beli") then beli = LocalPlayer.Data.Beli.Value end
+                if LocalPlayer.Data:FindFirstChild("Fragments") then frag = LocalPlayer.Data.Fragments.Value end
+            end
+            CurrencyLabel.Text = "Beli: " .. FormatNumber(beli) .. "  |  Frag: " .. FormatNumber(frag)
+        end)
+    end
+end)
+
+-- ================================================================= --
+--                     2. CÁC TÍNH NĂNG NỀN & ANTI                   --
+-- ================================================================= --
+
 local AllMelees = {
     "Combat", "Black Leg", "Electro", "Fishman Karate", "Dragon Claw",
     "Superhuman", "Death Step", "Sharkman Karate", "Electric Claw",
     "Dragon Talon", "Godhuman", "Sanguine Art"
 }
 
--- 2. TỰ ĐỘNG CHỌN PHE
+-- Tự động chọn phe
 task.spawn(function()
     pcall(function()
         if LocalPlayer.Team == nil or LocalPlayer.Team.Name == "" then
@@ -34,13 +160,14 @@ task.spawn(function()
     end)
 end)
 
--- 3. CHỐNG AFK & NOCLIP
+-- Anti AFK
 LocalPlayer.Idled:Connect(function()
     VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
     task.wait(1)
     VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
 end)
 
+-- Noclip
 RunService.Stepped:Connect(function()
     if LocalPlayer.Character then
         for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
@@ -51,7 +178,28 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- 4. SMART TWEEN ENGINE (KHÔNG TELE LẠI CHỖ CŨ)
+-- Mở rộng Tầm Đánh (Hitbox Extender)
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            for _, tool in ipairs(char:GetChildren()) do
+                if tool:IsA("Tool") then
+                    for _, part in ipairs(tool:GetDescendants()) do
+                        if part:IsA("BasePart") and part.Name == "Handle" then
+                            part.Size = Vector3.new(getgenv().Configs["Hitbox Size"], getgenv().Configs["Hitbox Size"], getgenv().Configs["Hitbox Size"])
+                            part.Transparency = 1
+                            part.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+-- Tween Engine
 local currentTween = nil
 local lastTargetPos = Vector3.new(0,0,0)
 
@@ -85,25 +233,7 @@ local function FastTween(targetCFrame)
     end
 end
 
--- 5. AUTO HAKI VŨ TRANG & QUAN SÁT (8 SEC/LẦN)
-task.spawn(function()
-    while task.wait(8) do
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
-                if not char:FindFirstChild("HasBuso") then
-                    ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
-                    task.wait(0.5)
-                end
-                if not char:FindFirstChild("Vision") then
-                    ReplicatedStorage.Remotes.CommE:FireServer("Ken", true)
-                end
-            end
-        end)
-    end
-end)
-
--- 6. TỰ ĐỘNG CẦM MELEE THEO TÊN
+-- Equip Melee
 local function ForceEquipMelee()
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("Humanoid") then return end
@@ -111,9 +241,7 @@ local function ForceEquipMelee()
     for _, tool in ipairs(char:GetChildren()) do
         if tool:IsA("Tool") then
             for _, meleeName in ipairs(AllMelees) do
-                if tool.Name == meleeName then
-                    return
-                end
+                if tool.Name == meleeName then return end
             end
         end
     end
@@ -130,31 +258,9 @@ local function ForceEquipMelee()
     end
 end
 
--- 7. CƠ CHẾ BRING MOB (GOM QUÁI LẠI 1 ĐIỂM DỄ ĐÁNH)
-local function BringMob(monsterName, targetCFrame)
-    if not workspace:FindFirstChild("Enemies") then return end
-    
-    for _, enemy in ipairs(workspace.Enemies:GetChildren()) do
-        if enemy.Name == monsterName and enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 and enemy:FindFirstChild("HumanoidRootPart") then
-            -- Tắt CanCollide của quái để không đẩy nhân vật
-            for _, part in ipairs(enemy:GetChildren()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-            
-            -- Kéo quái về vị trí gom
-            local dist = (enemy.HumanoidRootPart.Position - targetCFrame.Position).Magnitude
-            if dist <= 300 then -- Chỉ gom quái trong phạm vi 300 stud
-                enemy.HumanoidRootPart.CFrame = targetCFrame
-                enemy.HumanoidRootPart.Size = Vector3.new(10, 10, 10) -- Mở rộng Hitbox nhẹ
-                enemy.Humanoid.WalkSpeed = 0
-            end
-        end
-    end
-end
-
--- 8. DATABASE QUEST
+-- ================================================================= --
+--                     3. DATABASE & VÒNG LẶP KAITUN                 --
+-- ================================================================= --
 local QuestDatabase = {
     {MinLvl = 1, MaxLvl = 14, Quest = "BanditQuest1", Monster = "Bandit", QuestLvl = 1, QuestCFrame = CFrame.new(1059, 16, 1548), MonsterCFrame = CFrame.new(1145, 17, 1634)},
     {MinLvl = 15, MaxLvl = 29, Quest = "JungleQuest", Monster = "Monkey", QuestLvl = 1, QuestCFrame = CFrame.new(-1598, 37, 152), MonsterCFrame = CFrame.new(-1618, 22, 142)},
@@ -199,11 +305,11 @@ local function GetQuestData()
     return nil
 end
 
--- 9. VÒNG LẶP FARM TỪ XA CHÍNH (SAFE DISTANCE ATTACK)
+-- VÒNG LẶP KAITUN TỰ ĐỘNG
 task.spawn(function()
     while task.wait(0.15) do
         pcall(function()
-            -- Auto Stats
+            -- Auto cộng điểm Stat
             local points = LocalPlayer.Data.Points.Value
             if points > 0 then
                 ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", points)
@@ -216,7 +322,8 @@ task.spawn(function()
                 local hasQuest = mainGui and mainGui:FindFirstChild("Quest") and mainGui.Quest.Visible
 
                 if not hasQuest then
-                    -- Bay đi nhận Quest
+                    -- Cập nhật Status
+                    _G.CurrentStatus = "Đang đến nhận Quest: " .. qData.Monster
                     FastTween(qData.QuestCFrame)
                     if (LocalPlayer.Character.HumanoidRootPart.Position - qData.QuestCFrame.Position).Magnitude < 15 then
                         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", qData.Quest, qData.QuestLvl)
@@ -225,34 +332,35 @@ task.spawn(function()
                 else
                     ForceEquipMelee()
 
-                    -- Lấy con quái chính làm tâm gom
-                    local mainMonster = nil
+                    -- Quét tìm quái
+                    local enemy = nil
                     if workspace:FindFirstChild("Enemies") then
                         for _, v in ipairs(workspace.Enemies:GetChildren()) do
                             if v.Name == qData.Monster and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
-                                mainMonster = v
+                                enemy = v
                                 break
                             end
                         end
                     end
 
-                    if mainMonster then
-                        local mobPos = mainMonster.HumanoidRootPart.CFrame
+                    if enemy then
+                        _G.CurrentStatus = "Đang farm quái: " .. qData.Monster
+                        local mobHRP = enemy.HumanoidRootPart
                         
-                        -- Gom tất cả quái xung quanh về vị trí con quái chính
-                        BringMob(qData.Monster, mobPos)
+                        -- Bay đứng trên cao 25 studs (Khoảng cách an toàn)
+                        local safePos = mobHRP.CFrame * CFrame.new(0, getgenv().Configs["Farm Distance"], 0)
+                        FastTween(safePos)
 
-                        -- Bay lơ lửng trên đầu quái một khoảng AN TOÀN (10 stud)
-                        local safeFarmPos = mobPos * CFrame.new(0, getgenv().Configs["Farm Distance"], 0)
-                        FastTween(safeFarmPos)
+                        -- Tự quay mặt về phía quái
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, mobHRP.Position)
 
-                        -- Đấm bình thường (Không dùng Fast Attack tránh crash/văng game)
+                        -- Đánh chuẩn nhịp thường (Tránh crash game)
                         VirtualUser:Button1Down(Vector2.new(0,0))
                         task.wait(0.1)
                         VirtualUser:Button1Up(Vector2.new(0,0))
                     else
-                        -- Đứng chờ quái spawn ở khoảng cách cao an toàn
-                        FastTween(qData.MonsterCFrame * CFrame.new(0, 15, 0))
+                        _G.CurrentStatus = "Chờ quái " .. qData.Monster .. " Spawn..."
+                        FastTween(qData.MonsterCFrame * CFrame.new(0, 20, 0))
                     end
                 end
             end
@@ -260,4 +368,4 @@ task.spawn(function()
     end
 end)
 
-print("[BOBON HUB] Distance Farm & Bring Mob Active (Anti-Crash/No Fast Attack)!")
+_G.CurrentStatus = "Kaitun sẵn sàng!"
