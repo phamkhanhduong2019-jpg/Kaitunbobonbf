@@ -1,5 +1,7 @@
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
+-- 1. Lưu snapshot kết nối
 local function snapshotConnections()
     local snap = {}
     local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
@@ -17,49 +19,69 @@ end
 
 local before = snapshotConnections()
 
+-- 2. Đặt cấu hình Banana về false
 getgenv().SettingFarm = {
     ["Hide UI"] = false,
     ["White Screen"] = false,
-    ["Lock Fps"] = { ["Enabled"] = false, ["FPS"] = 20 },
-    ["Reset Teleport"] = { ["Enabled"] = false, ["Delay Reset"] = 3, ["Item Dont Reset"] = { ["Fruit"] = { ["Enabled"] = false, ["All Fruit"] = false, ["Select Fruit"] = { ["Enabled"] = false, ["Fruit"] = {} } } } },
-    ["Get Items"] = { ["Saber"] = false, ["Godhuman"] = false, ["Skull Guitar"] = false, ["Mirror Fractal"] = false, ["Cursed Dual Katana"] = false, ["Upgrade Race V2-V3"] = false, ["Auto Pull Lever"] = false, ["Shark Anchor"] = false },
-    ["Get Rare Items"] = { ["Rengoku"] = false, ["Dragon Trident"] = false, ["Pole (1st Form)"] = false, ["Gravity Blade"] = false },
-    ["Farm Fragments"] = { ["Enabled"] = false, ["Fragment"] = 50000 },
-    ["Auto Chat"] = { ["Enabled"] = false, ["Text"] = "" },
+    ["Lock Fps"] = { ["Enabled"] = false, ["FPS"] = 60 },
+    ["Reset Teleport"] = { ["Enabled"] = false },
+    ["Get Items"] = {},
+    ["Get Rare Items"] = {},
+    ["Farm Fragments"] = { ["Enabled"] = false },
+    ["Auto Chat"] = { ["Enabled"] = false },
     ["Auto Summon Rip Indra"] = false,
-    ["Select Hop"] = { ["Hop Server If Have Player Near"] = false, ["Hop Find Rip Indra Get Valkyrie Helm or Get Tushita"] = false, ["Hop Find Dough King Get Mirror Fractal"] = false, ["Hop Find Raids Castle [CDK]"] = false, ["Hop Find Cake Queen [CDK]"] = false, ["Hop Find Soul Reaper [CDK]"] = false, ["Hop Find Darkbeard [SG]"] = false, ["Hop Find Mirage [ Pull Lever ]"] = false },
+    ["Select Hop"] = {},
     ["Farm Mastery"] = { ["Melee"] = false, ["Sword"] = false },
-    ["Buy Haki"] = { ["Enhancement"] = false, ["Skyjump"] = false, ["Flash Step"] = false, ["Observation"] = false },
-    ["Sniper Fruit Shop"] = { ["Enabled"] = false, ["Fruit"] = {"Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas"} },
+    ["Buy Haki"] = {},
+    ["Sniper Fruit Shop"] = { ["Enabled"] = false },
     ["Lock Fruit"] = {},
-    ["Webhook"] = { ["Enabled"] = false, ["WebhookUrl"] = "" }
+    ["Webhook"] = { ["Enabled"] = false }
 }
 
+-- 3. Hook chặn Teleport & Tween của Banana
+local rawTweenCreate = TweenService.Create
+local rawTaskSpawn = task.spawn
+
+TweenService.Create = function(self, instance, info, properties)
+    if instance and (instance.Name == "HumanoidRootPart" or instance:IsA("BasePart")) then
+        if properties.CFrame or properties.Position then
+            return { Play = function() end, Cancel = function() end, Destroy = function() end }
+        end
+    end
+    return rawTweenCreate(self, instance, info, properties)
+end
+
+task.spawn = function(...)
+    return nil
+end
+
+-- 4. Load Banana Cat (Chỉ lấy UI / Key)
 loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
 
-task.wait(5)
+task.wait(4)
 
+-- 5. Cắt kết nối Event do Banana tạo ra
 local function cutNewConnections(before)
     local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
-    local cutCount = 0
     for _, ev in ipairs(events) do
         local ok, conns = pcall(function() return getconnections(ev) end)
         if ok then
             for _, c in ipairs(conns) do
                 if not (before[ev] and before[ev][c]) then
                     pcall(function() c:Disable() end)
-                    cutCount = cutCount + 1
                 end
             end
         end
     end
-    return cutCount
 end
+cutNewConnections(before)
 
-local cut = cutNewConnections(before)
-warn("[Banana Blocker] Da cat " .. cut .. " ket noi moi tu Banana")
+-- 6. Mở khóa lại hàm cho Suge
+TweenService.Create = rawTweenCreate
+task.spawn = rawTaskSpawn
 
-repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
+-- 7. Cấu hình & Load Suge Script
+repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
 
 getgenv().Configs = {
     ["Auto Collect Berry"] = false,
@@ -70,7 +92,7 @@ getgenv().Configs = {
     ["Auto Spawn rip_indra"] = false,
     ["Awaken Fruit"] = false,
     ["Eat Fruit"] = "",
-    ["Snipe Fruit"] = "Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas",
+    ["Snipe Fruit"] = {"Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas"},
     ["Get Fruits"] = true,
     ["Buy Stuffs"] = false,
     ["Cursed Dual Katana"] = true,
