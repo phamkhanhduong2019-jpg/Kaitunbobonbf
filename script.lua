@@ -1,3 +1,22 @@
+local RunService = game:GetService("RunService")
+
+local function snapshotConnections()
+    local snap = {}
+    local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
+    for _, ev in ipairs(events) do
+        local ok, conns = pcall(function() return getconnections(ev) end)
+        if ok then
+            snap[ev] = {}
+            for _, c in ipairs(conns) do
+                snap[ev][c] = true
+            end
+        end
+    end
+    return snap
+end
+
+local before = snapshotConnections()
+
 getgenv().SettingFarm = {
     ["Hide UI"] = false,
     ["White Screen"] = false,
@@ -17,28 +36,51 @@ getgenv().SettingFarm = {
 }
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
+
+task.wait(5)
+
+local function cutNewConnections(before)
+    local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
+    local cutCount = 0
+    for _, ev in ipairs(events) do
+        local ok, conns = pcall(function() return getconnections(ev) end)
+        if ok then
+            for _, c in ipairs(conns) do
+                if not (before[ev] and before[ev][c]) then
+                    pcall(function() c:Disable() end)
+                    cutCount = cutCount + 1
+                end
+            end
+        end
+    end
+    return cutCount
+end
+
+local cut = cutNewConnections(before)
+warn("[Banana Blocker] Da cat " .. cut .. " ket noi moi tu Banana")
+
 repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
 
 getgenv().Configs = {
-    ["Auto Collect Berry"] = true,
+    ["Auto Collect Berry"] = false,
     ["Auto Evo Race"] = false,
     ["Auto Pull Lever"] = false,
     ["Auto Saber"] = true,
-    ["Auto Spawn Dough King"] = true,
-    ["Auto Spawn rip_indra"] = true,
+    ["Auto Spawn Dough King"] = false,
+    ["Auto Spawn rip_indra"] = false,
     ["Awaken Fruit"] = false,
     ["Eat Fruit"] = "",
-    ["Snipe Fruit"] = "Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas",
+    ["Snipe Fruit"] = "",
     ["Get Fruits"] = true,
     ["Buy Stuffs"] = false,
     ["Cursed Dual Katana"] = true,
     ["Skull Guitar"] = true,
     ["Switch Melee"] = true,
     ["FPS Boost"] = {
-        ["Enable"] = false,
-        ["FPS Cap"] = 40,
-        ["Hide Game UI"] = false,
-        ["Disable 3D Render"] = false,
+        ["Enable"] = true,
+        ["FPS Cap"] = 5,
+        ["Hide Game UI"] = true,
+        ["Disable 3D Render"] = true,
     },
     ["Farm Boss Drops"] = {
         ["Enable"] = false,
@@ -61,7 +103,7 @@ getgenv().Configs = {
     ["Hop"] = {
         ["Enable"] = false,
         ["Find Fruit"] = true,
-        ["Hop Elite"] = false,
+        ["Hop Elite"] = true,
         ["Hop Find Darkbeard"] = true,
         ["Hop Find Mirage"] = true,
         ["Hop Find Mirror Fractal"] = true,
