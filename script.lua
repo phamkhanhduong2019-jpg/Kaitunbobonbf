@@ -62,25 +62,25 @@ warn("[Banana Blocker] Da cat " .. cut .. " ket noi moi tu Banana")
 repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
 
 getgenv().Configs = {
-    ["Auto Collect Berry"] = false,
+    ["Auto Collect Berry"] = true,
     ["Auto Evo Race"] = false,
     ["Auto Pull Lever"] = false,
     ["Auto Saber"] = true,
-    ["Auto Spawn Dough King"] = false,
-    ["Auto Spawn rip_indra"] = false,
+    ["Auto Spawn Dough King"] = true,
+    ["Auto Spawn rip_indra"] = true,
     ["Awaken Fruit"] = false,
     ["Eat Fruit"] = "",
-    ["Snipe Fruit"] = "",
+    ["Snipe Fruit"] = "Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas",
     ["Get Fruits"] = true,
     ["Buy Stuffs"] = false,
     ["Cursed Dual Katana"] = true,
     ["Skull Guitar"] = true,
     ["Switch Melee"] = true,
     ["FPS Boost"] = {
-        ["Enable"] = true,
-        ["FPS Cap"] = 5,
-        ["Hide Game UI"] = true,
-        ["Disable 3D Render"] = true,
+        ["Enable"] = false,
+        ["FPS Cap"] = 40,
+        ["Hide Game UI"] = false,
+        ["Disable 3D Render"] = false,
     },
     ["Farm Boss Drops"] = {
         ["Enable"] = false,
