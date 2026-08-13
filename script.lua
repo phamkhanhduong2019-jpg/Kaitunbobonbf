@@ -1,8 +1,3 @@
--- ================================================================= --
---  BOBON HUB v12.0 - FULL AUTO KAITUN                              --
---  Auto Farm Quest | Auto Items | Auto Fruit | Always Visible UI   --
--- ================================================================= --
-
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
 repeat task.wait() until game.Players.LocalPlayer.Character
@@ -10,155 +5,151 @@ repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("Huma
 
 print("[BobonHub v12.0] Loading...")
 
--- ══════════════════════════════════════════════════════════════════
---                            SERVICES
--- ══════════════════════════════════════════════════════════════════
-local Players        = game:GetService("Players")
-local RS             = game:GetService("ReplicatedStorage")
-local RunService     = game:GetService("RunService")
-local VU             = game:GetService("VirtualUser")
-local TS             = game:GetService("TweenService")
-local TeleportSvc    = game:GetService("TeleportService")
-local CoreGui        = game:GetService("CoreGui")
-local TweenService   = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VU = game:GetService("VirtualUser")
+local TS = game:GetService("TweenService")
+local TeleportSvc = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 
-local LP      = Players.LocalPlayer
-local Remotes = RS:WaitForChild("Remotes", 10)
-local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
+local LP = Players.LocalPlayer
+local Remotes = RS:FindFirstChild("Remotes")
+local CommF_
+
+if Remotes then
+    CommF_ = Remotes:FindFirstChild("CommF_")
+end
+
+if not CommF_ then
+    for _, child in ipairs(RS:GetChildren()) do
+        if child.Name == "Remotes" or child.Name == "Remote" then
+            for _, remote in ipairs(child:GetChildren()) do
+                if remote.Name == "CommF_" or remote.Name == "CommF" then
+                    CommF_ = remote
+                    break
+                end
+            end
+        end
+        if CommF_ then break end
+    end
+end
 
 if not CommF_ then
     warn("[BobonHub] CommF_ not found!")
-    return
 end
 
--- ══════════════════════════════════════════════════════════════════
---                         GLOBAL SETTINGS
--- ══════════════════════════════════════════════════════════════════
 _G.Settings = {
-    TweenSpeed           = 350,
-    FarmHeight           = 25,
-    HitboxSize           = 60,
-    AttackDelay          = 0.05,
-    RandomFruitInterval  = 120,
+    TweenSpeed = 350,
+    FarmHeight = 25,
+    HitboxSize = 60,
+    AttackDelay = 0.05,
+    RandomFruitInterval = 120,
 }
 
 _G.State = {
-    CurrentTween     = nil,
-    CurrentTarget    = nil,
-    KillCount        = 0,
-    StartTime        = os.time(),
-    LastQuest        = 0,
-    LastRandomFruit  = 0,
-    IsTweening       = false,
+    CurrentTween = nil,
+    CurrentTarget = nil,
+    KillCount = 0,
+    StartTime = os.time(),
+    LastQuest = 0,
+    LastRandomFruit = 0,
+    IsTweening = false,
 }
 
 _G.BobonStatus = "Starting..."
 
--- ══════════════════════════════════════════════════════════════════
---           UI - Style đẹp, giữa màn hình, luôn hiển thị
--- ══════════════════════════════════════════════════════════════════
-
-if CoreGui:FindFirstChild("BobonHubUI") then
-    CoreGui.BobonHubUI:Destroy()
-end
+pcall(function()
+    if CoreGui:FindFirstChild("BobonHubUI") then
+        CoreGui.BobonHubUI:Destroy()
+    end
+end)
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name            = "BobonHubUI"
-ScreenGui.Parent          = CoreGui
-ScreenGui.ResetOnSpawn    = false
-ScreenGui.DisplayOrder    = 10000
-ScreenGui.IgnoreGuiInset  = true
-ScreenGui.Enabled         = true
+ScreenGui.Name = "BobonHubUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 10000
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Enabled = true
 
--- Background Overlay (làm mờ màn hình)
 local Overlay = Instance.new("Frame")
-Overlay.Name                 = "Overlay"
-Overlay.Parent               = ScreenGui
-Overlay.Size                 = UDim2.new(1, 0, 1, 0)
-Overlay.Position             = UDim2.new(0, 0, 0, 0)
-Overlay.BackgroundColor3     = Color3.fromRGB(0, 0, 0)
+Overlay.Name = "Overlay"
+Overlay.Parent = ScreenGui
+Overlay.Size = UDim2.new(1, 0, 1, 0)
+Overlay.Position = UDim2.new(0, 0, 0, 0)
+Overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 Overlay.BackgroundTransparency = 0.65
-Overlay.BorderSizePixel      = 0
-Overlay.ZIndex               = 1
+Overlay.BorderSizePixel = 0
+Overlay.ZIndex = 1
 
--- Main Container - trong suốt, không viền
 local Container = Instance.new("Frame")
-Container.Name               = "Container"
-Container.Parent             = ScreenGui
-Container.AnchorPoint        = Vector2.new(0.5, 0.5)
-Container.Position           = UDim2.new(0.5, 0, 0.5, 0)
-Container.Size               = UDim2.new(0, 400, 0, 240)
+Container.Name = "Container"
+Container.Parent = ScreenGui
+Container.AnchorPoint = Vector2.new(0.5, 0.5)
+Container.Position = UDim2.new(0.5, 0, 0.5, 0)
+Container.Size = UDim2.new(0, 400, 0, 250)
 Container.BackgroundTransparency = 1
-Container.BorderSizePixel    = 0
-Container.ZIndex             = 2
-Container.Visible = true
+Container.BorderSizePixel = 0
+Container.ZIndex = 2
 
--- ===== 1. BOBON HUB - Title chính =====
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Name = "Title"
 TitleLabel.Parent = Container
 TitleLabel.AnchorPoint = Vector2.new(0.5, 0)
-TitleLabel.Position = UDim2.new(0.5, 0, 0, 5)
-TitleLabel.Size = UDim2.new(1, 0, 0, 50)
+TitleLabel.Position = UDim2.new(0.5, 0, 0, 10)
+TitleLabel.Size = UDim2.new(1, 0, 0, 45)
 TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "BOBON HUB"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-TitleLabel.TextSize = 42
+TitleLabel.TextSize = 38
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Center
 TitleLabel.TextYAlignment = Enum.TextYAlignment.Center
-TitleLabel.TextTransparency = 0
 TitleLabel.TextStrokeTransparency = 0.3
 TitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 TitleLabel.ZIndex = 3
-TitleLabel.Visible = true
 
--- ===== 2. Subtitle - Kaitun Blox Fruit =====
 local SubtitleLabel = Instance.new("TextLabel")
 SubtitleLabel.Name = "Subtitle"
 SubtitleLabel.Parent = Container
 SubtitleLabel.AnchorPoint = Vector2.new(0.5, 0)
 SubtitleLabel.Position = UDim2.new(0.5, 0, 0, 52)
-SubtitleLabel.Size = UDim2.new(1, 0, 0, 25)
+SubtitleLabel.Size = UDim2.new(1, 0, 0, 22)
 SubtitleLabel.BackgroundTransparency = 1
 SubtitleLabel.Text = "Kaitun Blox Fruit"
 SubtitleLabel.TextColor3 = Color3.fromRGB(180, 190, 220)
-SubtitleLabel.TextSize = 16
+SubtitleLabel.TextSize = 15
 SubtitleLabel.Font = Enum.Font.Gotham
 SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Center
 SubtitleLabel.TextYAlignment = Enum.TextYAlignment.Center
-SubtitleLabel.TextTransparency = 0
 SubtitleLabel.TextStrokeTransparency = 0.5
 SubtitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 SubtitleLabel.ZIndex = 3
-SubtitleLabel.Visible = true
 
--- ===== 3. Status - Hiển thị trạng thái nhân vật =====
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Name = "Status"
 StatusLabel.Parent = Container
 StatusLabel.AnchorPoint = Vector2.new(0.5, 0)
-StatusLabel.Position = UDim2.new(0.5, 0, 0, 88)
+StatusLabel.Position = UDim2.new(0.5, 0, 0, 85)
 StatusLabel.Size = UDim2.new(1, 0, 0, 30)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Text = "Status: Starting..."
 StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 150)
-StatusLabel.TextSize = 17
+StatusLabel.TextSize = 16
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
 StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
-StatusLabel.TextTransparency = 0
 StatusLabel.TextStrokeTransparency = 0.5
 StatusLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 StatusLabel.ZIndex = 3
-StatusLabel.Visible = true
 
--- ===== 4. Time - Thời gian đã hoạt động =====
 local TimeLabel = Instance.new("TextLabel")
 TimeLabel.Name = "Time"
 TimeLabel.Parent = Container
 TimeLabel.AnchorPoint = Vector2.new(0.5, 0)
-TimeLabel.Position = UDim2.new(0.5, 0, 0, 118)
+TimeLabel.Position = UDim2.new(0.5, 0, 0, 115)
 TimeLabel.Size = UDim2.new(1, 0, 0, 25)
 TimeLabel.BackgroundTransparency = 1
 TimeLabel.Text = "Time: 00:00:00"
@@ -167,18 +158,15 @@ TimeLabel.TextSize = 15
 TimeLabel.Font = Enum.Font.Gotham
 TimeLabel.TextXAlignment = Enum.TextXAlignment.Center
 TimeLabel.TextYAlignment = Enum.TextYAlignment.Center
-TimeLabel.TextTransparency = 0
 TimeLabel.TextStrokeTransparency = 0.5
 TimeLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 TimeLabel.ZIndex = 3
-TimeLabel.Visible = true
 
--- ===== 5. Earned - Beli và Frag =====
 local EarnedFrame = Instance.new("Frame")
 EarnedFrame.Name = "EarnedFrame"
 EarnedFrame.Parent = Container
 EarnedFrame.AnchorPoint = Vector2.new(0.5, 0)
-EarnedFrame.Position = UDim2.new(0.5, 0, 0, 152)
+EarnedFrame.Position = UDim2.new(0.5, 0, 0, 150)
 EarnedFrame.Size = UDim2.new(0.9, 0, 0, 38)
 EarnedFrame.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
 EarnedFrame.BackgroundTransparency = 0.85
@@ -186,9 +174,7 @@ EarnedFrame.BorderSizePixel = 1
 EarnedFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
 EarnedFrame.BorderTransparency = 0.7
 EarnedFrame.ZIndex = 3
-EarnedFrame.Visible = true
 
--- Beli
 local BeliLabel = Instance.new("TextLabel")
 BeliLabel.Name = "Beli"
 BeliLabel.Parent = EarnedFrame
@@ -196,17 +182,14 @@ BeliLabel.AnchorPoint = Vector2.new(0.5, 0.5)
 BeliLabel.Position = UDim2.new(0.25, 0, 0.5, 0)
 BeliLabel.Size = UDim2.new(0.4, 0, 1, 0)
 BeliLabel.BackgroundTransparency = 1
-BeliLabel.Text = "💰 Beli: 0"
+BeliLabel.Text = "Beli: 0"
 BeliLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-BeliLabel.TextSize = 16
+BeliLabel.TextSize = 15
 BeliLabel.Font = Enum.Font.GothamBold
 BeliLabel.TextXAlignment = Enum.TextXAlignment.Center
 BeliLabel.TextYAlignment = Enum.TextYAlignment.Center
-BeliLabel.TextTransparency = 0
 BeliLabel.ZIndex = 3
-BeliLabel.Visible = true
 
--- Frag
 local FragLabel = Instance.new("TextLabel")
 FragLabel.Name = "Frag"
 FragLabel.Parent = EarnedFrame
@@ -214,17 +197,14 @@ FragLabel.AnchorPoint = Vector2.new(0.5, 0.5)
 FragLabel.Position = UDim2.new(0.75, 0, 0.5, 0)
 FragLabel.Size = UDim2.new(0.4, 0, 1, 0)
 FragLabel.BackgroundTransparency = 1
-FragLabel.Text = "💎 Frag: 0"
+FragLabel.Text = "Frag: 0"
 FragLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
-FragLabel.TextSize = 16
+FragLabel.TextSize = 15
 FragLabel.Font = Enum.Font.GothamBold
 FragLabel.TextXAlignment = Enum.TextXAlignment.Center
 FragLabel.TextYAlignment = Enum.TextYAlignment.Center
-FragLabel.TextTransparency = 0
 FragLabel.ZIndex = 3
-FragLabel.Visible = true
 
--- Divider line trong earned frame
 local Divider = Instance.new("Frame")
 Divider.Name = "Divider"
 Divider.Parent = EarnedFrame
@@ -235,9 +215,7 @@ Divider.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
 Divider.BackgroundTransparency = 0.6
 Divider.BorderSizePixel = 0
 Divider.ZIndex = 3
-Divider.Visible = true
 
--- Footer - Version
 local FooterLabel = Instance.new("TextLabel")
 FooterLabel.Name = "Footer"
 FooterLabel.Parent = Container
@@ -255,119 +233,33 @@ FooterLabel.TextTransparency = 0.5
 FooterLabel.TextStrokeTransparency = 0.5
 FooterLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 FooterLabel.ZIndex = 3
-FooterLabel.Visible = true
-
-print("[BobonHub] UI Created!")
-
--- ══════════════════════════════════════════════════════════════════
---              HIỆU ỨNG XUẤT HIỆN MENU
--- ══════════════════════════════════════════════════════════════════
-
--- Fade in overlay từ từ
-task.spawn(function()
-    task.wait(0.1)
-    local tOverlay = TweenService:Create(Overlay, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        BackgroundTransparency = 0.65
-    })
-    tOverlay:Play()
-end)
-
--- Hiệu ứng xuất hiện cho từng phần tử
-task.spawn(function()
-    task.wait(0.3)
-    
-    -- 1. Title BOBON HUB xuất hiện với hiệu ứng scale
-    TitleLabel.TextTransparency = 0
-    TitleLabel.TextScaled = false
-    local tTitle = TweenService:Create(TitleLabel, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        TextSize = 42
-    })
-    tTitle:Play()
-    
-    task.wait(0.25)
-    
-    -- 2. Subtitle
-    SubtitleLabel.TextTransparency = 0
-    local tSub = TweenService:Create(SubtitleLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
-    })
-    tSub:Play()
-    
-    task.wait(0.2)
-    
-    -- 3. Status
-    StatusLabel.TextTransparency = 0
-    local tStatus = TweenService:Create(StatusLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
-    })
-    tStatus:Play()
-    
-    task.wait(0.15)
-    
-    -- 4. Time
-    TimeLabel.TextTransparency = 0
-    local tTime = TweenService:Create(TimeLabel, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        TextTransparency = 0
-    })
-    tTime:Play()
-    
-    task.wait(0.15)
-    
-    -- 5. Earned frame
-    EarnedFrame.BackgroundTransparency = 0.85
-    local tFrame = TweenService:Create(EarnedFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        BackgroundTransparency = 0.85
-    })
-    tFrame:Play()
-    
-    task.wait(0.1)
-    
-    -- Beli và Frag
-    BeliLabel.TextTransparency = 0
-    FragLabel.TextTransparency = 0
-    
-    task.wait(0.1)
-    
-    -- 6. Footer
-    FooterLabel.TextTransparency = 0.5
-    
-    print("[BobonHub] UI Animation Complete!")
-end)
-
--- ══════════════════════════════════════════════════════════════════
---                    UPDATE LOOP
--- ══════════════════════════════════════════════════════════════════
 
 local function FormatNum(n)
     local s = tostring(math.floor(n or 0))
-    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
+    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
 
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
             local e = os.time() - _G.State.StartTime
-            TimeLabel.Text = string.format("⏱️ Time: %02d:%02d:%02d", 
-                math.floor(e/3600), 
-                math.floor((e%3600)/60), 
-                e%60
+            TimeLabel.Text = string.format("Time: %02d:%02d:%02d",
+                math.floor(e / 3600),
+                math.floor((e % 3600) / 60),
+                e % 60
             )
-            StatusLabel.Text = "📌 Status: " .. (_G.BobonStatus or "Idle")
-            
+            StatusLabel.Text = "Status: " .. (_G.BobonStatus or "Idle")
+
             local data = LP:FindFirstChild("Data")
             if data then
                 local beli = data:FindFirstChild("Beli") and data.Beli.Value or 0
                 local frag = data:FindFirstChild("Fragments") and data.Fragments.Value or 0
-                BeliLabel.Text = "💰 Beli: " .. FormatNum(beli)
-                FragLabel.Text = "💎 Frag: " .. FormatNum(frag)
+                BeliLabel.Text = "Beli: " .. FormatNum(beli)
+                FragLabel.Text = "Frag: " .. FormatNum(frag)
             end
         end)
     end
 end)
-
--- ══════════════════════════════════════════════════════════════════
---                         HELPER FUNCTIONS
--- ══════════════════════════════════════════════════════════════════
 
 local function GetLevel()
     local data = LP:FindFirstChild("Data")
@@ -457,7 +349,8 @@ local function FindMob(mobName)
         if mob.Name == mobName and mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 and mob:FindFirstChild("HumanoidRootPart") then
             if hrp then
                 local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if d < bestDist then best = mob; bestDist = d end
+                if d < bestDist then best = mob;
+                    bestDist = d end
             else
                 return mob
             end
@@ -476,10 +369,6 @@ local function FindBoss(bossName)
     end
     return nil
 end
-
--- ══════════════════════════════════════════════════════════════════
---                TWEEN - DI CHUYỂN THÔNG THƯỜNG
--- ══════════════════════════════════════════════════════════════════
 
 local function Tween(cf)
     local hrp = GetHRP()
@@ -500,7 +389,7 @@ local function Tween(cf)
     _G.State.IsTweening = true
 
     local dur = math.min(dist / _G.Settings.TweenSpeed, 5)
-    local t = TS:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = cf})
+    local t = TS:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), { CFrame = cf })
 
     _G.State.CurrentTween = t
 
@@ -513,10 +402,6 @@ local function Tween(cf)
     return t
 end
 
--- ══════════════════════════════════════════════════════════════════
---                   TEAM SELECTION
--- ══════════════════════════════════════════════════════════════════
-
 local TeamSelected = false
 
 local function SelectTeam()
@@ -524,29 +409,27 @@ local function SelectTeam()
 
     for attempt = 1, 5 do
         if LP.Team and LP.Team.Name == "Pirates" then
-            print("[BobonHub] Team = Pirates ✓")
-            _G.BobonStatus = "Team: Pirates ✓"
+            print("[BobonHub] Team = Pirates")
+            _G.BobonStatus = "Team: Pirates"
             TeamSelected = true
             return true
         end
 
         pcall(function() CommF_:InvokeServer("SetTeam", "Pirates") end)
         task.wait(1.5)
-        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true; return true end
+        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true;
+            return true end
 
         pcall(function() CommF_:InvokeServer("ChooseTeam", "Pirates") end)
         task.wait(1.5)
-        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true; return true end
+        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true;
+            return true end
 
         task.wait(2)
     end
 end
 
--- ══════════════════════════════════════════════════════════════════
---             AUTO FRUIT (RANDOM + STORE)
--- ══════════════════════════════════════════════════════════════════
-
-local FruitPrices = {[1] = 38000, [2] = 100000, [3] = 250000}
+local FruitPrices = { [1] = 38000, [2] = 100000, [3] = 250000 }
 
 local function HasFruitInStorage(fruitName)
     local ok, result = pcall(function()
@@ -608,12 +491,9 @@ end
 task.spawn(function() while task.wait(12) do pcall(AutoRandomFruit) end end)
 task.spawn(function() while task.wait(30) do pcall(AutoStoreFruit) end end)
 
--- ══════════════════════════════════════════════════════════════════
---                     BACKGROUND SYSTEMS
--- ══════════════════════════════════════════════════════════════════
-
 LP.Idled:Connect(function()
-    pcall(function() VU:CaptureController(); VU:ClickButton2(Vector2.new()) end)
+    pcall(function() VU:CaptureController();
+        VU:ClickButton2(Vector2.new()) end)
 end)
 
 RunService.Stepped:Connect(function()
@@ -683,19 +563,15 @@ task.spawn(function()
     end
 end)
 
--- ══════════════════════════════════════════════════════════════════
---                    AUTO QUEST ITEMS
--- ══════════════════════════════════════════════════════════════════
-
 local function AutoSaber()
     if HasItem("Saber") or GetLevel() < 200 or GetSea() ~= 1 then return false end
     _G.BobonStatus = "Quest: Saber"
     local torches = {
-        {Name = "Torch1", CF = CFrame.new(-1610, 11, 163)},
-        {Name = "Torch2", CF = CFrame.new(1114, 4, 4350)},
-        {Name = "Torch3", CF = CFrame.new(1400, 101, -1250)},
-        {Name = "Torch4", CF = CFrame.new(-5070, 23, 4325)},
-        {Name = "Torch5", CF = CFrame.new(-1675, 7, -2985)},
+        { Name = "Torch1", CF = CFrame.new(-1610, 11, 163) },
+        { Name = "Torch2", CF = CFrame.new(1114, 4, 4350) },
+        { Name = "Torch3", CF = CFrame.new(1400, 101, -1250) },
+        { Name = "Torch4", CF = CFrame.new(-5070, 23, 4325) },
+        { Name = "Torch5", CF = CFrame.new(-1675, 7, -2985) },
     }
     for _, torch in ipairs(torches) do
         Tween(torch.CF)
@@ -795,80 +671,76 @@ local function AutoThirdSea()
     return true
 end
 
--- ══════════════════════════════════════════════════════════════════
---                       QUEST DATABASE
--- ══════════════════════════════════════════════════════════════════
-
 local QuestDB = {
-    {Min=1, Max=14, Q="BanditQuest1", M="Bandit", QL=1, QC=CFrame.new(1059,17,1550), MC=CFrame.new(1145,17,1634)},
-    {Min=15, Max=29, Q="JungleQuest", M="Monkey", QL=1, QC=CFrame.new(-1598,37,153), MC=CFrame.new(-1448,50,24)},
-    {Min=30, Max=59, Q="BuggyQuest1", M="Brute", QL=1, QC=CFrame.new(-1141,5,3831), MC=CFrame.new(-1145,15,4350)},
-    {Min=60, Max=74, Q="DesertQuest", M="Desert Bandit", QL=1, QC=CFrame.new(894,7,4391), MC=CFrame.new(932,7,4484)},
-    {Min=75, Max=89, Q="DesertQuest", M="Desert Officer", QL=2, QC=CFrame.new(894,7,4391), MC=CFrame.new(1580,11,4373)},
-    {Min=90, Max=99, Q="SnowQuest", M="Snow Bandit", QL=1, QC=CFrame.new(1389,88,-1298), MC=CFrame.new(1376,87,-1396)},
-    {Min=100, Max=119, Q="SnowQuest", M="Snowman", QL=2, QC=CFrame.new(1389,88,-1298), MC=CFrame.new(1201,472,-1401)},
-    {Min=120, Max=149, Q="MarineQuest2", M="Chief Petty Officer", QL=1, QC=CFrame.new(-5039,29,4324), MC=CFrame.new(-4882,23,4255)},
-    {Min=150, Max=174, Q="MarineQuest2", M="Sky Bandit", QL=2, QC=CFrame.new(-5039,29,4324), MC=CFrame.new(-4953,295,-2899)},
-    {Min=175, Max=189, Q="PrisonerQuest", M="Prisoner", QL=1, QC=CFrame.new(5308,2,474), MC=CFrame.new(5411,96,690)},
-    {Min=190, Max=209, Q="PrisonerQuest", M="Dangerous Prisoner", QL=2, QC=CFrame.new(5308,2,474), MC=CFrame.new(5654,15,866)},
-    {Min=210, Max=249, Q="ColosseumQuest", M="Gladiator", QL=1, QC=CFrame.new(-1580,7,296), MC=CFrame.new(-1521,86,405)},
-    {Min=250, Max=299, Q="ColosseumQuest", M="Military Soldier", QL=2, QC=CFrame.new(-1580,7,296), MC=CFrame.new(-1823,54,29)},
-    {Min=300, Max=374, Q="MagmaQuest", M="Military Spy", QL=1, QC=CFrame.new(-5316,12,8515), MC=CFrame.new(-5787,76,8349)},
-    {Min=375, Max=399, Q="MagmaQuest", M="Magma Admiral", QL=2, QC=CFrame.new(-5316,12,8515), MC=CFrame.new(-5530,81,8849)},
-    {Min=400, Max=449, Q="FishmanQuest", M="Fishman Warrior", QL=1, QC=CFrame.new(61123,19,1569), MC=CFrame.new(60879,19,1549)},
-    {Min=450, Max=474, Q="FishmanQuest", M="Fishman Commando", QL=2, QC=CFrame.new(61123,19,1569), MC=CFrame.new(61738,65,1584)},
-    {Min=475, Max=524, Q="SkyExp1Quest", M="God's Guard", QL=1, QC=CFrame.new(-4722,845,-1954), MC=CFrame.new(-4698,845,-1912)},
-    {Min=525, Max=549, Q="SkyExp1Quest", M="Shanda", QL=2, QC=CFrame.new(-7863,5546,-380), MC=CFrame.new(-7685,5567,-446)},
-    {Min=550, Max=624, Q="SkyExp2Quest", M="Royal Squad", QL=1, QC=CFrame.new(-7906,5636,-1412), MC=CFrame.new(-7555,5637,-1420)},
-    {Min=625, Max=649, Q="SkyExp2Quest", M="Royal Soldier", QL=2, QC=CFrame.new(-7906,5636,-1412), MC=CFrame.new(-7836,5645,-1699)},
-    {Min=650, Max=699, Q="FountainQuest", M="Galley Pirate", QL=1, QC=CFrame.new(5259,38,4050), MC=CFrame.new(5551,78,3930)},
-    {Min=700, Max=774, Q="Area1Quest", M="Raider", QL=1, QC=CFrame.new(-427,73,1837), MC=CFrame.new(-746,39,2507)},
-    {Min=775, Max=849, Q="Area1Quest", M="Mercenary", QL=2, QC=CFrame.new(-427,73,1837), MC=CFrame.new(-874,141,1312)},
-    {Min=850, Max=899, Q="Area2Quest", M="Swan Pirate", QL=1, QC=CFrame.new(634,73,918), MC=CFrame.new(878,122,1235)},
-    {Min=900, Max=949, Q="Area2Quest", M="Marine Lieutenant", QL=2, QC=CFrame.new(634,73,918), MC=CFrame.new(-845,77,2016)},
-    {Min=950, Max=999, Q="MarineQuest3", M="Marine Captain", QL=1, QC=CFrame.new(-2441,73,1891), MC=CFrame.new(-2035,73,2050)},
-    {Min=1000, Max=1049, Q="MarineQuest3", M="Zombie", QL=2, QC=CFrame.new(-2441,73,1891), MC=CFrame.new(-5736,126,-653)},
-    {Min=1050, Max=1099, Q="ZombieQuest", M="Vampire", QL=1, QC=CFrame.new(-5494,49,-795), MC=CFrame.new(-6033,7,-1317)},
-    {Min=1100, Max=1124, Q="ZombieQuest", M="Elf", QL=2, QC=CFrame.new(-5494,49,-795), MC=CFrame.new(56,194,-1393)},
-    {Min=1125, Max=1174, Q="NinjaQuest", M="Ninja Assassin", QL=1, QC=CFrame.new(-5377,39,-4826), MC=CFrame.new(-5238,84,-4634)},
-    {Min=1175, Max=1199, Q="NinjaQuest", M="Ninja Hunter", QL=2, QC=CFrame.new(-5377,39,-4826), MC=CFrame.new(-5700,50,-4884)},
-    {Min=1200, Max=1249, Q="IceSideQuest", M="Snow Trooper", QL=1, QC=CFrame.new(-6061,16,-4903), MC=CFrame.new(-5693,16,-4898)},
-    {Min=1250, Max=1274, Q="IceSideQuest", M="Winter Warrior", QL=2, QC=CFrame.new(-6061,16,-4903), MC=CFrame.new(-5587,9,-5008)},
-    {Min=1275, Max=1299, Q="ShipQuest1", M="Lab Subordinate", QL=1, QC=CFrame.new(-9505,38,4088), MC=CFrame.new(-9230,45,4294)},
-    {Min=1300, Max=1324, Q="ShipQuest2", M="Horned Warrior", QL=1, QC=CFrame.new(-9481,72,6059), MC=CFrame.new(-6779,83,5928)},
-    {Min=1325, Max=1349, Q="ShipQuest2", M="Magma Ninja", QL=2, QC=CFrame.new(-9481,72,6059), MC=CFrame.new(-5900,78,5800)},
-    {Min=1350, Max=1374, Q="FrostQuest", M="Lava Pirate", QL=1, QC=CFrame.new(-5249,38,-4445), MC=CFrame.new(-5270,42,-4800)},
-    {Min=1375, Max=1399, Q="FrostQuest", M="Ship Deckhand", QL=2, QC=CFrame.new(-5249,38,-4445), MC=CFrame.new(-8912,30,-9844)},
-    {Min=1400, Max=1424, Q="ForgottenQuest", M="Ship Engineer", QL=1, QC=CFrame.new(-3053,237,-10145), MC=CFrame.new(-9300,30,-9940)},
-    {Min=1425, Max=1449, Q="ForgottenQuest", M="Ship Steward", QL=2, QC=CFrame.new(-3053,237,-10145), MC=CFrame.new(-9400,15,-9350)},
-    {Min=1450, Max=1474, Q="IceCastleQuest", M="Ship Officer", QL=1, QC=CFrame.new(-5539,314,-2972), MC=CFrame.new(-9658,8,-9700)},
-    {Min=1475, Max=1524, Q="IceCastleQuest", M="Arctic Warrior", QL=2, QC=CFrame.new(-5539,314,-2972), MC=CFrame.new(-5990,340,-2800)},
-    {Min=1525, Max=1574, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,191,5610)},
-    {Min=1575, Max=1599, Q="PiratePortQuest", M="Pistol Billionaire", QL=2, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-379,74,5873)},
-    {Min=1600, Max=1624, Q="AmazonQuest", M="Dragon Crew Warrior", QL=1, QC=CFrame.new(5832,52,-1105), MC=CFrame.new(6339,52,-1213)},
-    {Min=1625, Max=1649, Q="AmazonQuest", M="Dragon Crew Archer", QL=2, QC=CFrame.new(5832,52,-1105), MC=CFrame.new(6594,383,139)},
-    {Min=1650, Max=1699, Q="AmazonQuest2", M="Female Islander", QL=1, QC=CFrame.new(5448,602,751), MC=CFrame.new(5792,820,863)},
-    {Min=1700, Max=1724, Q="AmazonQuest2", M="Giant Islander", QL=2, QC=CFrame.new(5448,602,751), MC=CFrame.new(4530,656,-131)},
-    {Min=1725, Max=1774, Q="MarineTreeIsland", M="Marine Commodore", QL=1, QC=CFrame.new(2180,29,-6737), MC=CFrame.new(2490,73,-7070)},
-    {Min=1775, Max=1799, Q="MarineTreeIsland", M="Marine Rear Admiral", QL=2, QC=CFrame.new(2180,29,-6737), MC=CFrame.new(3671,402,-6982)},
-    {Min=1800, Max=1849, Q="DeepForestIsland", M="Fishman Raider", QL=1, QC=CFrame.new(-13234,333,-7625), MC=CFrame.new(-10560,332,-8754)},
-    {Min=1850, Max=1899, Q="DeepForestIsland", M="Fishman Captain", QL=2, QC=CFrame.new(-13234,333,-7625), MC=CFrame.new(-11465,332,-8770)},
-    {Min=1900, Max=1924, Q="DeepForestIsland2", M="Forest Pirate", QL=1, QC=CFrame.new(-12684,391,-9902), MC=CFrame.new(-13225,425,-7755)},
-    {Min=1925, Max=1974, Q="DeepForestIsland3", M="Jungle Pirate", QL=1, QC=CFrame.new(-12191,332,-10549), MC=CFrame.new(-12107,332,-10549)},
-    {Min=1975, Max=1999, Q="PeanutIsland", M="Peanut Scout", QL=1, QC=CFrame.new(-2104,38,-10192), MC=CFrame.new(-2124,123,-10435)},
-    {Min=2000, Max=2024, Q="PeanutIsland", M="Peanut President", QL=2, QC=CFrame.new(-2104,38,-10192), MC=CFrame.new(-1876,38,-10946)},
-    {Min=2025, Max=2049, Q="IceCreamIsland", M="Ice Cream Chef", QL=1, QC=CFrame.new(-820,66,-10965), MC=CFrame.new(-821,44,-11253)},
-    {Min=2050, Max=2074, Q="IceCreamIsland", M="Ice Cream Commander", QL=2, QC=CFrame.new(-820,66,-10965), MC=CFrame.new(-610,127,-11034)},
-    {Min=2075, Max=2099, Q="CakeQuest1", M="Cookie Crafter", QL=1, QC=CFrame.new(-2022,38,-12030), MC=CFrame.new(-2365,38,-12099)},
-    {Min=2100, Max=2124, Q="CakeQuest1", M="Cake Guard", QL=2, QC=CFrame.new(-2022,38,-12030), MC=CFrame.new(-1651,38,-12293)},
-    {Min=2125, Max=2149, Q="CakeQuest2", M="Baking Staff", QL=1, QC=CFrame.new(-1927,38,-12843), MC=CFrame.new(-1980,38,-12763)},
-    {Min=2150, Max=2199, Q="CakeQuest2", M="Head Baker", QL=2, QC=CFrame.new(-1927,38,-12843), MC=CFrame.new(-2235,53,-12858)},
-    {Min=2200, Max=2224, Q="ChocQuest1", M="Cocoa Warrior", QL=1, QC=CFrame.new(233,25,-12201), MC=CFrame.new(167,26,-12238)},
-    {Min=2225, Max=2249, Q="ChocQuest1", M="Chocolate Bar Battler", QL=2, QC=CFrame.new(233,25,-12201), MC=CFrame.new(507,73,-12789)},
-    {Min=2250, Max=2274, Q="ChocQuest2", M="Sweet Thief", QL=1, QC=CFrame.new(151,25,-12774), MC=CFrame.new(-71,25,-12381)},
-    {Min=2275, Max=2299, Q="ChocQuest2", M="Candy Rebel", QL=2, QC=CFrame.new(151,25,-12774), MC=CFrame.new(134,77,-12882)},
-    {Min=2300, Max=2324, Q="CandyQuest1", M="Candy Pirate", QL=1, QC=CFrame.new(-1149,14,-14453), MC=CFrame.new(-1380,14,-14453)},
-    {Min=2325, Max=2800, Q="CandyQuest1", M="Snow Demon", QL=2, QC=CFrame.new(-1149,14,-14453), MC=CFrame.new(-907,14,-14453)},
+    { Min = 1, Max = 14, Q = "BanditQuest1", M = "Bandit", QL = 1, QC = CFrame.new(1059, 17, 1550), MC = CFrame.new(1145, 17, 1634) },
+    { Min = 15, Max = 29, Q = "JungleQuest", M = "Monkey", QL = 1, QC = CFrame.new(-1598, 37, 153), MC = CFrame.new(-1448, 50, 24) },
+    { Min = 30, Max = 59, Q = "BuggyQuest1", M = "Brute", QL = 1, QC = CFrame.new(-1141, 5, 3831), MC = CFrame.new(-1145, 15, 4350) },
+    { Min = 60, Max = 74, Q = "DesertQuest", M = "Desert Bandit", QL = 1, QC = CFrame.new(894, 7, 4391), MC = CFrame.new(932, 7, 4484) },
+    { Min = 75, Max = 89, Q = "DesertQuest", M = "Desert Officer", QL = 2, QC = CFrame.new(894, 7, 4391), MC = CFrame.new(1580, 11, 4373) },
+    { Min = 90, Max = 99, Q = "SnowQuest", M = "Snow Bandit", QL = 1, QC = CFrame.new(1389, 88, -1298), MC = CFrame.new(1376, 87, -1396) },
+    { Min = 100, Max = 119, Q = "SnowQuest", M = "Snowman", QL = 2, QC = CFrame.new(1389, 88, -1298), MC = CFrame.new(1201, 472, -1401) },
+    { Min = 120, Max = 149, Q = "MarineQuest2", M = "Chief Petty Officer", QL = 1, QC = CFrame.new(-5039, 29, 4324), MC = CFrame.new(-4882, 23, 4255) },
+    { Min = 150, Max = 174, Q = "MarineQuest2", M = "Sky Bandit", QL = 2, QC = CFrame.new(-5039, 29, 4324), MC = CFrame.new(-4953, 295, -2899) },
+    { Min = 175, Max = 189, Q = "PrisonerQuest", M = "Prisoner", QL = 1, QC = CFrame.new(5308, 2, 474), MC = CFrame.new(5411, 96, 690) },
+    { Min = 190, Max = 209, Q = "PrisonerQuest", M = "Dangerous Prisoner", QL = 2, QC = CFrame.new(5308, 2, 474), MC = CFrame.new(5654, 15, 866) },
+    { Min = 210, Max = 249, Q = "ColosseumQuest", M = "Gladiator", QL = 1, QC = CFrame.new(-1580, 7, 296), MC = CFrame.new(-1521, 86, 405) },
+    { Min = 250, Max = 299, Q = "ColosseumQuest", M = "Military Soldier", QL = 2, QC = CFrame.new(-1580, 7, 296), MC = CFrame.new(-1823, 54, 29) },
+    { Min = 300, Max = 374, Q = "MagmaQuest", M = "Military Spy", QL = 1, QC = CFrame.new(-5316, 12, 8515), MC = CFrame.new(-5787, 76, 8349) },
+    { Min = 375, Max = 399, Q = "MagmaQuest", M = "Magma Admiral", QL = 2, QC = CFrame.new(-5316, 12, 8515), MC = CFrame.new(-5530, 81, 8849) },
+    { Min = 400, Max = 449, Q = "FishmanQuest", M = "Fishman Warrior", QL = 1, QC = CFrame.new(61123, 19, 1569), MC = CFrame.new(60879, 19, 1549) },
+    { Min = 450, Max = 474, Q = "FishmanQuest", M = "Fishman Commando", QL = 2, QC = CFrame.new(61123, 19, 1569), MC = CFrame.new(61738, 65, 1584) },
+    { Min = 475, Max = 524, Q = "SkyExp1Quest", M = "God's Guard", QL = 1, QC = CFrame.new(-4722, 845, -1954), MC = CFrame.new(-4698, 845, -1912) },
+    { Min = 525, Max = 549, Q = "SkyExp1Quest", M = "Shanda", QL = 2, QC = CFrame.new(-7863, 5546, -380), MC = CFrame.new(-7685, 5567, -446) },
+    { Min = 550, Max = 624, Q = "SkyExp2Quest", M = "Royal Squad", QL = 1, QC = CFrame.new(-7906, 5636, -1412), MC = CFrame.new(-7555, 5637, -1420) },
+    { Min = 625, Max = 649, Q = "SkyExp2Quest", M = "Royal Soldier", QL = 2, QC = CFrame.new(-7906, 5636, -1412), MC = CFrame.new(-7836, 5645, -1699) },
+    { Min = 650, Max = 699, Q = "FountainQuest", M = "Galley Pirate", QL = 1, QC = CFrame.new(5259, 38, 4050), MC = CFrame.new(5551, 78, 3930) },
+    { Min = 700, Max = 774, Q = "Area1Quest", M = "Raider", QL = 1, QC = CFrame.new(-427, 73, 1837), MC = CFrame.new(-746, 39, 2507) },
+    { Min = 775, Max = 849, Q = "Area1Quest", M = "Mercenary", QL = 2, QC = CFrame.new(-427, 73, 1837), MC = CFrame.new(-874, 141, 1312) },
+    { Min = 850, Max = 899, Q = "Area2Quest", M = "Swan Pirate", QL = 1, QC = CFrame.new(634, 73, 918), MC = CFrame.new(878, 122, 1235) },
+    { Min = 900, Max = 949, Q = "Area2Quest", M = "Marine Lieutenant", QL = 2, QC = CFrame.new(634, 73, 918), MC = CFrame.new(-845, 77, 2016) },
+    { Min = 950, Max = 999, Q = "MarineQuest3", M = "Marine Captain", QL = 1, QC = CFrame.new(-2441, 73, 1891), MC = CFrame.new(-2035, 73, 2050) },
+    { Min = 1000, Max = 1049, Q = "MarineQuest3", M = "Zombie", QL = 2, QC = CFrame.new(-2441, 73, 1891), MC = CFrame.new(-5736, 126, -653) },
+    { Min = 1050, Max = 1099, Q = "ZombieQuest", M = "Vampire", QL = 1, QC = CFrame.new(-5494, 49, -795), MC = CFrame.new(-6033, 7, -1317) },
+    { Min = 1100, Max = 1124, Q = "ZombieQuest", M = "Elf", QL = 2, QC = CFrame.new(-5494, 49, -795), MC = CFrame.new(56, 194, -1393) },
+    { Min = 1125, Max = 1174, Q = "NinjaQuest", M = "Ninja Assassin", QL = 1, QC = CFrame.new(-5377, 39, -4826), MC = CFrame.new(-5238, 84, -4634) },
+    { Min = 1175, Max = 1199, Q = "NinjaQuest", M = "Ninja Hunter", QL = 2, QC = CFrame.new(-5377, 39, -4826), MC = CFrame.new(-5700, 50, -4884) },
+    { Min = 1200, Max = 1249, Q = "IceSideQuest", M = "Snow Trooper", QL = 1, QC = CFrame.new(-6061, 16, -4903), MC = CFrame.new(-5693, 16, -4898) },
+    { Min = 1250, Max = 1274, Q = "IceSideQuest", M = "Winter Warrior", QL = 2, QC = CFrame.new(-6061, 16, -4903), MC = CFrame.new(-5587, 9, -5008) },
+    { Min = 1275, Max = 1299, Q = "ShipQuest1", M = "Lab Subordinate", QL = 1, QC = CFrame.new(-9505, 38, 4088), MC = CFrame.new(-9230, 45, 4294) },
+    { Min = 1300, Max = 1324, Q = "ShipQuest2", M = "Horned Warrior", QL = 1, QC = CFrame.new(-9481, 72, 6059), MC = CFrame.new(-6779, 83, 5928) },
+    { Min = 1325, Max = 1349, Q = "ShipQuest2", M = "Magma Ninja", QL = 2, QC = CFrame.new(-9481, 72, 6059), MC = CFrame.new(-5900, 78, 5800) },
+    { Min = 1350, Max = 1374, Q = "FrostQuest", M = "Lava Pirate", QL = 1, QC = CFrame.new(-5249, 38, -4445), MC = CFrame.new(-5270, 42, -4800) },
+    { Min = 1375, Max = 1399, Q = "FrostQuest", M = "Ship Deckhand", QL = 2, QC = CFrame.new(-5249, 38, -4445), MC = CFrame.new(-8912, 30, -9844) },
+    { Min = 1400, Max = 1424, Q = "ForgottenQuest", M = "Ship Engineer", QL = 1, QC = CFrame.new(-3053, 237, -10145), MC = CFrame.new(-9300, 30, -9940) },
+    { Min = 1425, Max = 1449, Q = "ForgottenQuest", M = "Ship Steward", QL = 2, QC = CFrame.new(-3053, 237, -10145), MC = CFrame.new(-9400, 15, -9350) },
+    { Min = 1450, Max = 1474, Q = "IceCastleQuest", M = "Ship Officer", QL = 1, QC = CFrame.new(-5539, 314, -2972), MC = CFrame.new(-9658, 8, -9700) },
+    { Min = 1475, Max = 1524, Q = "IceCastleQuest", M = "Arctic Warrior", QL = 2, QC = CFrame.new(-5539, 314, -2972), MC = CFrame.new(-5990, 340, -2800) },
+    { Min = 1525, Max = 1574, Q = "PiratePortQuest", M = "Pirate Millionaire", QL = 1, QC = CFrame.new(-290, 44, 5580), MC = CFrame.new(-435, 191, 5610) },
+    { Min = 1575, Max = 1599, Q = "PiratePortQuest", M = "Pistol Billionaire", QL = 2, QC = CFrame.new(-290, 44, 5580), MC = CFrame.new(-379, 74, 5873) },
+    { Min = 1600, Max = 1624, Q = "AmazonQuest", M = "Dragon Crew Warrior", QL = 1, QC = CFrame.new(5832, 52, -1105), MC = CFrame.new(6339, 52, -1213) },
+    { Min = 1625, Max = 1649, Q = "AmazonQuest", M = "Dragon Crew Archer", QL = 2, QC = CFrame.new(5832, 52, -1105), MC = CFrame.new(6594, 383, 139) },
+    { Min = 1650, Max = 1699, Q = "AmazonQuest2", M = "Female Islander", QL = 1, QC = CFrame.new(5448, 602, 751), MC = CFrame.new(5792, 820, 863) },
+    { Min = 1700, Max = 1724, Q = "AmazonQuest2", M = "Giant Islander", QL = 2, QC = CFrame.new(5448, 602, 751), MC = CFrame.new(4530, 656, -131) },
+    { Min = 1725, Max = 1774, Q = "MarineTreeIsland", M = "Marine Commodore", QL = 1, QC = CFrame.new(2180, 29, -6737), MC = CFrame.new(2490, 73, -7070) },
+    { Min = 1775, Max = 1799, Q = "MarineTreeIsland", M = "Marine Rear Admiral", QL = 2, QC = CFrame.new(2180, 29, -6737), MC = CFrame.new(3671, 402, -6982) },
+    { Min = 1800, Max = 1849, Q = "DeepForestIsland", M = "Fishman Raider", QL = 1, QC = CFrame.new(-13234, 333, -7625), MC = CFrame.new(-10560, 332, -8754) },
+    { Min = 1850, Max = 1899, Q = "DeepForestIsland", M = "Fishman Captain", QL = 2, QC = CFrame.new(-13234, 333, -7625), MC = CFrame.new(-11465, 332, -8770) },
+    { Min = 1900, Max = 1924, Q = "DeepForestIsland2", M = "Forest Pirate", QL = 1, QC = CFrame.new(-12684, 391, -9902), MC = CFrame.new(-13225, 425, -7755) },
+    { Min = 1925, Max = 1974, Q = "DeepForestIsland3", M = "Jungle Pirate", QL = 1, QC = CFrame.new(-12191, 332, -10549), MC = CFrame.new(-12107, 332, -10549) },
+    { Min = 1975, Max = 1999, Q = "PeanutIsland", M = "Peanut Scout", QL = 1, QC = CFrame.new(-2104, 38, -10192), MC = CFrame.new(-2124, 123, -10435) },
+    { Min = 2000, Max = 2024, Q = "PeanutIsland", M = "Peanut President", QL = 2, QC = CFrame.new(-2104, 38, -10192), MC = CFrame.new(-1876, 38, -10946) },
+    { Min = 2025, Max = 2049, Q = "IceCreamIsland", M = "Ice Cream Chef", QL = 1, QC = CFrame.new(-820, 66, -10965), MC = CFrame.new(-821, 44, -11253) },
+    { Min = 2050, Max = 2074, Q = "IceCreamIsland", M = "Ice Cream Commander", QL = 2, QC = CFrame.new(-820, 66, -10965), MC = CFrame.new(-610, 127, -11034) },
+    { Min = 2075, Max = 2099, Q = "CakeQuest1", M = "Cookie Crafter", QL = 1, QC = CFrame.new(-2022, 38, -12030), MC = CFrame.new(-2365, 38, -12099) },
+    { Min = 2100, Max = 2124, Q = "CakeQuest1", M = "Cake Guard", QL = 2, QC = CFrame.new(-2022, 38, -12030), MC = CFrame.new(-1651, 38, -12293) },
+    { Min = 2125, Max = 2149, Q = "CakeQuest2", M = "Baking Staff", QL = 1, QC = CFrame.new(-1927, 38, -12843), MC = CFrame.new(-1980, 38, -12763) },
+    { Min = 2150, Max = 2199, Q = "CakeQuest2", M = "Head Baker", QL = 2, QC = CFrame.new(-1927, 38, -12843), MC = CFrame.new(-2235, 53, -12858) },
+    { Min = 2200, Max = 2224, Q = "ChocQuest1", M = "Cocoa Warrior", QL = 1, QC = CFrame.new(233, 25, -12201), MC = CFrame.new(167, 26, -12238) },
+    { Min = 2225, Max = 2249, Q = "ChocQuest1", M = "Chocolate Bar Battler", QL = 2, QC = CFrame.new(233, 25, -12201), MC = CFrame.new(507, 73, -12789) },
+    { Min = 2250, Max = 2274, Q = "ChocQuest2", M = "Sweet Thief", QL = 1, QC = CFrame.new(151, 25, -12774), MC = CFrame.new(-71, 25, -12381) },
+    { Min = 2275, Max = 2299, Q = "ChocQuest2", M = "Candy Rebel", QL = 2, QC = CFrame.new(151, 25, -12774), MC = CFrame.new(134, 77, -12882) },
+    { Min = 2300, Max = 2324, Q = "CandyQuest1", M = "Candy Pirate", QL = 1, QC = CFrame.new(-1149, 14, -14453), MC = CFrame.new(-1380, 14, -14453) },
+    { Min = 2325, Max = 2800, Q = "CandyQuest1", M = "Snow Demon", QL = 2, QC = CFrame.new(-1149, 14, -14453), MC = CFrame.new(-907, 14, -14453) },
 }
 
 local function GetQuest()
@@ -878,10 +750,6 @@ local function GetQuest()
     end
     return nil
 end
-
--- ══════════════════════════════════════════════════════════════════
---                      MAIN FARM LOOP
--- ══════════════════════════════════════════════════════════════════
 
 task.spawn(function()
     task.wait(5)
@@ -962,5 +830,5 @@ RunService.Heartbeat:Connect(function()
     end)
 end)
 
-print("[BobonHub v12.0] ✓ Ready! | Always visible menu + Auto farm + Auto items + Auto fruit")
+print("[BobonHub v12.0] Ready!")
 _G.BobonStatus = "BobonHub v12.0 Ready!"
