@@ -1,7 +1,10 @@
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
 
--- 1. Lưu snapshot kết nối
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+-- 1. Lưu snapshot kết nối trước khi load
 local function snapshotConnections()
     local snap = {}
     local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
@@ -19,7 +22,7 @@ end
 
 local before = snapshotConnections()
 
--- 2. Đặt cấu hình Banana về false
+-- 2. Khóa Config Banana
 getgenv().SettingFarm = {
     ["Hide UI"] = false,
     ["White Screen"] = false,
@@ -38,12 +41,13 @@ getgenv().SettingFarm = {
     ["Webhook"] = { ["Enabled"] = false }
 }
 
--- 3. Hook chặn Teleport & Tween của Banana
+-- 3. CHẶN METATABLE (Chặn Banana can thiệp CFrame/Position/RemoteEvent)
 local rawTweenCreate = TweenService.Create
 local rawTaskSpawn = task.spawn
 
+-- Chặn Tween
 TweenService.Create = function(self, instance, info, properties)
-    if instance and (instance.Name == "HumanoidRootPart" or instance:IsA("BasePart")) then
+    if instance and (instance:IsA("BasePart") or instance:IsA("Model")) then
         if properties.CFrame or properties.Position then
             return { Play = function() end, Cancel = function() end, Destroy = function() end }
         end
@@ -51,16 +55,35 @@ TweenService.Create = function(self, instance, info, properties)
     return rawTweenCreate(self, instance, info, properties)
 end
 
+-- Tạm đóng task.spawn để không tạo thread ngầm
 task.spawn = function(...)
     return nil
 end
 
--- 4. Load Banana Cat (Chỉ lấy UI / Key)
+-- Hook Metatable __index và __newindex để đóng băng di chuyển
+local gmt = getrawmetatable(game)
+local oldIndex = gmt.__index
+local oldNewIndex = gmt.__newindex
+setreadonly(gmt, false)
+
+gmt.__newindex = newcclosure(function(t, k, v)
+    -- Chặn các thao tác set CFrame/Position/Velocity lên nhân vật từ Banana
+    if not checkcaller() then
+        if (k == "CFrame" or k == "Position" or k == "Velocity") and t:IsDescendantOf(LocalPlayer.Character) then
+            return
+        end
+    end
+    return oldNewIndex(t, k, v)
+end)
+
+setreadonly(gmt, true)
+
+-- 4. Load Banana Cat
 loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
 
-task.wait(4)
+task.wait(5)
 
--- 5. Cắt kết nối Event do Banana tạo ra
+-- 5. Cắt toàn bộ Event mới phát sinh từ Banana
 local function cutNewConnections(before)
     local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
     for _, ev in ipairs(events) do
@@ -76,12 +99,18 @@ local function cutNewConnections(before)
 end
 cutNewConnections(before)
 
--- 6. Mở khóa lại hàm cho Suge
+-- 6. MỞ KHÓA HOÀN TOÀN CHO SUGE CHẠY
 TweenService.Create = rawTweenCreate
 task.spawn = rawTaskSpawn
 
+setreadonly(gmt, false)
+gmt.__newindex = oldNewIndex
+setreadonly(gmt, true)
+
+warn("[System] Da xoa bỏ hoàn toàn quyền can thiệp của Banana Cat. Dang load Suge...")
+
 -- 7. Cấu hình & Load Suge Script
-repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
+repeat task.wait() until game:IsLoaded() and LocalPlayer
 
 getgenv().Configs = {
     ["Auto Collect Berry"] = false,
