@@ -1,10 +1,6 @@
 -- ================================================================= --
---   BOBON HUB v10.1 FINAL - FIX TOUCH SCREEN + TEAM SELECTION      --
--- ================================================================= --
--- CHANGELOG v10.1:
---   [FIX] Anti-touch screen interference (mobile fix)
---   [FIX] Team selection với multiple fallbacks
---   [FIX] Character control override prevention
+--  BOBON HUB v12.0 FINAL - FULL AUTO KAITUN                        --
+--  Auto Farm Quest | Auto Items | Auto Fruit | Always Visible UI   --
 -- ================================================================= --
 
 repeat task.wait() until game:IsLoaded()
@@ -12,113 +8,56 @@ repeat task.wait() until game.Players.LocalPlayer
 repeat task.wait() until game.Players.LocalPlayer.Character
 repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 
+print("[BobonHub v12.0] Loading...")
+
 -- ══════════════════════════════════════════════════════════════════
 --                            SERVICES
 -- ══════════════════════════════════════════════════════════════════
-local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local VU = game:GetService("VirtualUser")
-local TS = game:GetService("TweenService")
-local TeleportService = game:GetService("TeleportService")
-local CoreGui = game:GetService("CoreGui")
-local UserInputService = game:GetService("UserInputService")
+local Players        = game:GetService("Players")
+local RS             = game:GetService("ReplicatedStorage")
+local RunService     = game:GetService("RunService")
+local VU             = game:GetService("VirtualUser")
+local TS             = game:GetService("TweenService")
+local TeleportSvc    = game:GetService("TeleportService")
+local CoreGui        = game:GetService("CoreGui")
 
-local LP = Players.LocalPlayer
-local Remotes = RS:WaitForChild("Remotes")
-local CommF_ = Remotes:WaitForChild("CommF_")
+local LP      = Players.LocalPlayer
+local Remotes = RS:WaitForChild("Remotes", 10)
+local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
 
--- ══════════════════════════════════════════════════════════════════
---                    FIX TOUCH SCREEN INTERFERENCE
--- ══════════════════════════════════════════════════════════════════
-
--- Disable mobile controls để touch screen không làm gián đoạn
-local function DisableMobileControls()
-    pcall(function()
-        -- Disable all mobile control modules
-        local PlayerModule = require(LP.PlayerScripts:WaitForChild("PlayerModule"))
-        local Controls = PlayerModule:GetControls()
-
-        if Controls then
-            Controls:Disable()
-        end
-    end)
-
-    -- Disable default camera control
-    pcall(function()
-        local Camera = workspace.CurrentCamera
-        Camera.CameraType = Enum.CameraType.Scriptable
-        task.wait(0.1)
-        Camera.CameraType = Enum.CameraType.Custom
-    end)
+if not CommF_ then
+    warn("[BobonHub] CommF_ not found!")
+    return
 end
 
--- Lock character movement khi đang tween
-local function LockCharacterMovement()
-    pcall(function()
-        local c = LP.Character
-        if not c then return end
-
-        local humanoid = c:FindFirstChild("Humanoid")
-        if humanoid then
-            -- Lock humanoid movement
-            humanoid.WalkSpeed = 0
-            humanoid.JumpPower = 0
-            humanoid.AutoRotate = false
-        end
-    end)
-end
-
--- Unlock character movement
-local function UnlockCharacterMovement()
-    pcall(function()
-        local c = LP.Character
-        if not c then return end
-
-        local humanoid = c:FindFirstChild("Humanoid")
-        if humanoid then
-            humanoid.WalkSpeed = 16
-            humanoid.JumpPower = 50
-            humanoid.AutoRotate = true
-        end
-    end)
-end
-
--- Block input during tween (chặn touch/click)
-local blockInput = false
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if blockInput and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then
-        -- Block input
-        return
-    end
-end)
-
 -- ══════════════════════════════════════════════════════════════════
---                         SETTINGS & STATE
+--                         GLOBAL SETTINGS
 -- ══════════════════════════════════════════════════════════════════
 _G.Settings = {
-    TweenSpeed = 300,
-    FarmHeight = 22,
-    HitboxSize = 50,
-    AttackDelay = 0.08,
-    RandomFruitInterval = 120,
+    TweenSpeed           = 300,
+    FarmHeight           = 22,
+    HitboxSize           = 50,
+    AttackDelay          = 0.08,
+    RandomFruitInterval  = 120,
+    FastTravelDistance   = 1000,
 }
 
 _G.State = {
-    CurrentTween = nil,
-    CurrentTarget = nil,
-    KillCount = 0,
-    StartTime = os.time(),
-    LastQuest = 0,
-    LastRandomFruit = 0,
-    IsTweening = false,
+    CurrentTween     = nil,
+    CurrentTarget    = nil,
+    KillCount        = 0,
+    StartTime        = os.time(),
+    LastQuest        = 0,
+    LastRandomFruit  = 0,
+    IsTweening       = false,
+    IsFastTraveling  = false,
+    TeleportTarget   = nil,
 }
 
 _G.BobonStatus = "Starting..."
 
 -- ══════════════════════════════════════════════════════════════════
---                              UI
+--           UI - ALWAYS VISIBLE + FADE-IN ANIMATION
 -- ══════════════════════════════════════════════════════════════════
 
 if CoreGui:FindFirstChild("BobonHubUI") then
@@ -126,220 +65,177 @@ if CoreGui:FindFirstChild("BobonHubUI") then
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BobonHubUI"
-ScreenGui.Parent = CoreGui
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 999
-ScreenGui.IgnoreGuiInset = true
+ScreenGui.Name            = "BobonHubUI"
+ScreenGui.Parent          = CoreGui
+ScreenGui.ResetOnSpawn    = false
+ScreenGui.DisplayOrder    = 10000
+ScreenGui.IgnoreGuiInset  = true
+ScreenGui.Enabled         = true
 
 local Overlay = Instance.new("Frame")
-Overlay.Name = "Overlay"
-Overlay.Parent = ScreenGui
-Overlay.Size = UDim2.new(1, 0, 1, 0)
-Overlay.Position = UDim2.new(0, 0, 0, 0)
-Overlay.BackgroundColor3 = Color3.fromRGB(10, 15, 30)
+Overlay.Name                 = "Overlay"
+Overlay.Parent               = ScreenGui
+Overlay.Size                 = UDim2.new(1, 0, 1, 0)
+Overlay.Position             = UDim2.new(0, 0, 0, 0)
+Overlay.BackgroundColor3     = Color3.fromRGB(8, 12, 25)
 Overlay.BackgroundTransparency = 1
-Overlay.BorderSizePixel = 0
-Overlay.ZIndex = 1
+Overlay.BorderSizePixel      = 0
+Overlay.ZIndex               = 1
 
 local Container = Instance.new("Frame")
-Container.Name = "Container"
-Container.Parent = ScreenGui
-Container.AnchorPoint = Vector2.new(0.5, 0.5)
-Container.Position = UDim2.new(0.5, 0, 0.5, 0)
-Container.Size = UDim2.new(0, 500, 0, 280)
+Container.Name               = "Container"
+Container.Parent             = ScreenGui
+Container.AnchorPoint        = Vector2.new(0.5, 0.5)
+Container.Position           = UDim2.new(0.5, 0, 0.5, 0)
+Container.Size               = UDim2.new(0, 520, 0, 300)
 Container.BackgroundTransparency = 1
-Container.BorderSizePixel = 0
-Container.ZIndex = 2
+Container.BorderSizePixel    = 0
+Container.ZIndex             = 2
 
 local function CreateLabel(name, text, size, color, yOffset, bold)
     local label = Instance.new("TextLabel")
-    label.Name = name
-    label.Parent = Container
-    label.AnchorPoint = Vector2.new(0.5, 0)
-    label.Position = UDim2.new(0.5, 0, 0, yOffset)
-    label.Size = UDim2.new(1, 0, 0, size + 15)
+    label.Name                = name
+    label.Parent              = Container
+    label.AnchorPoint         = Vector2.new(0.5, 0)
+    label.Position            = UDim2.new(0.5, 0, 0, yOffset)
+    label.Size                = UDim2.new(1, 0, 0, size + 18)
     label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = color
-    label.TextSize = size
-    label.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Center
-    label.TextYAlignment = Enum.TextYAlignment.Center
-    label.TextTransparency = 1
-    label.TextStrokeTransparency = 0.8
-    label.ZIndex = 3
+    label.Text                = text
+    label.TextColor3          = color
+    label.TextSize            = size
+    label.Font                = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    label.TextXAlignment      = Enum.TextXAlignment.Center
+    label.TextYAlignment      = Enum.TextYAlignment.Center
+    label.TextTransparency    = 1
+    label.TextStrokeTransparency = 0.7
+    label.TextStrokeColor3    = Color3.fromRGB(0, 0, 0)
+    label.ZIndex              = 3
     return label
 end
 
-local TitleLabel = CreateLabel("Title", "Bobon Hub", 32, Color3.fromRGB(100, 220, 255), 10, true)
-local SubtitleLabel = CreateLabel("Subtitle", "Blox Fruit Kaitun", 18, Color3.fromRGB(180, 200, 220), 60, false)
-local StatusLabel = CreateLabel("Status", "Status: Starting...", 16, Color3.fromRGB(120, 255, 150), 110, false)
-local TimeLabel = CreateLabel("Time", "Time: 00:00:00", 15, Color3.fromRGB(200, 210, 230), 150, false)
+local TitleLabel    = CreateLabel("Title",    "Bobon Hub",          34, Color3.fromRGB(80, 200, 255),    5,   true)
+local SubtitleLabel = CreateLabel("Subtitle", "Blox Fruit Kaitun",  17, Color3.fromRGB(160, 190, 220),   55,  false)
+local StatusLabel   = CreateLabel("Status",   "Status: Loading...", 15, Color3.fromRGB(100, 255, 140),   105, false)
+local TimeLabel     = CreateLabel("Time",     "Time: 00:00:00",     14, Color3.fromRGB(190, 205, 230),   145, false)
 
 local EarnedFrame = Instance.new("Frame")
-EarnedFrame.Name = "EarnedFrame"
-EarnedFrame.Parent = Container
-EarnedFrame.AnchorPoint = Vector2.new(0.5, 0)
-EarnedFrame.Position = UDim2.new(0.5, 0, 0, 190)
-EarnedFrame.Size = UDim2.new(1, 0, 0, 30)
+EarnedFrame.Name                 = "EarnedFrame"
+EarnedFrame.Parent               = Container
+EarnedFrame.AnchorPoint          = Vector2.new(0.5, 0)
+EarnedFrame.Position             = UDim2.new(0.5, 0, 0, 190)
+EarnedFrame.Size                 = UDim2.new(1, 0, 0, 34)
 EarnedFrame.BackgroundTransparency = 1
-EarnedFrame.ZIndex = 3
+EarnedFrame.ZIndex               = 3
 
 local BeliLabel = Instance.new("TextLabel")
-BeliLabel.Name = "Beli"
-BeliLabel.Parent = EarnedFrame
-BeliLabel.Position = UDim2.new(0, 0, 0, 0)
-BeliLabel.Size = UDim2.new(0.5, -5, 1, 0)
+BeliLabel.Name              = "Beli"
+BeliLabel.Parent            = EarnedFrame
+BeliLabel.Position          = UDim2.new(0, 0, 0, 0)
+BeliLabel.Size              = UDim2.new(0.5, -8, 1, 0)
 BeliLabel.BackgroundTransparency = 1
-BeliLabel.Text = "Beli: 0"
-BeliLabel.TextColor3 = Color3.fromRGB(255, 180, 80)
-BeliLabel.TextSize = 15
-BeliLabel.Font = Enum.Font.Gotham
-BeliLabel.TextXAlignment = Enum.TextXAlignment.Right
-BeliLabel.TextTransparency = 1
-BeliLabel.TextStrokeTransparency = 0.8
-BeliLabel.ZIndex = 3
+BeliLabel.Text              = "Beli: 0"
+BeliLabel.TextColor3        = Color3.fromRGB(255, 185, 60)
+BeliLabel.TextSize          = 15
+BeliLabel.Font              = Enum.Font.GothamBold
+BeliLabel.TextXAlignment    = Enum.TextXAlignment.Right
+BeliLabel.TextTransparency  = 1
+BeliLabel.TextStrokeTransparency = 0.7
+BeliLabel.ZIndex            = 3
 
 local FragLabel = Instance.new("TextLabel")
-FragLabel.Name = "Frag"
-FragLabel.Parent = EarnedFrame
-FragLabel.Position = UDim2.new(0.5, 5, 0, 0)
-FragLabel.Size = UDim2.new(0.5, -5, 1, 0)
+FragLabel.Name              = "Frag"
+FragLabel.Parent            = EarnedFrame
+FragLabel.Position          = UDim2.new(0.5, 8, 0, 0)
+FragLabel.Size              = UDim2.new(0.5, -8, 1, 0)
 FragLabel.BackgroundTransparency = 1
-FragLabel.Text = "Frag: 0"
-FragLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
-FragLabel.TextSize = 15
-FragLabel.Font = Enum.Font.Gotham
-FragLabel.TextXAlignment = Enum.TextXAlignment.Left
-FragLabel.TextTransparency = 1
-FragLabel.TextStrokeTransparency = 0.8
-FragLabel.ZIndex = 3
+FragLabel.Text              = "Frag: 0"
+FragLabel.TextColor3        = Color3.fromRGB(80, 170, 255)
+FragLabel.TextSize          = 15
+FragLabel.Font              = Enum.Font.GothamBold
+FragLabel.TextXAlignment    = Enum.TextXAlignment.Left
+FragLabel.TextTransparency  = 1
+FragLabel.TextStrokeTransparency = 0.7
+FragLabel.ZIndex            = 3
 
-local function FadeIn(object, duration, targetTransparency)
-    local tween = TS:Create(
-        object,
-        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {
-            BackgroundTransparency = targetTransparency,
-            TextTransparency = targetTransparency
-        }
-    )
-    tween:Play()
+local KillLabel = CreateLabel("Kills", "Kills: 0", 13, Color3.fromRGB(255, 120, 120), 235, false)
+
+-- Fade-in animation
+local function FadeIn(obj, duration, bgTransp, textTransp)
+    local props = {}
+    if bgTransp   ~= nil then props.BackgroundTransparency = bgTransp end
+    if textTransp ~= nil then props.TextTransparency       = textTransp end
+    local t = TS:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
+    t:Play()
+    return t
 end
 
 task.spawn(function()
-    task.wait(0.1)
-    FadeIn(Overlay, 0.8, 0.4)
     task.wait(0.3)
-    FadeIn(TitleLabel, 0.6, 0)
+    FadeIn(Overlay, 1.0, 0.55, nil)
+    task.wait(0.4)
+    FadeIn(TitleLabel,    0.7, nil, 0)
+    task.wait(0.18)
+    FadeIn(SubtitleLabel, 0.6, nil, 0)
     task.wait(0.15)
-    FadeIn(SubtitleLabel, 0.6, 0)
-    task.wait(0.15)
-    FadeIn(StatusLabel, 0.6, 0)
-    task.wait(0.15)
-    FadeIn(TimeLabel, 0.6, 0)
-    task.wait(0.15)
-    FadeIn(BeliLabel, 0.6, 0)
-    FadeIn(FragLabel, 0.6, 0)
+    FadeIn(StatusLabel,   0.6, nil, 0)
+    task.wait(0.12)
+    FadeIn(TimeLabel,     0.5, nil, 0)
+    task.wait(0.12)
+    FadeIn(BeliLabel,     0.5, nil, 0)
+    FadeIn(FragLabel,     0.5, nil, 0)
+    task.wait(0.12)
+    FadeIn(KillLabel,     0.5, nil, 0)
+    print("[BobonHub] UI Ready!")
 end)
 
-local function FormatNumber(num)
-    local str = tostring(math.floor(num))
-    return str:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+-- UI update loop
+local function FormatNum(n)
+    local s = tostring(math.floor(n or 0))
+    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
 end
 
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
-            local elapsed = os.time() - _G.State.StartTime
-            local hours = math.floor(elapsed / 3600)
-            local minutes = math.floor((elapsed % 3600) / 60)
-            local seconds = elapsed % 60
-            TimeLabel.Text = string.format("Time: %02d:%02d:%02d", hours, minutes, seconds)
-
+            local e = os.time() - _G.State.StartTime
+            TimeLabel.Text = string.format("Time: %02d:%02d:%02d", math.floor(e/3600), math.floor((e%3600)/60), e%60)
             StatusLabel.Text = "Status: " .. (_G.BobonStatus or "Idle")
-
+            KillLabel.Text = "Kills: " .. FormatNum(_G.State.KillCount)
             local data = LP:FindFirstChild("Data")
             if data then
                 local beli = data:FindFirstChild("Beli") and data.Beli.Value or 0
                 local frag = data:FindFirstChild("Fragments") and data.Fragments.Value or 0
-
-                BeliLabel.Text = "Beli: " .. FormatNumber(beli)
-                FragLabel.Text = "Frag: " .. FormatNumber(frag)
+                BeliLabel.Text = "Beli: " .. FormatNum(beli)
+                FragLabel.Text = "Frag: " .. FormatNum(frag)
             end
         end)
     end
 end)
 
 -- ══════════════════════════════════════════════════════════════════
---                         CORE UTILITIES
+--                         HELPER FUNCTIONS
 -- ══════════════════════════════════════════════════════════════════
 
 local function GetLevel()
-    return LP.Data:FindFirstChild("Level") and LP.Data.Level.Value or 1
+    local data = LP:FindFirstChild("Data")
+    return data and data:FindFirstChild("Level") and data.Level.Value or 1
 end
 
 local function GetSea()
-    local placeId = game.PlaceId
-    if placeId == 2753915549 then return 1 end
-    if placeId == 4442272183 then return 2 end
-    if placeId == 7449423635 then return 3 end
+    local id = game.PlaceId
+    if id == 2753915549 then return 1 end
+    if id == 4442272183 then return 2 end
+    if id == 7449423635 then return 3 end
     return 1
 end
 
 local function GetBeli()
-    return LP.Data:FindFirstChild("Beli") and LP.Data.Beli.Value or 0
+    local data = LP:FindFirstChild("Data")
+    return data and data:FindFirstChild("Beli") and data.Beli.Value or 0
 end
 
-local function HasItem(itemName)
-    return LP.Backpack:FindFirstChild(itemName) or LP.Character:FindFirstChild(itemName)
-end
-
-local function Tween(cf)
-    if not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") then return end
-
-    local hrp = LP.Character.HumanoidRootPart
-    local dist = (hrp.Position - cf.Position).Magnitude
-
-    if dist < 15 then
-        hrp.CFrame = cf
-        _G.State.IsTweening = false
-        blockInput = false
-        return
-    end
-
-    -- Stop previous tween
-    if _G.State.CurrentTween then
-        _G.State.CurrentTween:Cancel()
-    end
-
-    _G.State.IsTweening = true
-    blockInput = true  -- Block user input during tween
-
-    local duration = dist / _G.Settings.TweenSpeed
-    local tween = TS:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = cf})
-
-    _G.State.CurrentTween = tween
-
-    tween.Completed:Connect(function()
-        _G.State.IsTweening = false
-        blockInput = false
-        _G.State.CurrentTween = nil
-    end)
-
-    tween:Play()
-
-    return tween
-end
-
-local function StopTween()
-    if _G.State.CurrentTween then
-        _G.State.CurrentTween:Cancel()
-        _G.State.CurrentTween = nil
-    end
-    _G.State.IsTweening = false
-    blockInput = false
+local function HasItem(name)
+    return LP.Backpack:FindFirstChild(name) or LP.Character:FindFirstChild(name)
 end
 
 local function HasQuest()
@@ -349,21 +245,44 @@ local function HasQuest()
     return ok and res
 end
 
+local function GetChar()
+    return LP.Character
+end
+
+local function GetHRP()
+    local c = GetChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function GetHum()
+    local c = GetChar()
+    return c and c:FindFirstChild("Humanoid")
+end
+
+local function Attack()
+    pcall(function()
+        VU:CaptureController()
+        VU:ClickButton1(Vector2.new())
+    end)
+end
+
 local function EquipTool(toolName)
     pcall(function()
-        if LP.Character:FindFirstChild(toolName) then return end
+        local c = GetChar()
+        if not c then return end
+        if c:FindFirstChild(toolName) then return end
         local tool = LP.Backpack:FindFirstChild(toolName)
         if tool then
-            LP.Character.Humanoid:EquipTool(tool)
-            task.wait(0.3)
+            c.Humanoid:EquipTool(tool)
+            task.wait(0.2)
         end
     end)
 end
 
 local MeleeList = {
-    "Godhuman", "Superhuman", "Death Step", "Electric Claw", "Dragon Talon",
-    "Sharkman Karate", "Dragon Claw", "Fishman Karate", "Black Leg",
-    "Electro", "Combat"
+    "Godhuman", "Superhuman", "Death Step", "Electric Claw",
+    "Dragon Talon", "Sharkman Karate", "Dragon Claw",
+    "Fishman Karate", "Black Leg", "Electro", "Combat"
 }
 
 local function EquipMelee()
@@ -379,256 +298,240 @@ end
 local function FindMob(mobName)
     local enemies = workspace:FindFirstChild("Enemies")
     if not enemies then return nil end
-
-    local best = nil
-    local bestDist = math.huge
-
+    local best, bestDist = nil, math.huge
+    local hrp = GetHRP()
     for _, mob in pairs(enemies:GetChildren()) do
-        if mob.Name == mobName
-            and mob:FindFirstChild("Humanoid")
-            and mob.Humanoid.Health > 0
-            and mob:FindFirstChild("HumanoidRootPart")
-        then
-            if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
-                local dist = (mob.HumanoidRootPart.Position - LP.Character.HumanoidRootPart.Position).Magnitude
-                if dist < bestDist then
-                    best = mob
-                    bestDist = dist
-                end
+        if mob.Name == mobName and mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 and mob:FindFirstChild("HumanoidRootPart") then
+            if hrp then
+                local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if d < bestDist then best = mob; bestDist = d end
             else
                 return mob
             end
         end
     end
-
     return best
 end
 
 local function FindBoss(bossName)
-    local bosses = workspace:FindFirstChild("Enemies")
-    if not bosses then return nil end
-
-    for _, boss in pairs(bosses:GetChildren()) do
-        if boss.Name == bossName
-            and boss:FindFirstChild("Humanoid")
-            and boss.Humanoid.Health > 0
-            and boss:FindFirstChild("HumanoidRootPart")
-        then
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    for _, boss in pairs(enemies:GetChildren()) do
+        if boss.Name == bossName and boss:FindFirstChild("Humanoid") and boss.Humanoid.Health > 0 and boss:FindFirstChild("HumanoidRootPart") then
             return boss
         end
     end
-
     return nil
 end
 
-local function Attack()
+-- ══════════════════════════════════════════════════════════════════
+--           FAST TRAVEL (RESET CHARACTER + RESPAWN TELE)
+-- ══════════════════════════════════════════════════════════════════
+
+local function FastTravelTo(targetCF)
+    if _G.State.IsFastTraveling then return end
+    _G.State.IsFastTraveling = true
+    _G.State.TeleportTarget  = targetCF
+
+    if _G.State.CurrentTween then
+        _G.State.CurrentTween:Cancel()
+        _G.State.CurrentTween = nil
+    end
+
+    print("[BobonHub] FastTravel → Reset character")
+    _G.BobonStatus = "Fast Travel..."
+
     pcall(function()
-        VU:CaptureController()
-        VU:ClickButton1(Vector2.new())
+        local hum = GetHum()
+        if hum then hum.Health = 0 end
+    end)
+
+    local conn
+    conn = LP.CharacterAdded:Connect(function(newChar)
+        task.wait(0.5)
+        pcall(function()
+            local hrp = newChar:WaitForChild("HumanoidRootPart", 8)
+            if hrp and _G.State.TeleportTarget then
+                hrp.CFrame = _G.State.TeleportTarget
+                print("[BobonHub] FastTravel complete!")
+            end
+        end)
+        conn:Disconnect()
+        task.wait(0.5)
+        _G.State.IsFastTraveling = false
+        _G.State.TeleportTarget  = nil
+    end)
+
+    task.delay(12, function()
+        if _G.State.IsFastTraveling then
+            pcall(function() conn:Disconnect() end)
+            _G.State.IsFastTraveling = false
+            _G.State.TeleportTarget  = nil
+        end
     end)
 end
 
+local function Tween(cf)
+    if _G.State.IsFastTraveling then
+        task.wait(3)
+        return
+    end
+
+    local hrp = GetHRP()
+    if not hrp then return end
+
+    local dist = (hrp.Position - cf.Position).Magnitude
+
+    if dist > _G.Settings.FastTravelDistance then
+        FastTravelTo(cf)
+        return
+    end
+
+    if dist < 12 then
+        hrp.CFrame = cf
+        _G.State.IsTweening = false
+        return
+    end
+
+    if _G.State.CurrentTween then
+        _G.State.CurrentTween:Cancel()
+    end
+
+    _G.State.IsTweening = true
+
+    local dur = dist / _G.Settings.TweenSpeed
+    local t = TS:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = cf})
+
+    _G.State.CurrentTween = t
+
+    t.Completed:Connect(function()
+        _G.State.IsTweening   = false
+        _G.State.CurrentTween = nil
+    end)
+
+    t:Play()
+    return t
+end
+
 -- ══════════════════════════════════════════════════════════════════
---                    FIX TEAM SELECTION (MULTIPLE FALLBACKS)
+--                   TEAM SELECTION
 -- ══════════════════════════════════════════════════════════════════
+
+local TeamSelected = false
 
 local function SelectTeam()
-    print("[BobonHub] Attempting to select team: Pirates")
+    if TeamSelected then return end
 
-    -- Method 1: Direct CommF_ call
-    pcall(function()
-        local result = CommF_:InvokeServer("SetTeam", "Pirates")
-        print("[BobonHub] SetTeam result:", result)
-        task.wait(1)
-    end)
-
-    -- Method 2: ChooseTeam remote (alternative)
-    pcall(function()
-        local result = CommF_:InvokeServer("ChooseTeam", "Pirates")
-        print("[BobonHub] ChooseTeam result:", result)
-        task.wait(1)
-    end)
-
-    -- Method 3: Check if already in team
-    pcall(function()
+    for attempt = 1, 5 do
         if LP.Team and LP.Team.Name == "Pirates" then
-            print("[BobonHub] Already in Pirates team!")
-            return
+            print("[BobonHub] Team = Pirates ✓")
+            _G.BobonStatus = "Team: Pirates ✓"
+            TeamSelected = true
+            return true
         end
-    end)
 
-    -- Method 4: Tele to team selector NPC (fallback)
-    pcall(function()
-        local teamSelectPos = CFrame.new(-372, 7, 310)  -- Team selector location Sea 1
+        pcall(function() CommF_:InvokeServer("SetTeam", "Pirates") end)
+        task.wait(1.5)
+        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true; return true end
 
-        if GetSea() == 1 then
-            Tween(teamSelectPos)
-            task.wait(2)
+        pcall(function() CommF_:InvokeServer("ChooseTeam", "Pirates") end)
+        task.wait(1.5)
+        if LP.Team and LP.Team.Name == "Pirates" then TeamSelected = true; return true end
 
-            -- Try clicking team selector
-            CommF_:InvokeServer("SetTeam", "Pirates")
-            task.wait(1)
-        end
-    end)
-
-    -- Verify team
-    task.wait(2)
-    pcall(function()
-        if LP.Team then
-            print("[BobonHub] Current team:", LP.Team.Name)
-            _G.BobonStatus = "Team: " .. LP.Team.Name
-        else
-            print("[BobonHub] No team assigned yet")
-        end
-    end)
+        task.wait(2)
+    end
 end
 
 -- ══════════════════════════════════════════════════════════════════
---              AUTO STORE FRUIT
+--             AUTO FRUIT (RANDOM + STORE)
 -- ══════════════════════════════════════════════════════════════════
 
-local function HasFruitInInventory(fruitName)
+local FruitPrices = {[1] = 38000, [2] = 100000, [3] = 250000}
+
+local function HasFruitInStorage(fruitName)
     local ok, result = pcall(function()
         return CommF_:InvokeServer("getInventoryFruits")
     end)
-
-    if ok and result then
-        for _, fruit in pairs(result) do
-            if fruit.Name == fruitName then
-                return true
-            end
+    if ok and type(result) == "table" then
+        for _, f in pairs(result) do
+            if f.Name == fruitName then return true end
         end
     end
-
     return false
 end
 
 local function AutoStoreFruit()
-    pcall(function()
-        for _, item in pairs(LP.Backpack:GetChildren()) do
-            if item:IsA("Tool") and item.Name:find("-") then
-                local fruitName = item.Name
-
-                if not HasFruitInInventory(fruitName) then
-                    CommF_:InvokeServer("StoreFruit", fruitName, LP.Backpack)
-                    print("[BobonHub] Stored fruit:", fruitName)
+    for _, item in pairs(LP.Backpack:GetChildren()) do
+        if item:IsA("Tool") and item.Name:find("%-") then
+            if not HasFruitInStorage(item.Name) then
+                pcall(function() CommF_:InvokeServer("StoreFruit", item.Name, LP.Backpack) end)
+                task.wait(0.5)
+            end
+        end
+    end
+    local c = GetChar()
+    if c then
+        for _, item in pairs(c:GetChildren()) do
+            if item:IsA("Tool") and item.Name:find("%-") then
+                if not HasFruitInStorage(item.Name) then
+                    pcall(function() CommF_:InvokeServer("StoreFruit", item.Name, c) end)
                     task.wait(0.5)
                 end
             end
         end
-
-        for _, item in pairs(LP.Character:GetChildren()) do
-            if item:IsA("Tool") and item.Name:find("-") then
-                local fruitName = item.Name
-
-                if not HasFruitInInventory(fruitName) then
-                    CommF_:InvokeServer("StoreFruit", fruitName, LP.Character)
-                    print("[BobonHub] Stored fruit:", fruitName)
-                    task.wait(0.5)
-                end
-            end
-        end
-    end)
+    end
 end
-
--- ══════════════════════════════════════════════════════════════════
---          AUTO RANDOM FRUIT
--- ══════════════════════════════════════════════════════════════════
-
-local RandomFruitPrices = {
-    [1] = 38000,
-    [2] = 100000,
-    [3] = 250000,
-}
 
 local function AutoRandomFruit()
     local sea = GetSea()
-
     if sea < 2 then return false end
 
-    local price = RandomFruitPrices[sea] or 100000
-    local beli = GetBeli()
-    local now = os.time()
+    local price = FruitPrices[sea] or 100000
+    local beli  = GetBeli()
+    local now   = os.time()
 
-    if now - _G.State.LastRandomFruit < _G.Settings.RandomFruitInterval then
-        return false
-    end
+    if now - _G.State.LastRandomFruit < _G.Settings.RandomFruitInterval then return false end
+    if beli < price then return false end
 
-    if beli >= price then
-        _G.BobonStatus = "Auto Random Fruit..."
+    _G.BobonStatus = "Random Fruit..."
 
-        pcall(function()
-            local result = CommF_:InvokeServer("Cousin", "Buy")
-
-            if result then
-                print("[BobonHub] Random Fruit success!")
-                _G.State.LastRandomFruit = os.time()
-                task.wait(2)
-
-                AutoStoreFruit()
-            end
-        end)
-
+    local ok = pcall(function() CommF_:InvokeServer("Cousin", "Buy") end)
+    if ok then
+        _G.State.LastRandomFruit = os.time()
+        task.wait(2)
+        AutoStoreFruit()
         return true
     end
-
     return false
 end
 
-task.spawn(function()
-    while task.wait(10) do
-        pcall(function()
-            AutoRandomFruit()
-        end)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(30) do
-        pcall(function()
-            AutoStoreFruit()
-        end)
-    end
-end)
+task.spawn(function() while task.wait(12) do pcall(AutoRandomFruit) end end)
+task.spawn(function() while task.wait(30) do pcall(AutoStoreFruit) end end)
 
 -- ══════════════════════════════════════════════════════════════════
---                      BACKGROUND SYSTEMS
+--                     BACKGROUND SYSTEMS
 -- ══════════════════════════════════════════════════════════════════
 
--- Anti AFK
 LP.Idled:Connect(function()
-    VU:CaptureController()
-    VU:ClickButton2(Vector2.new())
+    pcall(function() VU:CaptureController(); VU:ClickButton2(Vector2.new()) end)
 end)
 
--- Noclip
 RunService.Stepped:Connect(function()
     pcall(function()
-        for _, v in pairs(LP.Character:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
+        local c = GetChar()
+        if not c then return end
+        for _, v in pairs(c:GetDescendants()) do
+            if v:IsA("BasePart") then v.CanCollide = false end
         end
     end)
 end)
 
--- Prevent character from stopping during tween
-RunService.Heartbeat:Connect(function()
-    pcall(function()
-        if _G.State.IsTweening then
-            local c = LP.Character
-            if c and c:FindFirstChild("Humanoid") then
-                c.Humanoid:ChangeState(Enum.HumanoidStateType.Flying)
-            end
-        end
-    end)
-end)
-
--- Hitbox expander
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
-            for _, tool in pairs(LP.Character:GetChildren()) do
+            local c = GetChar()
+            if not c then return end
+            for _, tool in pairs(c:GetChildren()) do
                 if tool:IsA("Tool") and tool:FindFirstChild("Handle") then
                     tool.Handle.Size = Vector3.new(_G.Settings.HitboxSize, _G.Settings.HitboxSize, _G.Settings.HitboxSize)
                     tool.Handle.Transparency = 1
@@ -639,45 +542,22 @@ task.spawn(function()
     end
 end)
 
--- Auto Stats
 task.spawn(function()
     while task.wait(3) do
         pcall(function()
             local data = LP:FindFirstChild("Data")
             if not data then return end
-
             local points = data:FindFirstChild("Points") and data.Points.Value or 0
-
             if points > 0 then
-                local meleePoints = math.floor(points * 0.7)
-                local defensePoints = math.floor(points * 0.3)
-
-                if meleePoints > 0 then
-                    CommF_:InvokeServer("AddPoint", "Melee", meleePoints)
-                end
-
-                if defensePoints > 0 then
-                    CommF_:InvokeServer("AddPoint", "Defense", defensePoints)
-                end
+                CommF_:InvokeServer("AddPoint", "Melee", math.floor(points * 0.7))
+                CommF_:InvokeServer("AddPoint", "Defense", math.floor(points * 0.3))
             end
         end)
     end
 end)
 
--- Auto Haki & Team
 task.spawn(function()
-    task.wait(2)
-
-    -- Select team với nhiều attempts
-    for i = 1, 3 do
-        SelectTeam()
-        task.wait(2)
-    end
-
-    task.wait(1)
-
-    -- Auto enable haki
-    while task.wait(30) do
+    while task.wait(20) do
         pcall(function()
             CommF_:InvokeServer("Ken", true)
             CommF_:InvokeServer("Buso", true)
@@ -685,21 +565,17 @@ task.spawn(function()
     end
 end)
 
--- Kill counter
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
             local enemies = workspace:FindFirstChild("Enemies")
             if not enemies then return end
-
             for _, mob in pairs(enemies:GetChildren()) do
                 local hum = mob:FindFirstChild("Humanoid")
-                if hum and not hum:GetAttribute("Tracked") then
-                    hum:SetAttribute("Tracked", true)
-                    hum.HealthChanged:Connect(function(health)
-                        if health <= 0 then
-                            _G.State.KillCount = _G.State.KillCount + 1
-                        end
+                if hum and not hum:GetAttribute("KillTracked") then
+                    hum:SetAttribute("KillTracked", true)
+                    hum.HealthChanged:Connect(function(h)
+                        if h <= 0 then _G.State.KillCount = _G.State.KillCount + 1 end
                     end)
                 end
             end
@@ -708,306 +584,197 @@ task.spawn(function()
 end)
 
 -- ══════════════════════════════════════════════════════════════════
---                      AUTO QUEST ITEMS
+--                    AUTO QUEST ITEMS
 -- ══════════════════════════════════════════════════════════════════
 
 local function AutoSaber()
-    if HasItem("Saber") then return false end
-    if GetLevel() < 200 then return false end
-    if GetSea() ~= 1 then return false end
-
-    _G.BobonStatus = "Auto Saber Quest"
-
-    pcall(function()
-        local torches = {
-            {Name = "Torch1", Pos = CFrame.new(-1610, 11, 163)},
-            {Name = "Torch2", Pos = CFrame.new(1114, 4, 4350)},
-            {Name = "Torch3", Pos = CFrame.new(1400, 101, -1250)},
-            {Name = "Torch4", Pos = CFrame.new(-5070, 23, 4325)},
-            {Name = "Torch5", Pos = CFrame.new(-1675, 7, -2985)},
-        }
-
-        for _, torch in ipairs(torches) do
-            Tween(torch.Pos)
-            task.wait(1)
-            CommF_:InvokeServer("Torch", torch.Name)
-            task.wait(0.5)
+    if HasItem("Saber") or GetLevel() < 200 or GetSea() ~= 1 then return false end
+    _G.BobonStatus = "Quest: Saber"
+    local torches = {
+        {Name = "Torch1", CF = CFrame.new(-1610, 11, 163)},
+        {Name = "Torch2", CF = CFrame.new(1114, 4, 4350)},
+        {Name = "Torch3", CF = CFrame.new(1400, 101, -1250)},
+        {Name = "Torch4", CF = CFrame.new(-5070, 23, 4325)},
+        {Name = "Torch5", CF = CFrame.new(-1675, 7, -2985)},
+    }
+    for _, torch in ipairs(torches) do
+        Tween(torch.CF)
+        task.wait(2.5)
+        pcall(function() CommF_:InvokeServer("Torch", torch.Name) end)
+        task.wait(0.5)
+    end
+    local timeout = os.time() + 300
+    while not HasItem("Saber") and os.time() < timeout do
+        local boss = FindBoss("Saber Expert")
+        if boss then
+            EquipMelee()
+            Tween(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)))
+            Attack()
+        else
+            Tween(CFrame.new(-1405, 30, -3330))
+            task.wait(3)
         end
-
-        _G.BobonStatus = "Saber: Fighting Boss..."
-
-        while not HasItem("Saber") do
-            local boss = FindBoss("Saber Expert")
-
-            if boss then
-                EquipMelee()
-                Tween(CFrame.new(boss.HumanoidRootPart.Position.X, boss.HumanoidRootPart.Position.Y + _G.Settings.FarmHeight, boss.HumanoidRootPart.Position.Z))
-                Attack()
-            else
-                Tween(CFrame.new(-1405, 30, -3330))
-                task.wait(3)
-            end
-
-            task.wait(0.1)
-        end
-    end)
-
+        task.wait(0.1)
+    end
     return true
 end
 
 local function AutoPoleV1()
-    if HasItem("Pole (1st Form)") then return false end
-    if GetLevel() < 150 then return false end
-    if GetSea() ~= 1 then return false end
-
-    _G.BobonStatus = "Auto Pole v1"
-
-    pcall(function()
-        Tween(CFrame.new(-7748, 5606, -2305))
-        task.wait(1)
-        CommF_:InvokeServer("BuyPoleV1")
-    end)
-
+    if HasItem("Pole (1st Form)") or GetLevel() < 150 or GetSea() ~= 1 then return false end
+    _G.BobonStatus = "Quest: Pole v1"
+    Tween(CFrame.new(-7748, 5606, -2305))
+    task.wait(2.5)
+    pcall(function() CommF_:InvokeServer("BuyPoleV1") end)
+    task.wait(1)
     return true
 end
 
 local function AutoSecondSea()
-    if GetSea() >= 2 then return false end
-    if GetLevel() < 700 then return false end
-
-    _G.BobonStatus = "Auto Second Sea Quest"
-
-    pcall(function()
-        Tween(CFrame.new(-4909, 4, 4450))
-        task.wait(1)
-        CommF_:InvokeServer("DressrosaQuestProgress", "Detective")
-        task.wait(0.5)
-
-        Tween(CFrame.new(932, 13, 4482))
-        task.wait(1)
-        CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo")
-        task.wait(0.5)
-
-        _G.BobonStatus = "Second Sea: Kill 50 Swans..."
-        local kills = 0
-
-        while kills < 50 do
-            local mob = FindMob("Swan Pirate")
-
-            if mob then
-                EquipMelee()
-                Tween(CFrame.new(mob.HumanoidRootPart.Position.X, mob.HumanoidRootPart.Position.Y + _G.Settings.FarmHeight, mob.HumanoidRootPart.Position.Z))
-                Attack()
-
-                if mob.Humanoid.Health <= 0 then
-                    kills = kills + 1
-                end
-            else
-                Tween(CFrame.new(878, 122, 1235))
-                task.wait(2)
-            end
-
-            task.wait(0.1)
+    if GetSea() >= 2 or GetLevel() < 700 then return false end
+    _G.BobonStatus = "Quest: 2nd Sea"
+    Tween(CFrame.new(-4909, 4, 4450))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Detective") end)
+    task.wait(0.5)
+    Tween(CFrame.new(932, 13, 4482))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo") end)
+    task.wait(0.5)
+    local kills = 0
+    local timeout = os.time() + 600
+    while kills < 50 and os.time() < timeout do
+        local mob = FindMob("Swan Pirate")
+        if mob then
+            EquipMelee()
+            Tween(CFrame.new(mob.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)))
+            Attack()
+            if mob.Humanoid.Health <= 0 then kills = kills + 1 end
+        else
+            Tween(CFrame.new(878, 122, 1235))
+            task.wait(2)
         end
-
-        Tween(CFrame.new(932, 13, 4482))
-        task.wait(1)
-        CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo")
-        task.wait(0.5)
-
-        Tween(CFrame.new(-12471, 374, -7551))
-        task.wait(1)
-        CommF_:InvokeServer("DressrosaQuestProgress", "Door")
-        task.wait(1)
-
-        TeleportService:Teleport(4442272183, LP)
-    end)
-
+        task.wait(0.1)
+    end
+    Tween(CFrame.new(932, 13, 4482))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo") end)
+    task.wait(0.5)
+    Tween(CFrame.new(-12471, 374, -7551))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Door") end)
+    task.wait(1)
+    TeleportSvc:Teleport(4442272183, LP)
     return true
 end
 
 local function AutoThirdSea()
-    if GetSea() >= 3 then return false end
-    if GetSea() < 2 then return false end
-    if GetLevel() < 1500 then return false end
-
-    _G.BobonStatus = "Auto Third Sea Quest"
-
-    pcall(function()
-        Tween(CFrame.new(-285, 306, 611))
-        task.wait(1)
-        CommF_:InvokeServer("ZQuestProgress", "Check")
-        task.wait(0.5)
-
-        _G.BobonStatus = "Third Sea: Fighting Don Swan..."
-
-        while true do
-            local boss = FindBoss("Don Swan")
-
-            if boss then
-                EquipMelee()
-                Tween(CFrame.new(boss.HumanoidRootPart.Position.X, boss.HumanoidRootPart.Position.Y + _G.Settings.FarmHeight, boss.HumanoidRootPart.Position.Z))
-                Attack()
-            else
-                break
-            end
-
-            task.wait(0.1)
+    if GetSea() ~= 2 or GetLevel() < 1500 then return false end
+    _G.BobonStatus = "Quest: 3rd Sea"
+    Tween(CFrame.new(-285, 306, 611))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("ZQuestProgress", "Check") end)
+    task.wait(0.5)
+    local timeout = os.time() + 600
+    while os.time() < timeout do
+        local boss = FindBoss("Don Swan")
+        if boss and boss.Humanoid.Health > 0 then
+            EquipMelee()
+            Tween(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)))
+            Attack()
+        else
+            break
         end
-
-        task.wait(2)
-
-        Tween(CFrame.new(-285, 306, 611))
-        task.wait(1)
-        CommF_:InvokeServer("ZQuestProgress", "Begin")
-        task.wait(1)
-
-        TeleportService:Teleport(7449423635, LP)
-    end)
-
+        task.wait(0.1)
+    end
+    task.wait(2)
+    Tween(CFrame.new(-285, 306, 611))
+    task.wait(2)
+    pcall(function() CommF_:InvokeServer("ZQuestProgress", "Begin") end)
+    task.wait(1)
+    TeleportSvc:Teleport(7449423635, LP)
     return true
 end
 
-local function AutoBuyFightingStyles()
-    local level = GetLevel()
-    local sea = GetSea()
-
-    if level >= 150 and sea == 1 then
-        pcall(function()
-            Tween(CFrame.new(-4800, 7, 4000))
-            task.wait(1)
-            CommF_:InvokeServer("BuyBlackLeg")
-        end)
-    end
-
-    if level >= 150 and sea == 1 then
-        pcall(function()
-            Tween(CFrame.new(-5400, 15, -2900))
-            task.wait(1)
-            CommF_:InvokeServer("BuyElectro")
-        end)
-    end
-
-    if level >= 150 and sea == 1 then
-        pcall(function()
-            Tween(CFrame.new(61200, 18, 1500))
-            task.wait(1)
-            CommF_:InvokeServer("BuyFishmanKarate")
-        end)
-    end
-
-    if level >= 1500 and sea >= 2 then
-        pcall(function()
-            Tween(CFrame.new(528, 400, -2700))
-            task.wait(1)
-            CommF_:InvokeServer("BlackbeardReward", "DragonClaw", "2")
-        end)
-    end
-
-    if level >= 300 then
-        pcall(function()
-            Tween(CFrame.new(-5420, 7, -2800))
-            task.wait(1)
-            CommF_:InvokeServer("BuySuperhuman")
-        end)
-    end
-end
-
 -- ══════════════════════════════════════════════════════════════════
---                      QUEST DATABASE
+--                       QUEST DATABASE
 -- ══════════════════════════════════════════════════════════════════
+
 local QuestDB = {
-    {Min=1,    Max=9,    Q="BanditQuest1",  M="Bandit",         QL=1, QC=CFrame.new(1059,17,1550),   MC=CFrame.new(1145,17,1634)},
-    {Min=10,   Max=14,   Q="BanditQuest1",  M="Bandit",         QL=1, QC=CFrame.new(1059,17,1550),   MC=CFrame.new(1145,17,1634)},
-    {Min=15,   Max=29,   Q="JungleQuest",   M="Monkey",         QL=1, QC=CFrame.new(-1598,37,153),   MC=CFrame.new(-1448,50,24)},
-    {Min=30,   Max=39,   Q="BuggyQuest1",   M="Pirate",         QL=1, QC=CFrame.new(-1141,4,3832),   MC=CFrame.new(-1103,14,3836)},
-    {Min=40,   Max=59,   Q="BuggyQuest1",   M="Brute",          QL=2, QC=CFrame.new(-1141,4,3832),   MC=CFrame.new(-1140,15,4314)},
-    {Min=60,   Max=74,   Q="DesertQuest",   M="Desert Bandit",  QL=1, QC=CFrame.new(894,6,4392),     MC=CFrame.new(932,6,4488)},
-    {Min=75,   Max=89,   Q="DesertQuest",   M="Desert Officer", QL=2, QC=CFrame.new(894,6,4392),     MC=CFrame.new(1608,7,4371)},
-    {Min=90,   Max=99,   Q="SnowQuest",     M="Snow Bandit",    QL=1, QC=CFrame.new(1389,87,-1299),  MC=CFrame.new(1317,87,-1318)},
-    {Min=100,  Max=119,  Q="SnowQuest",     M="Snowman",        QL=2, QC=CFrame.new(1389,87,-1299),  MC=CFrame.new(1198,87,-1370)},
-    {Min=120,  Max=149,  Q="MarineQuest2",  M="Chief Petty Officer", QL=1, QC=CFrame.new(-5040,29,4325), MC=CFrame.new(-4881,22,4273)},
-    {Min=150,  Max=174,  Q="MarineQuest2",  M="Sky Bandit",     QL=2, QC=CFrame.new(-5040,29,4325),  MC=CFrame.new(-4953,295,3951)},
-    {Min=175,  Max=189,  Q="PrisonerQuest", M="Prisoner",       QL=1, QC=CFrame.new(5309,0,475),     MC=CFrame.new(5411,0,485)},
-    {Min=190,  Max=209,  Q="PrisonerQuest", M="Dangerous Prisoner", QL=2, QC=CFrame.new(5309,0,475), MC=CFrame.new(5654,0,755)},
-    {Min=210,  Max=249,  Q="ColosseumQuest", M="Toga Warrior",  QL=1, QC=CFrame.new(-1580,7,-2986),  MC=CFrame.new(-1824,7,-2743)},
-    {Min=250,  Max=274,  Q="ColosseumQuest", M="Gladiator",     QL=2, QC=CFrame.new(-1580,7,-2986),  MC=CFrame.new(-1292,7,-3229)},
-    {Min=275,  Max=299,  Q="MagmaQuest",    M="Military Soldier", QL=1, QC=CFrame.new(-5313,11,8515), MC=CFrame.new(-5408,11,8450)},
-    {Min=300,  Max=324,  Q="MagmaQuest",    M="Military Spy",   QL=2, QC=CFrame.new(-5313,11,8515),  MC=CFrame.new(-5802,86,8255)},
-    {Min=325,  Max=374,  Q="FishmanQuest",  M="Fishman Warrior", QL=1, QC=CFrame.new(61123,19,1569), MC=CFrame.new(60946,18,1504)},
-    {Min=375,  Max=399,  Q="FishmanQuest",  M="Fishman Commando", QL=2, QC=CFrame.new(61123,19,1569), MC=CFrame.new(61798,18,1489)},
-    {Min=400,  Max=449,  Q="SkyExp1Quest",  M="God's Guard",    QL=1, QC=CFrame.new(-4722,845,-1912), MC=CFrame.new(-4628,845,-1932)},
-    {Min=450,  Max=474,  Q="SkyExp1Quest",  M="Shanda",         QL=2, QC=CFrame.new(-7859,5544,381),  MC=CFrame.new(-7685,5567,387)},
-    {Min=475,  Max=524,  Q="SkyExp2Quest",  M="Royal Squad",    QL=1, QC=CFrame.new(-7907,5635,-1412), MC=CFrame.new(-7564,5608,-1442)},
-    {Min=525,  Max=549,  Q="SkyExp2Quest",  M="Royal Soldier",  QL=2, QC=CFrame.new(-7907,5635,-1412), MC=CFrame.new(-7836,5606,-1810)},
-    {Min=550,  Max=624,  Q="FountainQuest", M="Galley Pirate",  QL=1, QC=CFrame.new(5260,38,4050),   MC=CFrame.new(5551,42,3946)},
-    {Min=625,  Max=649,  Q="FountainQuest", M="Galley Captain", QL=2, QC=CFrame.new(5260,38,4050),   MC=CFrame.new(5441,42,5656)},
-    {Min=650,  Max=699,  Q="ZombieQuest",   M="Zombie",         QL=1, QC=CFrame.new(-5497,49,-795),   MC=CFrame.new(-5739,49,-795)},
-    {Min=700,  Max=724,  Q="Area1Quest",    M="Raider",         QL=1, QC=CFrame.new(-430,73,1837),    MC=CFrame.new(-746,40,2507)},
-    {Min=725,  Max=774,  Q="Area1Quest",    M="Mercenary",      QL=2, QC=CFrame.new(-430,73,1837),    MC=CFrame.new(-874,141,1312)},
-    {Min=775,  Max=799,  Q="Area2Quest",    M="Swan Pirate",    QL=1, QC=CFrame.new(638,72,918),      MC=CFrame.new(878,122,1235)},
-    {Min=800,  Max=874,  Q="Area2Quest",    M="Factory Staff",  QL=2, QC=CFrame.new(638,72,918),      MC=CFrame.new(295,73,-56)},
-    {Min=875,  Max=899,  Q="MarineQuest3",  M="Marine Lieutenant", QL=1, QC=CFrame.new(-2441,72,-3216), MC=CFrame.new(-2842,73,-2901)},
-    {Min=900,  Max=949,  Q="MarineQuest3",  M="Marine Captain", QL=2, QC=CFrame.new(-2441,72,-3216),  MC=CFrame.new(-1814,73,-3208)},
-    {Min=950,  Max=974,  Q="PiratePortQuest", M="Zombie",       QL=1, QC=CFrame.new(-6567,7,-428),    MC=CFrame.new(-5736,126,-686)},
-    {Min=975,  Max=999,  Q="PiratePortQuest", M="Vampire",      QL=2, QC=CFrame.new(-6567,7,-428),    MC=CFrame.new(-6033,6,-1313)},
-    {Min=1000, Max=1049, Q="SnowMountainQuest", M="Snow Trooper", QL=1, QC=CFrame.new(610,400,-5372), MC=CFrame.new(621,401,-5329)},
-    {Min=1050, Max=1099, Q="SnowMountainQuest", M="Winter Warrior", QL=2, QC=CFrame.new(610,400,-5372), MC=CFrame.new(1295,429,-5087)},
-    {Min=1100, Max=1124, Q="IceSideQuest",  M="Lab Subordinate", QL=1, QC=CFrame.new(5827,16,-6420), MC=CFrame.new(6109,16,-6178)},
-    {Min=1125, Max=1174, Q="IceSideQuest",  M="Horned Warrior", QL=2, QC=CFrame.new(5827,16,-6420),  MC=CFrame.new(6341,16,-6723)},
-    {Min=1175, Max=1199, Q="ShipQuest1",    M="Living Zombie",  QL=1, QC=CFrame.new(1038,126,32911),  MC=CFrame.new(942,125,32853)},
-    {Min=1200, Max=1249, Q="ShipQuest1",    M="Demonic Soul",   QL=2, QC=CFrame.new(1038,126,32911),  MC=CFrame.new(1082,126,33098)},
-    {Min=1250, Max=1274, Q="ShipQuest2",    M="Posessed Mummy", QL=1, QC=CFrame.new(921,126,33001),   MC=CFrame.new(389,41,32474)},
-    {Min=1275, Max=1299, Q="ShipQuest2",    M="Peanut Scout",   QL=2, QC=CFrame.new(921,126,33001),   MC=CFrame.new(-2103,38,-10192)},
-    {Min=1300, Max=1324, Q="FrostQuest",    M="Sea Soldier",    QL=1, QC=CFrame.new(5259,24,-6178),   MC=CFrame.new(5411,16,-6181)},
-    {Min=1325, Max=1349, Q="FrostQuest",    M="Arctic Warrior", QL=2, QC=CFrame.new(5259,24,-6178),   MC=CFrame.new(6041,29,-6235)},
-    {Min=1350, Max=1374, Q="ForgottenQuest", M="Sea Soldier",   QL=1, QC=CFrame.new(-3054,237,-10145), MC=CFrame.new(-2917,237,-10468)},
-    {Min=1375, Max=1424, Q="ForgottenQuest", M="Water Fighter", QL=2, QC=CFrame.new(-3054,237,-10145), MC=CFrame.new(-3385,239,-10542)},
-    {Min=1425, Max=1449, Q="IceCastleQuest", M="Snow Lurker",   QL=1, QC=CFrame.new(5566,9,-6313),    MC=CFrame.new(5604,29,-6820)},
-    {Min=1450, Max=1474, Q="IceCastleQuest", M="Arctic Warrior", QL=2, QC=CFrame.new(5566,9,-6313),   MC=CFrame.new(6129,29,-6235)},
-    {Min=1475, Max=1499, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,44,5551)},
-    {Min=1500, Max=1524, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,44,5551)},
-    {Min=1525, Max=1574, Q="PiratePortQuest", M="Pistol Billionaire", QL=2, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-52,44,5584)},
-    {Min=1575, Max=1599, Q="AmazonQuest",   M="Dragon Crew Warrior", QL=1, QC=CFrame.new(5833,52,-1101), MC=CFrame.new(6241,52,-1290)},
-    {Min=1600, Max=1624, Q="AmazonQuest",   M="Dragon Crew Archer", QL=2, QC=CFrame.new(5833,52,-1101), MC=CFrame.new(6488,383,139)},
-    {Min=1625, Max=1649, Q="AmazonQuest2",  M="Female Islander",     QL=1, QC=CFrame.new(5449,602,749), MC=CFrame.new(5217,845,1069)},
-    {Min=1650, Max=1699, Q="AmazonQuest2",  M="Giant Islander",      QL=2, QC=CFrame.new(5449,602,749), MC=CFrame.new(4729,657,-55)},
-    {Min=1700, Max=1724, Q="MarineTreeIsland", M="Marine Commodore", QL=1, QC=CFrame.new(2181,28,-6742), MC=CFrame.new(2490,73,-7144)},
-    {Min=1725, Max=1774, Q="MarineTreeIsland", M="Marine Rear Admiral", QL=2, QC=CFrame.new(2181,28,-6742), MC=CFrame.new(3671,401,-6982)},
-    {Min=1775, Max=1799, Q="DeepForestIsland", M="Mythological Pirate", QL=1, QC=CFrame.new(-13234,332,-7625), MC=CFrame.new(-13478,470,-6985)},
-    {Min=1800, Max=1849, Q="DeepForestIsland2", M="Jungle Pirate",     QL=1, QC=CFrame.new(-12680,390,-9903), MC=CFrame.new(-12107,332,-10549)},
-    {Min=1850, Max=1899, Q="DeepForestIsland3", M="Forest Pirate",     QL=1, QC=CFrame.new(-13258,332,-7924), MC=CFrame.new(-13225,425,-7755)},
-    {Min=1900, Max=1924, Q="PeanutIslandQuest", M="Peanut Scout",      QL=1, QC=CFrame.new(-2104,38,-10193), MC=CFrame.new(-2124,123,-10354)},
-    {Min=1925, Max=1974, Q="PeanutIslandQuest", M="Peanut President",  QL=2, QC=CFrame.new(-2104,38,-10193), MC=CFrame.new(-1859,38,-10238)},
-    {Min=1975, Max=1999, Q="IceCreamIslandQuest", M="Ice Cream Chef",  QL=1, QC=CFrame.new(-821,66,-10965), MC=CFrame.new(-641,210,-11077)},
-    {Min=2000, Max=2024, Q="IceCreamIslandQuest", M="Ice Cream Commander", QL=2, QC=CFrame.new(-821,66,-10965), MC=CFrame.new(-558,115,-11253)},
-    {Min=2025, Max=2049, Q="CakeQuest1",    M="Cookie Crafter",      QL=1, QC=CFrame.new(-2021,38,-12029), MC=CFrame.new(-2365,38,-12099)},
-    {Min=2050, Max=2074, Q="CakeQuest1",    M="Cake Guard",          QL=2, QC=CFrame.new(-2021,38,-12029), MC=CFrame.new(-1651,38,-12308)},
-    {Min=2075, Max=2099, Q="CakeQuest2",    M="Baking Staff",        QL=1, QC=CFrame.new(-1928,38,-12843), MC=CFrame.new(-1980,38,-12850)},
-    {Min=2100, Max=2124, Q="CakeQuest2",    M="Head Baker",          QL=2, QC=CFrame.new(-1928,38,-12843), MC=CFrame.new(-2203,109,-12788)},
-    {Min=2125, Max=2149, Q="ChocQuest1",    M="Cocoa Warrior",       QL=1, QC=CFrame.new(233,25,-12201), MC=CFrame.new(167,73,-12238)},
-    {Min=2150, Max=2199, Q="ChocQuest1",    M="Chocolate Bar Battler", QL=2, QC=CFrame.new(233,25,-12201), MC=CFrame.new(618,25,-12585)},
-    {Min=2200, Max=2224, Q="ChocQuest2",    M="Sweet Thief",         QL=1, QC=CFrame.new(151,25,-12775), MC=CFrame.new(-102,25,-12804)},
-    {Min=2225, Max=2274, Q="ChocQuest2",    M="Candy Rebel",         QL=2, QC=CFrame.new(151,25,-12775), MC=CFrame.new(134,77,-12882)},
-    {Min=2275, Max=2299, Q="HauntedQuest1", M="Haunted Specter",     QL=1, QC=CFrame.new(-9479,141,5566), MC=CFrame.new(-9631,142,5499)},
-    {Min=2300, Max=2324, Q="HauntedQuest2", M="Reborn Skeleton",     QL=1, QC=CFrame.new(-9517,172,6078), MC=CFrame.new(-8760,142,6016)},
-    {Min=2325, Max=2349, Q="HauntedQuest2", M="Living Zombie",       QL=2, QC=CFrame.new(-9517,172,6078), MC=CFrame.new(-10144,140,5932)},
-    {Min=2350, Max=2374, Q="HauntedQuest3", M="Demonic Soul",        QL=1, QC=CFrame.new(-9481,172,6079), MC=CFrame.new(-9712,204,6193)},
-    {Min=2375, Max=2399, Q="HauntedQuest3", M="Posessed Mummy",      QL=2, QC=CFrame.new(-9481,172,6079), MC=CFrame.new(-9583,6,6233)},
-    {Min=2400, Max=2424, Q="NutsIslandQuest", M="Peanut Scout",      QL=1, QC=CFrame.new(-2104,38,-10193), MC=CFrame.new(-2124,123,-10354)},
-    {Min=2425, Max=2449, Q="NutsIslandQuest", M="Peanut President",  QL=2, QC=CFrame.new(-2104,38,-10193), MC=CFrame.new(-1859,38,-10238)},
-    {Min=2450, Max=2474, Q="TikiOutpost1",  M="Isle Outlaw",         QL=1, QC=CFrame.new(-16547,56,1052), MC=CFrame.new(-16342,58,1032)},
-    {Min=2475, Max=2524, Q="TikiOutpost2",  M="Island Boy",          QL=1, QC=CFrame.new(-16542,56,1044), MC=CFrame.new(-16912,58,835)},
-    {Min=2525, Max=2549, Q="TikiOutpost3",  M="Sun-kissed Warrior",  QL=1, QC=CFrame.new(-16542,56,1041), MC=CFrame.new(-16348,58,461)},
-    {Min=2550, Max=2800, Q="TikiOutpost4",  M="Isle Champion",       QL=1, QC=CFrame.new(-16540,56,1044), MC=CFrame.new(-16753,58,1043)},
+    {Min=1, Max=14, Q="BanditQuest1", M="Bandit", QL=1, QC=CFrame.new(1059,17,1550), MC=CFrame.new(1145,17,1634)},
+    {Min=15, Max=29, Q="JungleQuest", M="Monkey", QL=1, QC=CFrame.new(-1598,37,153), MC=CFrame.new(-1448,50,24)},
+    {Min=30, Max=59, Q="BuggyQuest1", M="Brute", QL=1, QC=CFrame.new(-1141,5,3831), MC=CFrame.new(-1145,15,4350)},
+    {Min=60, Max=74, Q="DesertQuest", M="Desert Bandit", QL=1, QC=CFrame.new(894,7,4391), MC=CFrame.new(932,7,4484)},
+    {Min=75, Max=89, Q="DesertQuest", M="Desert Officer", QL=2, QC=CFrame.new(894,7,4391), MC=CFrame.new(1580,11,4373)},
+    {Min=90, Max=99, Q="SnowQuest", M="Snow Bandit", QL=1, QC=CFrame.new(1389,88,-1298), MC=CFrame.new(1376,87,-1396)},
+    {Min=100, Max=119, Q="SnowQuest", M="Snowman", QL=2, QC=CFrame.new(1389,88,-1298), MC=CFrame.new(1201,472,-1401)},
+    {Min=120, Max=149, Q="MarineQuest2", M="Chief Petty Officer", QL=1, QC=CFrame.new(-5039,29,4324), MC=CFrame.new(-4882,23,4255)},
+    {Min=150, Max=174, Q="MarineQuest2", M="Sky Bandit", QL=2, QC=CFrame.new(-5039,29,4324), MC=CFrame.new(-4953,295,-2899)},
+    {Min=175, Max=189, Q="PrisonerQuest", M="Prisoner", QL=1, QC=CFrame.new(5308,2,474), MC=CFrame.new(5411,96,690)},
+    {Min=190, Max=209, Q="PrisonerQuest", M="Dangerous Prisoner", QL=2, QC=CFrame.new(5308,2,474), MC=CFrame.new(5654,15,866)},
+    {Min=210, Max=249, Q="ColosseumQuest", M="Gladiator", QL=1, QC=CFrame.new(-1580,7,296), MC=CFrame.new(-1521,86,405)},
+    {Min=250, Max=299, Q="ColosseumQuest", M="Military Soldier", QL=2, QC=CFrame.new(-1580,7,296), MC=CFrame.new(-1823,54,29)},
+    {Min=300, Max=374, Q="MagmaQuest", M="Military Spy", QL=1, QC=CFrame.new(-5316,12,8515), MC=CFrame.new(-5787,76,8349)},
+    {Min=375, Max=399, Q="MagmaQuest", M="Magma Admiral", QL=2, QC=CFrame.new(-5316,12,8515), MC=CFrame.new(-5530,81,8849)},
+    {Min=400, Max=449, Q="FishmanQuest", M="Fishman Warrior", QL=1, QC=CFrame.new(61123,19,1569), MC=CFrame.new(60879,19,1549)},
+    {Min=450, Max=474, Q="FishmanQuest", M="Fishman Commando", QL=2, QC=CFrame.new(61123,19,1569), MC=CFrame.new(61738,65,1584)},
+    {Min=475, Max=524, Q="SkyExp1Quest", M="God's Guard", QL=1, QC=CFrame.new(-4722,845,-1954), MC=CFrame.new(-4698,845,-1912)},
+    {Min=525, Max=549, Q="SkyExp1Quest", M="Shanda", QL=2, QC=CFrame.new(-7863,5546,-380), MC=CFrame.new(-7685,5567,-446)},
+    {Min=550, Max=624, Q="SkyExp2Quest", M="Royal Squad", QL=1, QC=CFrame.new(-7906,5636,-1412), MC=CFrame.new(-7555,5637,-1420)},
+    {Min=625, Max=649, Q="SkyExp2Quest", M="Royal Soldier", QL=2, QC=CFrame.new(-7906,5636,-1412), MC=CFrame.new(-7836,5645,-1699)},
+    {Min=650, Max=699, Q="FountainQuest", M="Galley Pirate", QL=1, QC=CFrame.new(5259,38,4050), MC=CFrame.new(5551,78,3930)},
+    {Min=700, Max=774, Q="Area1Quest", M="Raider", QL=1, QC=CFrame.new(-427,73,1837), MC=CFrame.new(-746,39,2507)},
+    {Min=775, Max=849, Q="Area1Quest", M="Mercenary", QL=2, QC=CFrame.new(-427,73,1837), MC=CFrame.new(-874,141,1312)},
+    {Min=850, Max=899, Q="Area2Quest", M="Swan Pirate", QL=1, QC=CFrame.new(634,73,918), MC=CFrame.new(878,122,1235)},
+    {Min=900, Max=949, Q="Area2Quest", M="Marine Lieutenant", QL=2, QC=CFrame.new(634,73,918), MC=CFrame.new(-845,77,2016)},
+    {Min=950, Max=999, Q="MarineQuest3", M="Marine Captain", QL=1, QC=CFrame.new(-2441,73,1891), MC=CFrame.new(-2035,73,2050)},
+    {Min=1000, Max=1049, Q="MarineQuest3", M="Zombie", QL=2, QC=CFrame.new(-2441,73,1891), MC=CFrame.new(-5736,126,-653)},
+    {Min=1050, Max=1099, Q="ZombieQuest", M="Vampire", QL=1, QC=CFrame.new(-5494,49,-795), MC=CFrame.new(-6033,7,-1317)},
+    {Min=1100, Max=1124, Q="ZombieQuest", M="Elf", QL=2, QC=CFrame.new(-5494,49,-795), MC=CFrame.new(56,194,-1393)},
+    {Min=1125, Max=1174, Q="NinjaQuest", M="Ninja Assassin", QL=1, QC=CFrame.new(-5377,39,-4826), MC=CFrame.new(-5238,84,-4634)},
+    {Min=1175, Max=1199, Q="NinjaQuest", M="Ninja Hunter", QL=2, QC=CFrame.new(-5377,39,-4826), MC=CFrame.new(-5700,50,-4884)},
+    {Min=1200, Max=1249, Q="IceSideQuest", M="Snow Trooper", QL=1, QC=CFrame.new(-6061,16,-4903), MC=CFrame.new(-5693,16,-4898)},
+    {Min=1250, Max=1274, Q="IceSideQuest", M="Winter Warrior", QL=2, QC=CFrame.new(-6061,16,-4903), MC=CFrame.new(-5587,9,-5008)},
+    {Min=1275, Max=1299, Q="ShipQuest1", M="Lab Subordinate", QL=1, QC=CFrame.new(-9505,38,4088), MC=CFrame.new(-9230,45,4294)},
+    {Min=1300, Max=1324, Q="ShipQuest2", M="Horned Warrior", QL=1, QC=CFrame.new(-9481,72,6059), MC=CFrame.new(-6779,83,5928)},
+    {Min=1325, Max=1349, Q="ShipQuest2", M="Magma Ninja", QL=2, QC=CFrame.new(-9481,72,6059), MC=CFrame.new(-5900,78,5800)},
+    {Min=1350, Max=1374, Q="FrostQuest", M="Lava Pirate", QL=1, QC=CFrame.new(-5249,38,-4445), MC=CFrame.new(-5270,42,-4800)},
+    {Min=1375, Max=1399, Q="FrostQuest", M="Ship Deckhand", QL=2, QC=CFrame.new(-5249,38,-4445), MC=CFrame.new(-8912,30,-9844)},
+    {Min=1400, Max=1424, Q="ForgottenQuest", M="Ship Engineer", QL=1, QC=CFrame.new(-3053,237,-10145), MC=CFrame.new(-9300,30,-9940)},
+    {Min=1425, Max=1449, Q="ForgottenQuest", M="Ship Steward", QL=2, QC=CFrame.new(-3053,237,-10145), MC=CFrame.new(-9400,15,-9350)},
+    {Min=1450, Max=1474, Q="IceCastleQuest", M="Ship Officer", QL=1, QC=CFrame.new(-5539,314,-2972), MC=CFrame.new(-9658,8,-9700)},
+    {Min=1475, Max=1524, Q="IceCastleQuest", M="Arctic Warrior", QL=2, QC=CFrame.new(-5539,314,-2972), MC=CFrame.new(-5990,340,-2800)},
+    {Min=1525, Max=1574, Q="PiratePortQuest", M="Pirate Millionaire", QL=1, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-435,191,5610)},
+    {Min=1575, Max=1599, Q="PiratePortQuest", M="Pistol Billionaire", QL=2, QC=CFrame.new(-290,44,5580), MC=CFrame.new(-379,74,5873)},
+    {Min=1600, Max=1624, Q="AmazonQuest", M="Dragon Crew Warrior", QL=1, QC=CFrame.new(5832,52,-1105), MC=CFrame.new(6339,52,-1213)},
+    {Min=1625, Max=1649, Q="AmazonQuest", M="Dragon Crew Archer", QL=2, QC=CFrame.new(5832,52,-1105), MC=CFrame.new(6594,383,139)},
+    {Min=1650, Max=1699, Q="AmazonQuest2", M="Female Islander", QL=1, QC=CFrame.new(5448,602,751), MC=CFrame.new(5792,820,863)},
+    {Min=1700, Max=1724, Q="AmazonQuest2", M="Giant Islander", QL=2, QC=CFrame.new(5448,602,751), MC=CFrame.new(4530,656,-131)},
+    {Min=1725, Max=1774, Q="MarineTreeIsland", M="Marine Commodore", QL=1, QC=CFrame.new(2180,29,-6737), MC=CFrame.new(2490,73,-7070)},
+    {Min=1775, Max=1799, Q="MarineTreeIsland", M="Marine Rear Admiral", QL=2, QC=CFrame.new(2180,29,-6737), MC=CFrame.new(3671,402,-6982)},
+    {Min=1800, Max=1849, Q="DeepForestIsland", M="Fishman Raider", QL=1, QC=CFrame.new(-13234,333,-7625), MC=CFrame.new(-10560,332,-8754)},
+    {Min=1850, Max=1899, Q="DeepForestIsland", M="Fishman Captain", QL=2, QC=CFrame.new(-13234,333,-7625), MC=CFrame.new(-11465,332,-8770)},
+    {Min=1900, Max=1924, Q="DeepForestIsland2", M="Forest Pirate", QL=1, QC=CFrame.new(-12684,391,-9902), MC=CFrame.new(-13225,425,-7755)},
+    {Min=1925, Max=1974, Q="DeepForestIsland3", M="Jungle Pirate", QL=1, QC=CFrame.new(-12191,332,-10549), MC=CFrame.new(-12107,332,-10549)},
+    {Min=1975, Max=1999, Q="PeanutIsland", M="Peanut Scout", QL=1, QC=CFrame.new(-2104,38,-10192), MC=CFrame.new(-2124,123,-10435)},
+    {Min=2000, Max=2024, Q="PeanutIsland", M="Peanut President", QL=2, QC=CFrame.new(-2104,38,-10192), MC=CFrame.new(-1876,38,-10946)},
+    {Min=2025, Max=2049, Q="IceCreamIsland", M="Ice Cream Chef", QL=1, QC=CFrame.new(-820,66,-10965), MC=CFrame.new(-821,44,-11253)},
+    {Min=2050, Max=2074, Q="IceCreamIsland", M="Ice Cream Commander", QL=2, QC=CFrame.new(-820,66,-10965), MC=CFrame.new(-610,127,-11034)},
+    {Min=2075, Max=2099, Q="CakeQuest1", M="Cookie Crafter", QL=1, QC=CFrame.new(-2022,38,-12030), MC=CFrame.new(-2365,38,-12099)},
+    {Min=2100, Max=2124, Q="CakeQuest1", M="Cake Guard", QL=2, QC=CFrame.new(-2022,38,-12030), MC=CFrame.new(-1651,38,-12293)},
+    {Min=2125, Max=2149, Q="CakeQuest2", M="Baking Staff", QL=1, QC=CFrame.new(-1927,38,-12843), MC=CFrame.new(-1980,38,-12763)},
+    {Min=2150, Max=2199, Q="CakeQuest2", M="Head Baker", QL=2, QC=CFrame.new(-1927,38,-12843), MC=CFrame.new(-2235,53,-12858)},
+    {Min=2200, Max=2224, Q="ChocQuest1", M="Cocoa Warrior", QL=1, QC=CFrame.new(233,25,-12201), MC=CFrame.new(167,26,-12238)},
+    {Min=2225, Max=2249, Q="ChocQuest1", M="Chocolate Bar Battler", QL=2, QC=CFrame.new(233,25,-12201), MC=CFrame.new(507,73,-12789)},
+    {Min=2250, Max=2274, Q="ChocQuest2", M="Sweet Thief", QL=1, QC=CFrame.new(151,25,-12774), MC=CFrame.new(-71,25,-12381)},
+    {Min=2275, Max=2299, Q="ChocQuest2", M="Candy Rebel", QL=2, QC=CFrame.new(151,25,-12774), MC=CFrame.new(134,77,-12882)},
+    {Min=2300, Max=2324, Q="CandyQuest1", M="Candy Pirate", QL=1, QC=CFrame.new(-1149,14,-14453), MC=CFrame.new(-1380,14,-14453)},
+    {Min=2325, Max=2800, Q="CandyQuest1", M="Snow Demon", QL=2, QC=CFrame.new(-1149,14,-14453), MC=CFrame.new(-907,14,-14453)},
 }
 
 local function GetQuest()
     local level = GetLevel()
     for _, q in ipairs(QuestDB) do
-        if level >= q.Min and level <= q.Max then
-            return q
-        end
+        if level >= q.Min and level <= q.Max then return q end
     end
     return nil
 end
@@ -1017,8 +784,15 @@ end
 -- ══════════════════════════════════════════════════════════════════
 
 task.spawn(function()
+    task.wait(5)
+    SelectTeam()
+end)
+
+task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
+            if _G.State.IsFastTraveling then return end
+
             local level = GetLevel()
 
             if level >= 200 and level < 700 and GetSea() == 1 and not HasItem("Saber") then
@@ -1037,11 +811,7 @@ task.spawn(function()
                 if AutoThirdSea() then return end
             end
 
-            if level >= 150 and level < 700 then
-                AutoBuyFightingStyles()
-            end
-
-            local c = LP.Character
+            local c = GetChar()
             if not c or not c:FindFirstChild("HumanoidRootPart") then return end
 
             local qData = GetQuest()
@@ -1059,12 +829,11 @@ task.spawn(function()
 
                 _G.BobonStatus = "Taking quest: " .. qData.M
                 Tween(qData.QC)
-                task.wait(0.8)
+                task.wait(1)
                 CommF_:InvokeServer("StartQuest", qData.Q, qData.QL)
                 _G.State.LastQuest = os.time()
                 task.wait(0.5)
-
-                Tween(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + _G.Settings.FarmHeight, qData.MC.Position.Z))
+                Tween(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + 22, qData.MC.Position.Z))
                 return
             end
 
@@ -1072,11 +841,11 @@ task.spawn(function()
             if mob then
                 _G.State.CurrentTarget = mob
                 _G.BobonStatus = "Farming: " .. qData.M .. " | Kills: " .. _G.State.KillCount
-                Tween(CFrame.new(mob.HumanoidRootPart.Position.X, mob.HumanoidRootPart.Position.Y + _G.Settings.FarmHeight, mob.HumanoidRootPart.Position.Z))
+                Tween(CFrame.new(mob.HumanoidRootPart.Position.X, mob.HumanoidRootPart.Position.Y + 22, mob.HumanoidRootPart.Position.Z))
             else
                 _G.State.CurrentTarget = nil
                 _G.BobonStatus = "Waiting: " .. qData.M
-                Tween(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + _G.Settings.FarmHeight, qData.MC.Position.Z))
+                Tween(CFrame.new(qData.MC.Position.X, qData.MC.Position.Y + 22, qData.MC.Position.Z))
             end
         end)
     end
@@ -1085,17 +854,15 @@ end)
 RunService.Heartbeat:Connect(function()
     pcall(function()
         if not _G.State.CurrentTarget then return end
-
         local mob = _G.State.CurrentTarget
         if not mob or not mob:FindFirstChild("Humanoid") or mob.Humanoid.Health <= 0 then
             _G.State.CurrentTarget = nil
             return
         end
-
         EquipMelee()
         Attack()
     end)
 end)
 
-print("[BobonHub v10.1] Loaded! Fixed Touch Screen + Team Selection")
-_G.BobonStatus = "BobonHub v10.1 Ready!"
+print("[BobonHub v12.0] ✓ Ready! | Always visible menu + Auto farm + Auto items + Auto fruit")
+_G.BobonStatus = "BobonHub v12.0 Ready!"
