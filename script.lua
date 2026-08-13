@@ -1,16 +1,16 @@
 --[[
     ╔════════════════════════════════════════════════════════╗
-    ║     MERGED CONFIG - Suge + Banana Cat                  ║
-    ║     Kết hợp tính năng từ cả 2 bản script              ║
+    ║     CONFIG - Suge FARM CHÍNH + Banana Menu             ║
+    ║     Banana chỉ hiển thị, không tự động làm gì         ║
     ╚════════════════════════════════════════════════════════╝
 ]]
-
--- ==================== CONFIG SUGE ====================
+ 
+-- ==================== CONFIG SUGE (FARM CHÍNH) ====================
 getgenv().Configs = {
     -- ===== AUTO COLLECT & FARM =====
     ["Auto Collect Berry"] = false,
-    ["Auto Evo Race"] = false, --bug
-    ["Auto Pull Lever"] = false, --bug
+    ["Auto Evo Race"] = false,
+    ["Auto Pull Lever"] = false,
     ["Auto Saber"] = true,
     ["Auto Spawn Dough King"] = false,
     ["Auto Spawn rip_indra"] = false,
@@ -22,7 +22,7 @@ getgenv().Configs = {
     ["Get Fruits"] = true,
     
     -- ===== WEAPON AUTO GET =====
-    ["Buy Stuffs"] = false, --bug
+    ["Buy Stuffs"] = false,
     ["Cursed Dual Katana"] = true,
     ["Skull Guitar"] = true,
     ["Switch Melee"] = true,
@@ -76,32 +76,29 @@ getgenv().Configs = {
     ["Shutdown"] = false,
     ["Team"] = "Pirates",
 }
-
--- Load script Suge
+ 
+-- Load script Suge (FARM CHÍNH)
 loadstring(game:HttpGet("https://hune205.dev/api/v5/files/6a71e41ee9e85c97e79660b2.lua"))()
 repeat wait() until game:IsLoaded() and game.Players.LocalPlayer
-getgenv().Key = ""
-
--- ==================== CONFIG BANANA CAT ====================
+ 
+-- ==================== CONFIG BANANA (CHỈ MENU, KHÔNG FARM) ====================
 getgenv().SettingFarm = {
-    -- ===== UI & DISPLAY =====
+    -- ===== TẮT HẾT TỰ ĐỘNG =====
     ["Hide UI"] = false,
     ["White Screen"] = false,
     
-    -- ===== PERFORMANCE =====
     ["Lock Fps"] = {
         ["Enabled"] = false,
         ["FPS"] = 20,
     },
     
-    -- ===== TELEPORT RESET =====
     ["Reset Teleport"] = {
         ["Enabled"] = false,
         ["Delay Reset"] = 3,
         ["Item Dont Reset"] = {
             ["Fruit"] = {
-                ["Enabled"] = true,
-                ["All Fruit"] = true,
+                ["Enabled"] = false,
+                ["All Fruit"] = false,
                 ["Select Fruit"] = {
                     ["Enabled"] = false,
                     ["Fruit"] = {},
@@ -110,19 +107,17 @@ getgenv().SettingFarm = {
         },
     },
     
-    -- ===== AUTO GET ITEMS =====
     ["Get Items"] = {
-        ["Saber"] = true,
-        ["Godhuman"] = true,
-        ["Skull Guitar"] = true,
-        ["Mirror Fractal"] = true,
-        ["Cursed Dual Katana"] = true,
-        ["Upgrade Race V2-V3"] = true,
-        ["Auto Pull Lever"] = true,
-        ["Shark Anchor"] = true,
+        ["Saber"] = false,
+        ["Godhuman"] = false,
+        ["Skull Guitar"] = false,
+        ["Mirror Fractal"] = false,
+        ["Cursed Dual Katana"] = false,
+        ["Upgrade Race V2-V3"] = false,
+        ["Auto Pull Lever"] = false,
+        ["Shark Anchor"] = false,
     },
     
-    -- ===== RARE ITEMS =====
     ["Get Rare Items"] = {
         ["Rengoku"] = false,
         ["Dragon Trident"] = false,
@@ -130,77 +125,67 @@ getgenv().SettingFarm = {
         ["Gravity Blade"] = false,
     },
     
-    -- ===== FRAGMENTS =====
     ["Farm Fragments"] = {
         ["Enabled"] = false,
         ["Fragment"] = 50000,
     },
     
-    -- ===== AUTO CHAT =====
     ["Auto Chat"] = {
         ["Enabled"] = false,
         ["Text"] = "",
     },
     
-    -- ===== BOSS SUMMON =====
-    ["Auto Summon Rip Indra"] = true,
+    ["Auto Summon Rip Indra"] = false,
     
-    -- ===== HOP ADVANCED =====
     ["Select Hop"] = {
         ["Hop Server If Have Player Near"] = false,
-        ["Hop Find Rip Indra Get Valkyrie Helm or Get Tushita"] = true,
+        ["Hop Find Rip Indra Get Valkyrie Helm or Get Tushita"] = false,
         ["Hop Find Dough King Get Mirror Fractal"] = false,
-        ["Hop Find Raids Castle [CDK]"] = true,
-        ["Hop Find Cake Queen [CDK]"] = true,
-        ["Hop Find Soul Reaper [CDK]"] = true,
-        ["Hop Find Darkbeard [SG]"] = true,
+        ["Hop Find Raids Castle [CDK]"] = false,
+        ["Hop Find Cake Queen [CDK]"] = false,
+        ["Hop Find Soul Reaper [CDK]"] = false,
+        ["Hop Find Darkbeard [SG]"] = false,
         ["Hop Find Mirage [ Pull Lever ]"] = false,
     },
     
-    -- ===== MASTERY FARM =====
     ["Farm Mastery"] = {
         ["Melee"] = false,
         ["Sword"] = false,
     },
     
-    -- ===== HAKI =====
     ["Buy Haki"] = {
-        ["Enhancement"] = true,
-        ["Skyjump"] = true,
-        ["Flash Step"] = true,
-        ["Observation"] = true,
+        ["Enhancement"] = false,
+        ["Skyjump"] = false,
+        ["Flash Step"] = false,
+        ["Observation"] = false,
     },
     
-    -- ===== FRUIT SHOP =====
     ["Sniper Fruit Shop"] = {
-        ["Enabled"] = true,
+        ["Enabled"] = false,
         ["Fruit"] = {"Leopard-Leopard","Kitsune-Kitsune","Dragon-Dragon","Yeti-Yeti","Gas-Gas"},
     },
     
-    -- ===== LOCK FRUIT & WEBHOOK =====
     ["Lock Fruit"] = {},
     ["Webhook"] = {
         ["Enabled"] = false,
         ["WebhookUrl"] = "",
     }
 }
-
--- Load script Banana Cat
+ 
+-- Load script Banana (CHỈ MENU)
 loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaCat-kaitunBF.lua"))()
-
+ 
 --[[
     ════════════════════════════════════════════════════════
-    HƯỚNG DẪN SỬ DỤNG:
+    CẤU HÌNH:
     
-    1. Script này kết hợp toàn bộ config từ 2 bản
-    2. Suge dùng getgenv().Configs
-    3. Banana Cat dùng getgenv().SettingFarm
-    4. Cả 2 script sẽ load theo thứ tự
+    ✅ SUGE: Farm chính (tất cả config của Suge)
+    ✅ BANANA: Chỉ hiển thị menu (hết tính năng tự động)
     
-    ĐIỀU CHỈNH:
-    - Sửa các giá trị trong Config (true/false)
-    - Để config của bạn, xóa những không dùng
-    - Thêm Webhook URL nếu cần thông báo
+    CÁCH DÙNG:
+    getgenv().Key = "YOUR_BANANA_KEY_HERE"
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/phamkhanhduong2019-jpg/Kaitunbobonbf/refs/heads/main/suge_main_banana_menu.lua"))()
     
     ════════════════════════════════════════════════════════
 ]]
+ 
