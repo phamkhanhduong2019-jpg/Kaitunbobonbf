@@ -1,6 +1,5 @@
 -- ================================================================= --
---                    BOBON HUB - KAITUN FULL SOURCE                 --
---                Đã tích hợp đầy đủ Logic từ Config                 --
+--         BOBON HUB - TWEEN MOVEMENT & AUTO OBSERVATION HAKI        --
 -- ================================================================= --
 
 getgenv().Configs = {
@@ -38,10 +37,10 @@ getgenv().Configs = {
     
     ["Farm Mastery"] = {
         ["Enable"] = true,
-        ["Farm Mastery Weapons"] = {"Melee", "Sword"},
+        ["Farm Mastery Weapons"] = {"Melee"},
         ["Guns To Farm"] = {},
         ["Mastery Health (%)"] = 40,
-        ["Swords To Farm"] = {"Cursed Dual Katana", "True Triple Katana"},
+        ["Swords To Farm"] = {},
     },
     
     ["Fruit to use for auto third sea"] = {"Buddha-Buddha", "Magma-Magma"}, 
@@ -82,7 +81,7 @@ local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 local RunService = game:GetService("RunService")
 
--- 1. HỆ THỐNG ANTI-AFK & CHỌN PHE (TEAM)
+-- 1. CHỐNG AFK & CHỌN PHE
 LocalPlayer.Idled:Connect(function()
     VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
     task.wait(1)
@@ -97,7 +96,7 @@ pcall(function()
     end
 end)
 
--- 2. HỆ THỐNG NOCLIP (ĐI XUYÊN VẬT THỂ KHI BAY)
+-- 2. NOCLIP (TỰ ĐỘNG ĐI XUYÊN VẬT THỂ KHI TWEEN BAY)
 RunService.Stepped:Connect(function()
     if LocalPlayer.Character then
         for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
@@ -108,27 +107,77 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- 3. HÀM DI CHUYỂN TWEEN FLY MƯỢT TRÁNH ANTI-CHEAT
+-- 3. HỆ THỐNG DI CHUYỂN TWEEN MƯỢT (TWEEN FLY ENGINE)
 local currentTween = nil
 local function FastTween(targetCFrame)
     local char = LocalPlayer.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
+    if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+        if char.Humanoid.Health <= 0 then return end
+        
         local hrp = char.HumanoidRootPart
         local distance = (targetCFrame.Position - hrp.Position).Magnitude
         
-        if distance > 20 then
-            local speed = 320 -- Tốc độ di chuyển chuẩn
+        -- Ngăn nghiêng người/rơi tự do khi đang Tween
+        hrp.Velocity = Vector3.new(0, 0, 0)
+        
+        if distance > 10 then
+            local speed = 300 -- Tốc độ bay Tween an toàn chuẩn Blox Fruits
             local tweenInfo = TweenInfo.new(distance / speed, Enum.EasingStyle.Linear)
+            
             if currentTween then currentTween:Cancel() end
             currentTween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
             currentTween:Play()
         else
+            if currentTween then currentTween:Cancel() end
             hrp.CFrame = targetCFrame
         end
     end
 end
 
--- 4. BẢNG DỮ LIỆU QUEST FARM LEVEL (LV 1 -> MAX 2800)
+-- 4. AUTO BẬT HAKI VŨ KHÍ (BUSO) & HAKI QUAN SÁT (OBSERVATION / KEN)
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+                -- Bật Haki Vũ Khí (Buso Haki) nếu chưa có
+                if not char:FindFirstChild("HasBuso") then
+                    ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
+                end
+                
+                -- Bật Haki Quan Sát (Observation Haki / Vision)
+                if not char:FindFirstChild("Vision") then
+                    ReplicatedStorage.Remotes.CommE:FireServer("Ken", true)
+                end
+            end
+        end)
+    end
+end)
+
+-- 5. AUTO EQUIP MELEE (CẦM VÕ VÀO TAY)
+local function EquipMelee()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local holdingMelee = false
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") and (item.ToolTip == "Melee" or item:FindFirstChild("Combat") or item:FindFirstChild("Melee")) then
+            holdingMelee = true
+            break
+        end
+    end
+
+    if not holdingMelee then
+        for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
+            if tool:IsA("Tool") and (tool.ToolTip == "Melee" or tool:FindFirstChild("Combat") or tool:FindFirstChild("Melee") or tool.Name == "Combat" or tool.Name == "Superhuman" or tool.Name == "Godhuman" or tool.Name == "Dragon Talon" or tool.Name == "Electric Claw" or tool.Name == "Death Step" or tool.Name == "Sharkman Karate" or tool.Name == "Sanguine Art") then
+                char.Humanoid:EquipTool(tool)
+                break
+            end
+        end
+    end
+end
+
+-- 6. DỮ LIỆU QUEST FARM
 local QuestDatabase = {
     {MinLvl = 1, MaxLvl = 14, Quest = "BanditQuest1", Monster = "Bandit", QuestLvl = 1, CFrame = CFrame.new(1059, 16, 1548)},
     {MinLvl = 15, MaxLvl = 29, Quest = "JungleQuest", Monster = "Monkey", QuestLvl = 1, CFrame = CFrame.new(-1598, 37, 152)},
@@ -173,73 +222,50 @@ local function GetQuestData()
     return nil
 end
 
--- 5. CÁC TÍNH NĂNG PHỤ KÈM THEO CONFIG
--- Tự động Mua Võ / Kiếm / Haki nếu bật "Buy Stuffs"
-local function AutoBuyStuffs()
-    if getgenv().Configs["Buy Stuffs"] then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") -- Bật Buso Haki
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") -- Mua Nhảy Cao
-    end
-end
-
--- Tự động Bổ điểm Stats
-local function AutoStats()
-    local points = LocalPlayer.Data.Points.Value
-    if points > 0 then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", points)
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Defense", points)
-    end
-end
-
--- Tự động Roll Trái Ác Quỷ & Bỏ vào Balo
-local function AutoGetFruit()
-    if getgenv().Configs["Get Fruits"] then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("Cousin", "Buy")
-        for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
-            if string.find(item.Name, "Fruit") then
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", item.Name, item)
-            end
-        end
-    end
-end
-
--- 6. VÒNG LẶP CHÍNH THỰC THI (MAIN LOOP)
+-- 7. VÒNG LẶP FARM TWEEN VÀ OBAERVATION HAKI CHÍNH
 task.spawn(function()
     while task.wait(0.2) do
         pcall(function()
-            AutoStats()
-            AutoBuyStuffs()
-            AutoGetFruit()
+            -- Auto Stats
+            local points = LocalPlayer.Data.Points.Value
+            if points > 0 then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Melee", points)
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("AddPoint", "Defense", points)
+            end
 
-            local myLevel = LocalPlayer.Data.Level.Value
-            
-            -- Kiểm tra ưu tiên: Farm Xương ở Lâu Đài Ma nếu bật Config & Đạt Level 1500+
-            local farmBoneCfg = getgenv().Configs["Farm Config"]["Farm Bone Get x2 Exp"]
-            if farmBoneCfg and farmBoneCfg["Enable"] and myLevel >= farmBoneCfg["Level"] and myLevel < 2800 then
-                -- Teleport ra Haunted Castle farm xương
-                FastTween(CFrame.new(-9480, 140, 5530))
-                -- Tự động nhặt / đổi xương lấy x2 EXP
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("Bones", "Buy", 1, 1)
-            else
-                -- Farm Quest Level Bình Thường
-                local qData = GetQuestData()
-                if qData then
-                    local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
-                    local hasQuest = mainGui and mainGui:FindFirstChild("Quest") and mainGui.Quest.Visible
+            -- Luôn cầm võ
+            EquipMelee()
 
-                    if not hasQuest then
-                        FastTween(qData.CFrame)
-                        task.wait(0.3)
+            local qData = GetQuestData()
+            if qData then
+                local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
+                local hasQuest = mainGui and mainGui:FindFirstChild("Quest") and mainGui.Quest.Visible
+
+                if not hasQuest then
+                    -- Tween đến NPC nhận Quest
+                    FastTween(qData.CFrame)
+                    if (LocalPlayer.Character.HumanoidRootPart.Position - qData.CFrame.Position).Magnitude < 15 then
                         ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", qData.Quest, qData.QuestLvl)
-                    else
-                        local enemy = workspace:FindFirstChild("Enemies") and workspace.Enemies:FindFirstChild(qData.Monster)
-                        if enemy and enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 then
-                            -- Bay đến đầu quái và spam đòn
-                            FastTween(enemy.HumanoidRootPart.CFrame * CFrame.new(0, 9, 0))
-                            VirtualUser:Button1Down(Vector2.new(0,0))
-                        else
-                            FastTween(qData.CFrame * CFrame.new(0, 15, 0))
+                    end
+                else
+                    -- Tìm Quái
+                    local enemy = nil
+                    if workspace:FindFirstChild("Enemies") then
+                        for _, v in ipairs(workspace.Enemies:GetChildren()) do
+                            if v.Name == qData.Monster and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+                                enemy = v
+                                break
+                            end
                         end
+                    end
+
+                    if enemy then
+                        -- Tween đến vị trí đỉnh đầu quái (cách 8 stud) để đánh an toàn
+                        FastTween(enemy.HumanoidRootPart.CFrame * CFrame.new(0, 8, 0))
+                        VirtualUser:Button1Down(Vector2.new(0,0))
+                    else
+                        -- Nếu chưa thấy quái xuất hiện, Tween đến khu vực spawn quái
+                        FastTween(qData.CFrame * CFrame.new(0, 15, 0))
                     end
                 end
             end
@@ -247,4 +273,4 @@ task.spawn(function()
     end
 end)
 
-print("[BOBON HUB] All Sources & Logic Active Successfully!")
+print("[BOBON HUB] FastTween Movement & Observation Haki Fully Loaded!")
