@@ -2,7 +2,6 @@ repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
 
 local CoreGui = game:GetService("CoreGui")
 local PlayerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
-local RunService = game:GetService("RunService")
 
 getgenv().SettingFarm = {
     ["Hide UI"] = false,
@@ -28,33 +27,17 @@ task.spawn(function()
     end)
 end)
 
-task.wait(7)
-
-local events = {RunService.Heartbeat, RunService.Stepped, RunService.RenderStepped}
-for _, ev in ipairs(events) do
-    local ok, conns = pcall(function() return getconnections(ev) end)
-    if ok then
-        for _, c in ipairs(conns) do
-            pcall(function() c:Disable() end)
-        end
-    end
-end
+task.wait(6)
 
 for _, gui in ipairs(CoreGui:GetChildren()) do
-    if gui:IsA("ScreenGui") and (string.find(gui.Name:lower(), "banana") or string.find(gui.Name:lower(), "wind") or string.find(gui.Name:lower(), "kaitun")) then
+    if gui:IsA("ScreenGui") and (string.find(gui.Name:lower(), "banana") or string.find(gui.Name:lower(), "wind") or string.find(gui.Name:lower(), "kaitun") or string.find(gui.Name:lower(), "linoria")) then
         gui:Destroy()
     end
 end
 
 for _, gui in ipairs(PlayerGui:GetChildren()) do
-    if gui:IsA("ScreenGui") and (string.find(gui.Name:lower(), "banana") or string.find(gui.Name:lower(), "wind") or string.find(gui.Name:lower(), "kaitun")) then
+    if gui:IsA("ScreenGui") and (string.find(gui.Name:lower(), "banana") or string.find(gui.Name:lower(), "wind") or string.find(gui.Name:lower(), "kaitun") or string.find(gui.Name:lower(), "linoria")) then
         gui:Destroy()
-    end
-end
-
-for k, _ in pairs(getgenv()) do
-    if k ~= "Configs" then
-        getgenv()[k] = nil
     end
 end
 
