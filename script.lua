@@ -20,6 +20,8 @@ local VU             = game:GetService("VirtualUser")
 local TS             = game:GetService("TweenService")
 local TeleportSvc    = game:GetService("TeleportService")
 local CoreGui        = game:GetService("CoreGui")
+local HttpService    = game:GetService("HttpService")
+local Lighting       = game:GetService("Lighting")
 
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
@@ -34,12 +36,13 @@ end
 --                         GLOBAL SETTINGS
 -- ══════════════════════════════════════════════════════════════════
 _G.Settings = {
-    TweenSpeed           = 300,
-    FarmHeight           = 22,
-    HitboxSize           = 50,
-    AttackDelay          = 0.08,
+    TweenSpeed           = 350,
+    FarmHeight           = 25,
+    HitboxSize           = 60,
+    AttackDelay          = 0.05,
     RandomFruitInterval  = 120,
     FastTravelDistance   = 1000,
+    RespawnWaitTime      = 2,
 }
 
 _G.State = {
@@ -52,6 +55,9 @@ _G.State = {
     IsTweening       = false,
     IsFastTraveling  = false,
     TeleportTarget   = nil,
+    IsRespawning     = false,
+    CheckpointSet    = false,
+    LastIsland       = "",
 }
 
 _G.BobonStatus = "Starting..."
@@ -72,33 +78,50 @@ ScreenGui.DisplayOrder    = 10000
 ScreenGui.IgnoreGuiInset  = true
 ScreenGui.Enabled         = true
 
+-- Background Overlay
 local Overlay = Instance.new("Frame")
 Overlay.Name                 = "Overlay"
 Overlay.Parent               = ScreenGui
 Overlay.Size                 = UDim2.new(1, 0, 1, 0)
 Overlay.Position             = UDim2.new(0, 0, 0, 0)
-Overlay.BackgroundColor3     = Color3.fromRGB(8, 12, 25)
-Overlay.BackgroundTransparency = 1
+Overlay.BackgroundColor3     = Color3.fromRGB(10, 15, 30)
+Overlay.BackgroundTransparency = 0.6
 Overlay.BorderSizePixel      = 0
 Overlay.ZIndex               = 1
 
+-- Main Container
 local Container = Instance.new("Frame")
 Container.Name               = "Container"
 Container.Parent             = ScreenGui
 Container.AnchorPoint        = Vector2.new(0.5, 0.5)
 Container.Position           = UDim2.new(0.5, 0, 0.5, 0)
-Container.Size               = UDim2.new(0, 520, 0, 300)
-Container.BackgroundTransparency = 1
-Container.BorderSizePixel    = 0
+Container.Size               = UDim2.new(0, 550, 0, 340)
+Container.BackgroundColor3   = Color3.fromRGB(15, 20, 40)
+Container.BackgroundTransparency = 0.15
+Container.BorderSizePixel    = 2
+Container.BorderColor3       = Color3.fromRGB(80, 200, 255)
+Container.ClipsDescendants   = true
 Container.ZIndex             = 2
 
-local function CreateLabel(name, text, size, color, yOffset, bold)
+-- Title Bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Parent = Container
+TitleBar.Size = UDim2.new(1, 0, 0, 40)
+TitleBar.Position = UDim2.new(0, 0, 0, 0)
+TitleBar.BackgroundColor3 = Color3.fromRGB(80, 200, 255)
+TitleBar.BackgroundTransparency = 0.3
+TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 3
+
+local function CreateLabel(name, text, size, color, yOffset, bold, parent)
+    parent = parent or Container
     local label = Instance.new("TextLabel")
     label.Name                = name
-    label.Parent              = Container
+    label.Parent              = parent
     label.AnchorPoint         = Vector2.new(0.5, 0)
     label.Position            = UDim2.new(0.5, 0, 0, yOffset)
-    label.Size                = UDim2.new(1, 0, 0, size + 18)
+    label.Size                = UDim2.new(1, -40, 0, size + 20)
     label.BackgroundTransparency = 1
     label.Text                = text
     label.TextColor3          = color
@@ -106,64 +129,82 @@ local function CreateLabel(name, text, size, color, yOffset, bold)
     label.Font                = bold and Enum.Font.GothamBold or Enum.Font.Gotham
     label.TextXAlignment      = Enum.TextXAlignment.Center
     label.TextYAlignment      = Enum.TextYAlignment.Center
-    label.TextTransparency    = 1
-    label.TextStrokeTransparency = 0.7
+    label.TextTransparency    = 0
+    label.TextStrokeTransparency = 0.5
     label.TextStrokeColor3    = Color3.fromRGB(0, 0, 0)
     label.ZIndex              = 3
     return label
 end
 
-local TitleLabel    = CreateLabel("Title",    "Bobon Hub",          34, Color3.fromRGB(80, 200, 255),    5,   true)
-local SubtitleLabel = CreateLabel("Subtitle", "Blox Fruit Kaitun",  17, Color3.fromRGB(160, 190, 220),   55,  false)
-local StatusLabel   = CreateLabel("Status",   "Status: Loading...", 15, Color3.fromRGB(100, 255, 140),   105, false)
-local TimeLabel     = CreateLabel("Time",     "Time: 00:00:00",     14, Color3.fromRGB(190, 205, 230),   145, false)
+local TitleLabel = CreateLabel("Title", "✦ BOBON HUB ✦", 36, Color3.fromRGB(80, 200, 255), 2, true)
+TitleLabel.TextStrokeTransparency = 0
+TitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 100, 200)
 
+local SubtitleLabel = CreateLabel("Subtitle", "Blox Fruit Kaitun", 16, Color3.fromRGB(180, 210, 240), 42, false)
+
+-- Status Section
+local StatusFrame = Instance.new("Frame")
+StatusFrame.Name = "StatusFrame"
+StatusFrame.Parent = Container
+StatusFrame.Size = UDim2.new(1, -40, 0, 50)
+StatusFrame.Position = UDim2.new(0, 20, 0, 70)
+StatusFrame.BackgroundTransparency = 1
+StatusFrame.ZIndex = 3
+
+local StatusLabel = CreateLabel("Status", "Status: Loading...", 16, Color3.fromRGB(100, 255, 140), 0, false, StatusFrame)
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Size = UDim2.new(1, 0, 0, 25)
+StatusLabel.Position = UDim2.new(0, 0, 0, 0)
+
+local TimeLabel = CreateLabel("Time", "Time: 00:00:00", 15, Color3.fromRGB(200, 215, 240), 28, false, StatusFrame)
+TimeLabel.TextXAlignment = Enum.TextXAlignment.Left
+TimeLabel.Size = UDim2.new(1, 0, 0, 22)
+TimeLabel.Position = UDim2.new(0, 0, 0, 28)
+
+-- Earned Section
 local EarnedFrame = Instance.new("Frame")
-EarnedFrame.Name                 = "EarnedFrame"
-EarnedFrame.Parent               = Container
-EarnedFrame.AnchorPoint          = Vector2.new(0.5, 0)
-EarnedFrame.Position             = UDim2.new(0.5, 0, 0, 190)
-EarnedFrame.Size                 = UDim2.new(1, 0, 0, 34)
-EarnedFrame.BackgroundTransparency = 1
-EarnedFrame.ZIndex               = 3
+EarnedFrame.Name = "EarnedFrame"
+EarnedFrame.Parent = Container
+EarnedFrame.AnchorPoint = Vector2.new(0.5, 0)
+EarnedFrame.Position = UDim2.new(0.5, 0, 0, 135)
+EarnedFrame.Size = UDim2.new(1, -40, 0, 45)
+EarnedFrame.BackgroundColor3 = Color3.fromRGB(30, 40, 70)
+EarnedFrame.BackgroundTransparency = 0.5
+EarnedFrame.BorderSizePixel = 1
+EarnedFrame.BorderColor3 = Color3.fromRGB(60, 100, 180)
+EarnedFrame.ZIndex = 3
 
-local BeliLabel = Instance.new("TextLabel")
-BeliLabel.Name              = "Beli"
-BeliLabel.Parent            = EarnedFrame
-BeliLabel.Position          = UDim2.new(0, 0, 0, 0)
-BeliLabel.Size              = UDim2.new(0.5, -8, 1, 0)
-BeliLabel.BackgroundTransparency = 1
-BeliLabel.Text              = "Beli: 0"
-BeliLabel.TextColor3        = Color3.fromRGB(255, 185, 60)
-BeliLabel.TextSize          = 15
-BeliLabel.Font              = Enum.Font.GothamBold
-BeliLabel.TextXAlignment    = Enum.TextXAlignment.Right
-BeliLabel.TextTransparency  = 1
-BeliLabel.TextStrokeTransparency = 0.7
-BeliLabel.ZIndex            = 3
+local BeliLabel = CreateLabel("Beli", "💰 Beli: 0", 17, Color3.fromRGB(255, 185, 60), 0, true, EarnedFrame)
+BeliLabel.AnchorPoint = Vector2.new(0, 0.5)
+BeliLabel.Position = UDim2.new(0.05, 0, 0.5, 0)
+BeliLabel.TextXAlignment = Enum.TextXAlignment.Left
+BeliLabel.Size = UDim2.new(0.45, 0, 1, 0)
 
-local FragLabel = Instance.new("TextLabel")
-FragLabel.Name              = "Frag"
-FragLabel.Parent            = EarnedFrame
-FragLabel.Position          = UDim2.new(0.5, 8, 0, 0)
-FragLabel.Size              = UDim2.new(0.5, -8, 1, 0)
-FragLabel.BackgroundTransparency = 1
-FragLabel.Text              = "Frag: 0"
-FragLabel.TextColor3        = Color3.fromRGB(80, 170, 255)
-FragLabel.TextSize          = 15
-FragLabel.Font              = Enum.Font.GothamBold
-FragLabel.TextXAlignment    = Enum.TextXAlignment.Left
-FragLabel.TextTransparency  = 1
-FragLabel.TextStrokeTransparency = 0.7
-FragLabel.ZIndex            = 3
+local FragLabel = CreateLabel("Frag", "💎 Frag: 0", 17, Color3.fromRGB(80, 170, 255), 0, true, EarnedFrame)
+FragLabel.AnchorPoint = Vector2.new(1, 0.5)
+FragLabel.Position = UDim2.new(0.95, 0, 0.5, 0)
+FragLabel.TextXAlignment = Enum.TextXAlignment.Right
+FragLabel.Size = UDim2.new(0.45, 0, 1, 0)
 
-local KillLabel = CreateLabel("Kills", "Kills: 0", 13, Color3.fromRGB(255, 120, 120), 235, false)
+-- Kill Counter
+local KillLabel = CreateLabel("Kills", "⚔️ Kills: 0", 15, Color3.fromRGB(255, 120, 120), 195, true)
+
+-- Bottom Decoration
+local BottomLine = Instance.new("Frame")
+BottomLine.Name = "BottomLine"
+BottomLine.Parent = Container
+BottomLine.Size = UDim2.new(0.8, 0, 0, 2)
+BottomLine.Position = UDim2.new(0.1, 0, 0, 330)
+BottomLine.BackgroundColor3 = Color3.fromRGB(80, 200, 255)
+BottomLine.BackgroundTransparency = 0.5
+BottomLine.BorderSizePixel = 0
+BottomLine.ZIndex = 3
 
 -- Fade-in animation
 local function FadeIn(obj, duration, bgTransp, textTransp)
     local props = {}
-    if bgTransp   ~= nil then props.BackgroundTransparency = bgTransp end
-    if textTransp ~= nil then props.TextTransparency       = textTransp end
+    if bgTransp ~= nil then props.BackgroundTransparency = bgTransp end
+    if textTransp ~= nil then props.TextTransparency = textTransp end
     local t = TS:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
     t:Play()
     return t
@@ -171,20 +212,24 @@ end
 
 task.spawn(function()
     task.wait(0.3)
-    FadeIn(Overlay, 1.0, 0.55, nil)
-    task.wait(0.4)
-    FadeIn(TitleLabel,    0.7, nil, 0)
-    task.wait(0.18)
-    FadeIn(SubtitleLabel, 0.6, nil, 0)
+    FadeIn(Overlay, 0.8, 0.6, nil)
+    task.wait(0.3)
+    FadeIn(Container, 0.8, 0.15, nil)
+    task.wait(0.2)
+    FadeIn(TitleLabel, 0.5, nil, 0)
     task.wait(0.15)
-    FadeIn(StatusLabel,   0.6, nil, 0)
-    task.wait(0.12)
-    FadeIn(TimeLabel,     0.5, nil, 0)
-    task.wait(0.12)
-    FadeIn(BeliLabel,     0.5, nil, 0)
-    FadeIn(FragLabel,     0.5, nil, 0)
-    task.wait(0.12)
-    FadeIn(KillLabel,     0.5, nil, 0)
+    FadeIn(SubtitleLabel, 0.5, nil, 0)
+    task.wait(0.15)
+    FadeIn(StatusLabel, 0.4, nil, 0)
+    FadeIn(TimeLabel, 0.4, nil, 0)
+    task.wait(0.15)
+    FadeIn(EarnedFrame, 0.5, 0.5, nil)
+    task.wait(0.1)
+    FadeIn(BeliLabel, 0.4, nil, 0)
+    FadeIn(FragLabel, 0.4, nil, 0)
+    task.wait(0.1)
+    FadeIn(KillLabel, 0.4, nil, 0)
+    FadeIn(BottomLine, 0.5, 0.5, nil)
     print("[BobonHub] UI Ready!")
 end)
 
@@ -198,15 +243,15 @@ task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
             local e = os.time() - _G.State.StartTime
-            TimeLabel.Text = string.format("Time: %02d:%02d:%02d", math.floor(e/3600), math.floor((e%3600)/60), e%60)
-            StatusLabel.Text = "Status: " .. (_G.BobonStatus or "Idle")
-            KillLabel.Text = "Kills: " .. FormatNum(_G.State.KillCount)
+            TimeLabel.Text = string.format("⏱️ Time: %02d:%02d:%02d", math.floor(e/3600), math.floor((e%3600)/60), e%60)
+            StatusLabel.Text = "📌 Status: " .. (_G.BobonStatus or "Idle")
+            KillLabel.Text = "⚔️ Kills: " .. FormatNum(_G.State.KillCount)
             local data = LP:FindFirstChild("Data")
             if data then
                 local beli = data:FindFirstChild("Beli") and data.Beli.Value or 0
                 local frag = data:FindFirstChild("Fragments") and data.Fragments.Value or 0
-                BeliLabel.Text = "Beli: " .. FormatNum(beli)
-                FragLabel.Text = "Frag: " .. FormatNum(frag)
+                BeliLabel.Text = "💰 Beli: " .. FormatNum(beli)
+                FragLabel.Text = "💎 Frag: " .. FormatNum(frag)
             end
         end)
     end
@@ -325,55 +370,212 @@ local function FindBoss(bossName)
 end
 
 -- ══════════════════════════════════════════════════════════════════
---           FAST TRAVEL (RESET CHARACTER + RESPAWN TELE)
+--              AUTO SET CHECKPOINT (RESPAWN POINT)
 -- ══════════════════════════════════════════════════════════════════
 
-local function FastTravelTo(targetCF)
-    if _G.State.IsFastTraveling then return end
-    _G.State.IsFastTraveling = true
-    _G.State.TeleportTarget  = targetCF
-
-    if _G.State.CurrentTween then
-        _G.State.CurrentTween:Cancel()
-        _G.State.CurrentTween = nil
-    end
-
-    print("[BobonHub] FastTravel → Reset character")
-    _G.BobonStatus = "Fast Travel..."
-
-    pcall(function()
-        local hum = GetHum()
-        if hum then hum.Health = 0 end
-    end)
-
-    local conn
-    conn = LP.CharacterAdded:Connect(function(newChar)
-        task.wait(0.5)
-        pcall(function()
-            local hrp = newChar:WaitForChild("HumanoidRootPart", 8)
-            if hrp and _G.State.TeleportTarget then
-                hrp.CFrame = _G.State.TeleportTarget
-                print("[BobonHub] FastTravel complete!")
-            end
-        end)
-        conn:Disconnect()
-        task.wait(0.5)
-        _G.State.IsFastTraveling = false
-        _G.State.TeleportTarget  = nil
-    end)
-
-    task.delay(12, function()
-        if _G.State.IsFastTraveling then
-            pcall(function() conn:Disconnect() end)
-            _G.State.IsFastTraveling = false
-            _G.State.TeleportTarget  = nil
+local function GetCurrentIsland()
+    local hrp = GetHRP()
+    if not hrp then return "Unknown" end
+    
+    local pos = hrp.Position
+    -- Xác định đảo dựa trên vị trí
+    local islands = {
+        {name = "Jungle", pos = Vector3.new(-1598, 37, 153), range = 500},
+        {name = "Pirate Village", pos = Vector3.new(1059, 17, 1550), range = 500},
+        {name = "Desert", pos = Vector3.new(894, 7, 4391), range = 500},
+        {name = "Snow", pos = Vector3.new(1389, 88, -1298), range = 500},
+        {name = "Marine Base", pos = Vector3.new(-5039, 29, 4324), range = 500},
+        {name = "Prison", pos = Vector3.new(5308, 2, 474), range = 500},
+        {name = "Colosseum", pos = Vector3.new(-1580, 7, 296), range = 500},
+        {name = "Magma", pos = Vector3.new(-5316, 12, 8515), range = 600},
+        {name = "Fishman", pos = Vector3.new(61123, 19, 1569), range = 600},
+        {name = "Sky", pos = Vector3.new(-4722, 845, -1954), range = 600},
+        {name = "Kingdom of Rose", pos = Vector3.new(-427, 73, 1837), range = 500},
+        {name = "Cafe", pos = Vector3.new(634, 73, 918), range = 500},
+        {name = "Graveyard", pos = Vector3.new(-2441, 73, 1891), range = 500},
+        {name = "Haunted Castle", pos = Vector3.new(-5494, 49, -795), range = 500},
+        {name = "Ice", pos = Vector3.new(-6061, 16, -4903), range = 600},
+        {name = "Sea of Treats", pos = Vector3.new(-2104, 38, -10192), range = 700},
+        {name = "Cake Land", pos = Vector3.new(-2022, 38, -12030), range = 500},
+        {name = "Chocolate", pos = Vector3.new(233, 25, -12201), range = 500},
+        {name = "Candy", pos = Vector3.new(-1149, 14, -14453), range = 500},
+    }
+    
+    local nearest = "Unknown"
+    local nearestDist = math.huge
+    
+    for _, island in ipairs(islands) do
+        local dist = (pos - island.pos).Magnitude
+        if dist < island.range and dist < nearestDist then
+            nearest = island.name
+            nearestDist = dist
         end
-    end)
+    end
+    
+    return nearest
 end
 
+local function AutoSetCheckpoint()
+    -- Tìm NPC Set Spawn trong workspace
+    local npcs = workspace:FindFirstChild("NPCs")
+    if not npcs then 
+        print("[BobonHub] No NPCs found!")
+        return false 
+    end
+    
+    local spawnNPCs = {}
+    
+    -- Tìm tất cả NPC có tên liên quan đến Spawn/Home
+    for _, npc in pairs(npcs:GetChildren()) do
+        if npc.Name and (
+            string.find(string.lower(npc.Name), "spawn") or 
+            string.find(string.lower(npc.Name), "home") or
+            string.find(string.lower(npc.Name), "respawn") or
+            npc.Name == "SpawnPoint" or
+            npc.Name == "SetHomePoint"
+        ) then
+            table.insert(spawnNPCs, npc)
+        end
+    end
+    
+    -- Nếu không tìm thấy, thử tìm NPC có thể đặt spawn
+    if #spawnNPCs == 0 then
+        for _, npc in pairs(npcs:GetChildren()) do
+            if npc:IsA("Model") and npc:FindFirstChild("Humanoid") then
+                -- Kiểm tra xem NPC có chứa remote để đặt spawn không
+                local clickDetector = npc:FindFirstChild("ClickDetector")
+                if clickDetector then
+                    table.insert(spawnNPCs, npc)
+                end
+            end
+        end
+    end
+    
+    if #spawnNPCs == 0 then
+        print("[BobonHub] No spawn NPC found on this island!")
+        return false
+    end
+    
+    local hrp = GetHRP()
+    if not hrp then return false end
+    
+    -- Tìm NPC gần nhất
+    local closestNPC = nil
+    local closestDist = math.huge
+    
+    for _, npc in ipairs(spawnNPCs) do
+        local npcHRP = npc:FindFirstChild("HumanoidRootPart")
+        if npcHRP then
+            local dist = (npcHRP.Position - hrp.Position).Magnitude
+            if dist < closestDist then
+                closestDist = dist
+                closestNPC = npc
+            end
+        end
+    end
+    
+    if not closestNPC then return false end
+    
+    -- Di chuyển đến NPC
+    local npcHRP = closestNPC:FindFirstChild("HumanoidRootPart")
+    if not npcHRP then return false end
+    
+    print("[BobonHub] Moving to spawn NPC: " .. closestNPC.Name)
+    _G.BobonStatus = "Setting checkpoint..."
+    
+    Tween(CFrame.new(npcHRP.Position + Vector3.new(0, 3, 0)))
+    task.wait(1.5)
+    
+    -- Thử tương tác với NPC để đặt checkpoint
+    local success = false
+    
+    -- Cách 1: Dùng ClickDetector
+    local clickDetector = closestNPC:FindFirstChild("ClickDetector")
+    if clickDetector then
+        pcall(function()
+            fireclickdetector(clickDetector)
+            task.wait(0.5)
+            success = true
+        end)
+    end
+    
+    -- Cách 2: Dùng Remote CommF_
+    if not success then
+        pcall(function()
+            CommF_:InvokeServer("SetHomePoint")
+            task.wait(0.5)
+            success = true
+        end)
+    end
+    
+    -- Cách 3: Dùng Remote khác
+    if not success then
+        pcall(function()
+            CommF_:InvokeServer("SetSpawnPoint")
+            task.wait(0.5)
+            success = true
+        end)
+    end
+    
+    if success then
+        print("[BobonHub] Checkpoint set successfully!")
+        _G.BobonStatus = "Checkpoint set ✓"
+        _G.State.CheckpointSet = true
+        return true
+    else
+        print("[BobonHub] Failed to set checkpoint!")
+        return false
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--           RESPAWN AT CHECKPOINT (Game tự respawn)
+-- ══════════════════════════════════════════════════════════════════
+
+local function RespawnAtCheckpoint()
+    if _G.State.IsRespawning then return end
+    _G.State.IsRespawning = true
+    _G.BobonStatus = "Respawning at checkpoint..."
+    
+    print("[BobonHub] Respawning at checkpoint...")
+    
+    -- Đợi một chút để đảm bảo
+    task.wait(0.5)
+    
+    -- Tự sát để game respawn tại checkpoint
+    pcall(function()
+        local hum = GetHum()
+        if hum then
+            hum.Health = 0
+        end
+    end)
+    
+    -- Đợi respawn hoàn tất
+    local timeout = os.time() + 10
+    while os.time() < timeout do
+        local char = GetChar()
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp and hrp.Position.Y > 0 then
+                break
+            end
+        end
+        task.wait(0.5)
+    end
+    
+    task.wait(1)
+    _G.State.IsRespawning = false
+    _G.BobonStatus = "Respawned at checkpoint ✓"
+    print("[BobonHub] Respawn complete!")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--           IMPROVED TWEEN (Ưu tiên respawn tại checkpoint)
+-- ══════════════════════════════════════════════════════════════════
+
 local function Tween(cf)
-    if _G.State.IsFastTraveling then
-        task.wait(3)
+    if _G.State.IsFastTraveling or _G.State.IsRespawning then
+        task.wait(2)
         return
     end
 
@@ -382,9 +584,19 @@ local function Tween(cf)
 
     local dist = (hrp.Position - cf.Position).Magnitude
 
+    -- Nếu quá xa, respawn tại checkpoint thay vì tele
     if dist > _G.Settings.FastTravelDistance then
-        FastTravelTo(cf)
-        return
+        RespawnAtCheckpoint()
+        task.wait(2)
+        -- Sau khi respawn, thử tween lại
+        local newHRP = GetHRP()
+        if newHRP then
+            local newDist = (newHRP.Position - cf.Position).Magnitude
+            if newDist < dist then
+                -- Đã gần hơn, tween bình thường
+                dist = newDist
+            end
+        end
     end
 
     if dist < 12 then
@@ -399,13 +611,13 @@ local function Tween(cf)
 
     _G.State.IsTweening = true
 
-    local dur = dist / _G.Settings.TweenSpeed
+    local dur = math.min(dist / _G.Settings.TweenSpeed, 5)
     local t = TS:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = cf})
 
     _G.State.CurrentTween = t
 
     t.Completed:Connect(function()
-        _G.State.IsTweening   = false
+        _G.State.IsTweening = false
         _G.State.CurrentTween = nil
     end)
 
@@ -487,8 +699,8 @@ local function AutoRandomFruit()
     if sea < 2 then return false end
 
     local price = FruitPrices[sea] or 100000
-    local beli  = GetBeli()
-    local now   = os.time()
+    local beli = GetBeli()
+    local now = os.time()
 
     if now - _G.State.LastRandomFruit < _G.Settings.RandomFruitInterval then return false end
     if beli < price then return false end
@@ -565,6 +777,7 @@ task.spawn(function()
     end
 end)
 
+-- Kill tracker
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -791,10 +1004,17 @@ end)
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
-            if _G.State.IsFastTraveling then return end
+            if _G.State.IsFastTraveling or _G.State.IsRespawning then return end
 
             local level = GetLevel()
+            
+            -- Kiểm tra và set checkpoint nếu chưa có
+            if not _G.State.CheckpointSet then
+                AutoSetCheckpoint()
+                task.wait(1)
+            end
 
+            -- Auto quest items
             if level >= 200 and level < 700 and GetSea() == 1 and not HasItem("Saber") then
                 if AutoSaber() then return end
             end
@@ -851,6 +1071,7 @@ task.spawn(function()
     end
 end)
 
+-- Auto attack
 RunService.Heartbeat:Connect(function()
     pcall(function()
         if not _G.State.CurrentTarget then return end
