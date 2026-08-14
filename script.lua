@@ -7,197 +7,220 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+-- CONFIGURATION (CHỈNH SỬA MÀU SẮC/BỐ CỤC TẠI ĐÂY CHO GIỐNG ẢNH MẪU)
+local CONFIG = {
+    ThemeColor = Color3.fromRGB(20, 20, 30),      -- Màu nền bảng
+    AccentColor = Color3.fromRGB(255, 165, 0),    -- Màu viền/chữ nổi bật
+    TextColor = Color3.fromRGB(255, 255, 255),     -- Màu chữ thường
+    DiscordText = "Discord: discord.gg/bloxfruit", -- Dòng Discord hiển thị
+    IconID = "rbxassetid://12885379885"            -- ID ảnh nút tròn (Banana Cat)
+}
+
 -- VARIABLES
 local isMenuOpen = false
 local dragging = false
 local dragInput, dragStart, startPos
 
--- TẠO GIAO DIỆN CHÍNH (SCREENGUI)
+-- CLEANUP OLD UI
+if PlayerGui:FindFirstChild("CustomStatsUI_V2") then
+    PlayerGui.CustomStatsUI_V2:Destroy()
+end
+
+-- CREATE SCREENGUI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BananaStatsUI"
+ScreenGui.Name = "CustomStatsUI_V2"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = PlayerGui
 
--- 1. NÚT TRÒN (AVATAR BUTTON)
+-----------------------------------------
+-- 1. NÚT TRÒN (AVATAR TOGGLE + DRAG)
+-----------------------------------------
 local AvatarBtn = Instance.new("ImageButton")
-AvatarBtn.Name = "AvatarButton"
+AvatarBtn.Name = "ToggleBtn"
+AvatarBtn.Size = UDim2.new(0, 55, 0, 55)
+AvatarBtn.Position = UDim2.new(0, 20, 0.5, -27)
+AvatarBtn.Image = CONFIG.IconID
 AvatarBtn.BackgroundTransparency = 1
-AvatarBtn.Size = UDim2.new(0, 60, 0, 60)
-AvatarBtn.Position = UDim2.new(0, 50, 0, 200) -- Vị trí ban đầu
-AvatarBtn.Image = "rbxassetid://10734891663" -- ID ảnh chuối (hoặc thay bằng ảnh khác)
 AvatarBtn.Parent = ScreenGui
 
--- Viền tròn cho nút
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(1, 0) -- Tròn hoàn toàn
-UICorner.Parent = AvatarBtn
+local BtnCorner = Instance.new("UICorner", AvatarBtn)
+BtnCorner.CornerRadius = UDim.new(1, 0)
+local BtnStroke = Instance.new("UIStroke", AvatarBtn)
+BtnStroke.Color = CONFIG.AccentColor
+BtnStroke.Thickness = 2
 
-local UIStroke = Instance.new("UIStroke")
-UIStroke.Color = Color3.fromRGB(255, 255, 255)
-UIStroke.Thickness = 2
-UIStroke.Parent = AvatarBtn
+-----------------------------------------
+-- 2. BẢNG STATUS NHỎ (TRÊN CÙNG - LIVE)
+-----------------------------------------
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopStatusBar"
+TopBar.Size = UDim2.new(0, 320, 0, 70)
+TopBar.Position = UDim2.new(0.5, -160, 0, 15)
+TopBar.BackgroundColor3 = CONFIG.ThemeColor
+TopBar.BackgroundTransparency = 0.15
+TopBar.BorderSizePixel = 0
+TopBar.Visible = false
+TopBar.Parent = ScreenGui
 
--- 2. BẢNG STATUS NHỎ (TRÊN CÙNG)
-local TopStatusFrame = Instance.new("Frame")
-TopStatusFrame.Name = "TopStatus"
-TopStatusFrame.Size = UDim2.new(0, 300, 0, 60)
-TopStatusFrame.Position = UDim2.new(0.5, -150, 0, 20)
-TopStatusFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-TopStatusFrame.BackgroundTransparency = 0.2
-TopStatusFrame.BorderSizePixel = 0
-TopStatusFrame.Visible = false -- Mặc định ẩn
-TopStatusFrame.Parent = ScreenGui
+Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 8)
+local TopStroke = Instance.new("UIStroke", TopBar)
+TopStroke.Color = CONFIG.AccentColor
+TopStroke.Thickness = 1.5
 
-local TopCorner = Instance.new("UICorner", TopStatusFrame)
-TopCorner.CornerRadius = UDim.new(0, 8)
-local TopStroke = Instance.new("UIStroke", TopStatusFrame)
-TopStroke.Color = Color3.fromRGB(255, 165, 0) -- Màu cam/vàng
-TopStroke.Thickness = 2
+-- Label Farm Status
+local FarmLabel = Instance.new("TextLabel")
+FarmLabel.Size = UDim2.new(1, -10, 0, 20)
+FarmLabel.Position = UDim2.new(0, 5, 0, 5)
+FarmLabel.BackgroundTransparency = 1
+FarmLabel.TextXAlignment = Enum.TextXAlignment.Left
+FarmLabel.Font = Enum.Font.GothamBold
+FarmLabel.TextSize = 13
+FarmLabel.TextColor3 = CONFIG.AccentColor
+FarmLabel.Text = "Status Farm: Scanning..."
+FarmLabel.Parent = TopBar
 
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, 0, 0.5, 0)
-StatusLabel.Position = UDim2.new(0, 0, 0, 0)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Status Farm : None"
-StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-StatusLabel.Font = Enum.Font.GothamBold
-StatusLabel.TextSize = 14
-StatusLabel.Parent = TopStatusFrame
-
+-- Label Item/Mastery
 local ItemLabel = Instance.new("TextLabel")
-ItemLabel.Size = UDim2.new(1, 0, 0.5, 0)
-ItemLabel.Position = UDim2.new(0, 0, 0.5, 0)
+ItemLabel.Size = UDim2.new(1, -10, 0, 20)
+ItemLabel.Position = UDim2.new(0, 5, 0, 25)
 ItemLabel.BackgroundTransparency = 1
-ItemLabel.Text = "Status Item : None"
-ItemLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ItemLabel.TextXAlignment = Enum.TextXAlignment.Left
 ItemLabel.Font = Enum.Font.Gotham
-ItemLabel.TextSize = 14
-ItemLabel.Parent = TopStatusFrame
+ItemLabel.TextSize = 12
+ItemLabel.TextColor3 = CONFIG.TextColor
+ItemLabel.Text = "Status Item: None"
+ItemLabel.Parent = TopBar
 
--- 3. BẢNG STATS CHÍNH (GIỮA)
-local MainStatsFrame = Instance.new("Frame")
-MainStatsFrame.Name = "MainStats"
-MainStatsFrame.Size = UDim2.new(0, 350, 0, 250)
-MainStatsFrame.Position = UDim2.new(0.5, -175, 0.5, -125)
-MainStatsFrame.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
-MainStatsFrame.BackgroundTransparency = 0.1
-MainStatsFrame.BorderSizePixel = 0
-MainStatsFrame.Visible = false -- Mặc định ẩn
-MainStatsFrame.Parent = ScreenGui
+-- Dòng Discord
+local DiscordLabel = Instance.new("TextLabel")
+DiscordLabel.Size = UDim2.new(1, -10, 0, 18)
+DiscordLabel.Position = UDim2.new(0, 5, 0, 48)
+DiscordLabel.BackgroundTransparency = 1
+DiscordLabel.TextXAlignment = Enum.TextXAlignment.Left
+DiscordLabel.Font = Enum.Font.GothamItalic
+DiscordLabel.TextSize = 10
+DiscordLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+DiscordLabel.Text = CONFIG.DiscordText
+DiscordLabel.Parent = TopBar
 
-local MainCorner = Instance.new("UICorner", MainStatsFrame)
-MainCorner.CornerRadius = UDim.new(0, 10)
-local MainStroke = Instance.new("UIStroke", MainStatsFrame)
-MainStroke.Color = Color3.fromRGB(255, 165, 0)
+-----------------------------------------
+-- 3. BẢNG STATS CHÍNH (LEVEL, BELI, FRAG)
+-----------------------------------------
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainStatsPanel"
+MainFrame.Size = UDim2.new(0, 320, 0, 220)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -110)
+MainFrame.BackgroundColor3 = CONFIG.ThemeColor
+MainFrame.BackgroundTransparency = 0.1
+MainFrame.BorderSizePixel = 0
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+local MainStroke = Instance.new("UIStroke", MainFrame)
+MainStroke.Color = CONFIG.AccentColor
 MainStroke.Thickness = 2
 
--- Tiêu đề
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, 0, 0, 30)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Banana Stats Checker"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextSize = 18
-TitleLabel.Parent = MainStatsFrame
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.Font = Enum.Font.GothamBlack
+Title.TextSize = 16
+Title.TextColor3 = CONFIG.AccentColor
+Title.Text = "ACCOUNT STATUS"
+Title.Parent = MainFrame
 
--- Các thông số
-local statsData = {
-    {Name = "Level", Value = "Loading..."},
-    {Name = "Race", Value = "Loading..."},
-    {Name = "Beli", Value = "Loading..."},
-    {Name = "Frag", Value = "Loading..."}
-}
-
-local yOffset = 40
-for i, data in pairs(statsData) do
-    local label = Instance.new("TextLabel")
-    label.Name = data.Name .. "Label"
-    label.Size = UDim2.new(1, -20, 0, 25)
-    label.Position = UDim2.new(0, 10, 0, yOffset)
-    label.BackgroundTransparency = 1
-    label.Text = data.Name .. ": " .. data.Value
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.Font = Enum.Font.GothamSemibold
-    label.TextSize = 16
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = MainStatsFrame
-    yOffset = yOffset + 30
+-- Stats Container
+local StatsList = {"Level", "Race", "Beli", "Fragments"}
+local yOffset = 35
+for _, statName in ipairs(StatsList) do
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = statName
+    lbl.Size = UDim2.new(1, -20, 0, 22)
+    lbl.Position = UDim2.new(0, 10, 0, yOffset)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 14
+    lbl.TextColor3 = CONFIG.TextColor
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = statName .. ": Loading..."
+    lbl.Parent = MainFrame
+    yOffset += 28
 end
 
--- HÀM LẤY THÔNG TIN GAME (BLOX FRUITS)
--- Lưu ý: Cách lấy thông tin có thể thay đổi tùy bản cập nhật của game
-local function GetPlayerStats()
-    local stats = {}
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+-----------------------------------------
+-- LOGIC LẤY DỮ LIỆU THẬT (LIVE UPDATE)
+-----------------------------------------
+local function getNearestMob()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
     
-    if leaderstats then
-        -- Lấy Level
-        local lvl = leaderstats:FindFirstChild("Level")
-        stats.Level = lvl and lvl.Value or "N/A"
-        
-        -- Lấy Beli
-        local beli = leaderstats:FindFirstChild("Beli") or leaderstats:FindFirstChild("Money")
-        stats.Beli = beli and beli.Value or "N/A"
-        
-        -- Lấy Fragments
-        local frag = leaderstats:FindFirstChild("Fragments")
-        stats.Frag = frag and frag.Value or "N/A"
-    end
+    local root = char.HumanoidRootPart
+    local nearestDist = 30 -- Tầm quét 30 studs
+    local targetName = "Idle / Not Fighting"
     
-    -- Lấy Race (Thường nằm trong Data hoặc GUI, đây là cách ước lượng)
-    -- Trong Blox Fruits mới, Race thường check qua Remote hoặc biến cụ thể
-    -- Ở đây mình để tạm là Human nếu không tìm thấy
-    stats.Race = "Human (Check GUI)" 
-    
-    return stats
-end
-
-local function GetWeaponMastery()
-    local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    if tool then
-        -- Thường mastery nằm trong attribute hoặc folder bên trong tool
-        local mastery = tool:FindFirstChild("Level") or tool:GetAttribute("Mastery")
-        if mastery then
-            return tool.Name .. " [Mastery: " .. tostring(mastery.Value or mastery) .. "]"
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v:IsA("Humanoid") and v.Health > 0 and v.Parent ~= char then
+            local mobRoot = v.Parent:FindFirstChild("HumanoidRootPart")
+            if mobRoot then
+                local dist = (root.Position - mobRoot.Position).Magnitude
+                if dist < nearestDist then
+                    nearestDist = dist
+                    targetName = v.Parent.Name
+                end
+            end
         end
-        return tool.Name .. " [Mastery: 0]"
     end
-    return "None"
+    return targetName
 end
 
-local function GetFarmStatus()
-    -- Kiểm tra xem có đang auto farm không (thường check qua biến global của script khác hoặc check target)
-    -- Vì không biết bạn dùng script farm gì, mình sẽ check xem nhân vật có đang đánh nhau không
-    -- Hoặc đơn giản là hiển thị "Idle" / "Fighting"
-    return "Killing Mob (Demo)" 
+local function getCurrentWeapon()
+    local char = LocalPlayer.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then
+        -- Blox Fruits thường lưu mastery trong Tool.Level hoặc attribute
+        local mastery = tool:FindFirstChild("Level") or tool:GetAttribute("Mastery")
+        local mVal = mastery and tostring(mastery.Value or mastery) or "0"
+        return string.format("%s [Mastery: %s]", tool.Name, mVal)
+    end
+    return "No Weapon Equipped"
 end
 
--- CẬP NHẬT THÔNG TIN LIÊN TỤC
-spawn(function()
-    while wait(1) do
+local function updateLiveStats()
+    while task.wait(0.5) do -- Cập nhật mỗi 0.5s cho mượt
         if isMenuOpen then
-            local stats = GetPlayerStats()
+            -- Update Farm Status
+            FarmLabel.Text = "Status Farm: " .. getNearestMob()
             
-            -- Update Main Stats
-            if MainStatsFrame:FindFirstChild("LevelLabel") then
-                MainStatsFrame.LevelLabel.Text = "Level: " .. tostring(stats.Level)
-                MainStatsFrame.RaceLabel.Text = "Race: " .. tostring(stats.Race)
-                MainStatsFrame.BeliLabel.Text = "Beli: " .. tostring(stats.Beli)
-                MainStatsFrame.FragLabel.Text = "Frag: " .. tostring(stats.Frag)
+            -- Update Item Status
+            ItemLabel.Text = "Status Item: " .. getCurrentWeapon()
+            
+            -- Update Account Stats
+            local ls = LocalPlayer:FindFirstChild("leaderstats")
+            if ls then
+                MainFrame.Level.Text = "Level: " .. tostring(ls:FindFirstChild("Level") and ls.Level.Value or "?")
+                MainFrame.Beli.Text = "Beli: " .. tostring(ls:FindFirstChild("Beli") and ls.Beli.Value or "?")
+                MainFrame.Fragments.Text = "Fragments: " .. tostring(ls:FindFirstChild("Fragments") and ls.Fragments.Value or "?")
             end
             
-            -- Update Top Status
-            ItemLabel.Text = "Status Item : " .. GetWeaponMastery()
-            StatusLabel.Text = "Status Farm : " .. GetFarmStatus()
+            -- Race (thường cần remote, để placeholder nếu không lấy được)
+            MainFrame.Race.Text = "Race: Check DataStore" 
         end
     end
-end)
+end
 
--- XỬ LÝ SỰ KIỆN NÚT TRÒN (DRAG & DROP + CLICK)
+task.spawn(updateLiveStats)
+
+-----------------------------------------
+-- XỬ LÝ KÉO THẢ & BẬT TẮT (MOBILE + PC)
+-----------------------------------------
+local clickStart = 0
+
 AvatarBtn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        clickStart = tick()
         dragging = true
         dragStart = input.Position
         startPos = AvatarBtn.Position
@@ -205,46 +228,28 @@ AvatarBtn.InputBegan:Connect(function(input)
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 dragging = false
+                -- Phân biệt Click vs Drag
+                if tick() - clickStart < 0.2 and (input.Position - dragStart).Magnitude < 10 then
+                    isMenuOpen = not isMenuOpen
+                    TopBar.Visible = isMenuOpen
+                    MainFrame.Visible = isMenuOpen
+                    
+                    -- Animation mở menu
+                    if isMenuOpen then
+                        MainFrame.Size = UDim2.new(0, 0, 0, 0)
+                        TweenService:Create(MainFrame, TweenInfo.new(0.25, Enum.EasingStyle.BackOut), {Size = UDim2.new(0, 320, 0, 220)}):Play()
+                    end
+                end
             end
         end)
     end
 end)
 
-AvatarBtn.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
-end)
-
 UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
+    if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
         local delta = input.Position - dragStart
         AvatarBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
 
--- Xử lý Click (phân biệt giữa kéo và click)
-local clickTime = 0
-AvatarBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        clickTime = tick()
-    end
-end)
-
-AvatarBtn.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if tick() - clickTime < 0.2 then -- Nếu nhấn nhanh hơn 0.2s thì là click
-            isMenuOpen = not isMenuOpen
-            MainStatsFrame.Visible = isMenuOpen
-            TopStatusFrame.Visible = isMenuOpen
-            
-            -- Hiệu ứng hiện ra
-            if isMenuOpen then
-                MainStatsFrame.Size = UDim2.new(0, 0, 0, 0)
-                TweenService:Create(MainStatsFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 350, 0, 250)}):Play()
-            end
-        end
-    end
-end)
-
-print("Banana Stats UI Loaded! Click the banana icon to open.")
+print("✅ Custom Stats UI V2 Loaded! Drag the icon to move, tap to toggle.")
