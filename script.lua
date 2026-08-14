@@ -229,24 +229,31 @@ local function FindBoss(name)
 end
 
 -- ================================================================= --
---                          TELEPORT (FIX)
+--                  TELEPORT (FIX RỚT BIỂN - SAFE RESPAWN)
 -- ================================================================= --
-local SPAM_SECS = 5.0
-local SPAM_TICK = 0.03
+local SPAM_SECS = 6.0 -- Tăng thời gian spam lên 6s cho chắc
+local SPAM_TICK = 0.02 -- Spam nhanh hơn (50 lần/giây)
 
+-- Hàm bay thẳng (không chết)
 local function ForceTeleport(cf)
     local hrp = HRP()
     if not hrp then return end
+    
+    -- Set vị trí lên cao hơn một chút để tránh kẹt đất
+    local safeCF = cf + Vector3.new(0, 5, 0)
+    
     pcall(function()
-        hrp.CFrame = cf
+        hrp.CFrame = safeCF
         hrp.Velocity = Vector3.zero
         hrp.RotVelocity = Vector3.zero
     end)
+    
+    -- Spam giữ vị trí
     task.spawn(function()
-        for i = 1, 15 do
+        for i = 1, 20 do
             pcall(function()
                 if hrp and hrp.Parent then
-                    hrp.CFrame = cf
+                    hrp.CFrame = safeCF
                     hrp.Velocity = Vector3.zero
                 end
             end)
@@ -255,6 +262,7 @@ local function ForceTeleport(cf)
     end)
 end
 
+-- Hàm Teleport chính (có xử lý chết)
 local function TeleportTo(cf)
     if _G.Kaitun.IsTraveling then return end
     
@@ -262,62 +270,88 @@ local function TeleportTo(cf)
     if not hrp then return end
     
     local dist = (hrp.Position - cf.Position).Magnitude
-    local isUnderwater = math.abs(hrp.Position.Y) < 8
+    local isUnderwater = hrp.Position.Y < 10 -- Nếu dưới 10y là coi như ở biển
     
-    if isUnderwater or dist > 1000 then
+    -- Nếu xa > 800 hoặc đang ở biển -> Dùng Respawn
+    if isUnderwater or dist > 800 then
         _G.Kaitun.IsTraveling = true
-        _G.Kaitun.Status = "Teleporting..."
+        _G.Kaitun.Status = "Respawning to Safe Zone..."
         
+        -- Lưu vị trí mục tiêu vào biến global để dùng khi respawn
+        _G.Kaitun.TargetCF = cf
+        
+        -- Tự tử
         pcall(function()
             local h = Hum()
             if h then h.Health = 0 end
         end)
         
+        -- Lắng nghe sự kiện CharacterAdded
         local conn
         conn = LP.CharacterAdded:Connect(function(newChar)
-            conn:Disconnect()
+            conn:Disconnect() -- Ngắt kết nối ngay để không chạy nhiều lần
+            
             task.spawn(function()
-                local hrp2 = newChar:WaitForChild("HumanoidRootPart", 8)
+                -- Đợi HumanoidRootPart xuất hiện
+                local hrp2 = newChar:WaitForChild("HumanoidRootPart", 10)
                 if not hrp2 then
                     _G.Kaitun.IsTraveling = false
                     return
                 end
                 
+                -- QUAN TRỌNG: Tắt va chạm ngay lập tức
                 for _, p in ipairs(newChar:GetDescendants()) do
-                    if p:IsA("BasePart") then p.CanCollide = false end
+                    if p:IsA("BasePart") then 
+                        p.CanCollide = false 
+                    end
                 end
                 
+                -- Lấy vị trí mục tiêu
+                local target = _G.Kaitun.TargetCF or cf
+                
+                -- BƯỚC 1: Set vị trí lên TRÊN TRỜI (cao hơn mục tiêu 50 stud)
+                -- Để tránh bị rớt xuống biển trong lúc load
+                local skyPos = target + Vector3.new(0, 50, 0)
+                
+                -- Spam vị trí trên trời trong 1 giây đầu
+                local startTick = tick()
+                while tick() - startTick < 1.0 do
+                    pcall(function()
+                        hrp2.CFrame = CFrame.new(skyPos.Position)
+                        hrp2.Velocity = Vector3.zero
+                        hrp2.RotVelocity = Vector3.zero
+                    end)
+                    task.wait(0.02)
+                end
+                
+                -- BƯỚC 2: Từ từ hạ xuống vị trí mục tiêu và spam giữ
                 local deadline = tick() + SPAM_SECS
                 while tick() < deadline do
                     pcall(function()
-                        hrp2.CFrame = cf
+                        hrp2.CFrame = target
                         hrp2.Velocity = Vector3.zero
                         hrp2.RotVelocity = Vector3.zero
                     end)
                     task.wait(SPAM_TICK)
                 end
                 
-                for i = 1, 20 do
-                    pcall(function()
-                        hrp2.CFrame = cf
-                        hrp2.Velocity = Vector3.zero
-                    end)
-                    task.wait(0.05)
-                end
-                
+                -- Xong xuôi
                 _G.Kaitun.IsTraveling = false
                 _G.Kaitun.Status = "Ready"
+                _G.Kaitun.TargetCF = nil
             end)
         end)
         
+        -- Timeout an toàn
         task.delay(20, function()
             if _G.Kaitun.IsTraveling then
-                pcall(function() conn:Disconnect() end)
+                pcall(function() if conn then conn:Disconnect() end end)
                 _G.Kaitun.IsTraveling = false
-                _G.Kaitun.Status = "Timeout - retry..."
+                _G.Kaitun.Status = "Timeout - Retry"
             end
         end)
     else
+        -- Gần thì bay thẳng
         ForceTeleport(cf)
     end
 end
