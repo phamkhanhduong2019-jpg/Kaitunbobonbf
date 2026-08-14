@@ -1,7 +1,7 @@
 -- =================================================================
---         BOBON HUB v16.0 FIXED | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.1 FIXED | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.0 FIXED
+--         Base: v15.0 | Version: v16.1 FIXED
 --
 --  AUDIT FIXES v16.0-FIXED:
 --  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
@@ -25,6 +25,64 @@
 --  [FIX-11] Travel timeout khong reset khi dang hover farm -> bo
 --           recovery vo ich moi 45s
 --  [FIX-12] Auto-recovery khong trigger khi Dead/Respawning
+--  [FIX-13] SEA-3 CHOCOLATE LAND FIX: QDB MC sai -> bot "bay ra bien"
+--           - Chocolate Bar Battler MC (507,73,-12789) -> (583,77,-12463)
+--           - Sweet Thief MC (-71,25,-12381) -> (165,76,-12601)
+--           (toa do that tu script farm, verify spawn mob tai khu)
+--           + Travel fallback: target farm chet/mat/timeout giua duong
+--           -> bay ve khu farm (q.MC) thay vi break -> KHONG drop khoi
+--           khong trung giua bien
+--           + Anti-fall safety net: chi khi KHONG co travel chay, neu
+--           Y < MinY -> day len. Travel dang chay -> loop bo qua.
+--
+--  AUDIT FIXES v16.1-FIXED (FIX-P1..P15):
+--  [FIX-P1] LONG-DISTANCE TRAVEL / CRUISE MODE  (FIX TRIỆT ĐỂ lỗi
+--           "Lv2453 -> Chocolate Island -> bay giua bien -> dung yen")
+--           - Khoang cach > CruiseThreshold(500) -> cruise mode:
+--             giu do cao an toan (CruiseAltitude=60), bay ngang on dinh,
+--             chi approach target Y khi con gan (ApproachThreshold=120)
+--           - Timeout DONG theo khoang cach: max(TravelTimeout,
+--             distance/FlySpeed + margin), cap 300s. Khong dung cu'ng 45s
+--           - Stuck detection rieng: short=StuckTimeout(8),
+--             cruise=CruiseStuckTimeout(20), farm hover=HoverStuckTimeout(30)
+--           - Anti-fall trong travel: VUA NANG LEN VUA BAY NGANG ve target
+--             (khong ket vong lap "chi di len")
+--           - Khong pha token/CurrentToken/MovementOwner/IsTraveling
+--  [FIX-P2] Quest verification: QuestMatches() doc TextLabel + QuestModel,
+--           fallback doc dinh descendant. Khong tu dong coi la hop le khi
+--           khong doc duoc text.
+--  [FIX-P3] Sau RequestQuest: verify lai HasQuest + quest dung q.M.
+--           Retry co gioi han (QuestRetryLimit), khong spam remote,
+--           khong farm khi chua co quest, backoff neu fail lien tuc.
+--  [FIX-P4] Farm target sync: clear ngay khi chet/destroy/Parent nil/
+--           Health<=0/HRP mat/duoi bien/qua xa/invalid -> tim mob moi,
+--           khong de travel cu' bam target cu, khong recovery nang ne.
+--  [FIX-P5] Attack: chi attack khi da equip melee (EquipMelee tra ve
+--           bool) + target con song + khoang cach XZ trong AttackRange,
+--           giu AttackDelay, khong spam.
+--  [FIX-P6] Hitbox: chi resize khi size doi, CanCollide=false an toan,
+--           Handle khong ton tai -> bo qua, khong loi.
+--  [FIX-P7] AutoStats: giu batch limit, Points=0 -> khong lam gi,
+--           loi remote khong anh huong Farm, khong tao ActionToken.
+--  [FIX-P8] ItemProgression: thay "task.wait(2)" bang TravelAndWait()
+--           (travel -> verify den noi -> check alive+token -> moi remote).
+--  [FIX-P9] Sea progression: verify tung step, retry gioi han, chi
+--           teleport sang sea moi khi progression hoan tat + con song.
+--  [FIX-P10] Recovery: guaranteed reset (xpcall) -> KHONG BAO GIO ket
+--           o Mode=Recovering. Khong trigger khi Dead/Respawning, khong
+--           trigger khi chi mob chet/target mat/lag ngan.
+--  [FIX-P11] Travel target validation: NaN/invalid position reject ca
+--           Instance va CFrame/Vector3, clamp Y an toan.
+--  [FIX-P12] QDB: Lv2425-2474 = Chocolate Bar Battler dung (Lv2453
+--           dung quest). Kaitun > Lv2800 chua co du lieu toa do chinh
+--           xac -> GIU NGUYEN QDB (khong bi' a toa do). Ghi ro.
+--  [FIX-P13] Main Controller: giu priority Recovery > Sea > Items >
+--           Boss > Quest > Farm. Khong tao loop movement khac.
+--  [FIX-P14] Error isolation: moi subsystem pcall/xpcall rieng, loi
+--           khong chet Main Controller.
+--  [FIX-P15] Long-run stability: clean state sau mob chet/player chet/
+--           respawn/quest xong/quest sai/travel fail/timeout/target
+--           destroy. Khong leak thread/connection.
 -- =================================================================
 
 
@@ -35,7 +93,7 @@ repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("Huma
 repeat task.wait() until game.Players.LocalPlayer:FindFirstChild("Data")
 
 
-print("[BobonHub v16.0 FIXED] Loading...")
+print("[BobonHub v16.1 FIXED] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -53,7 +111,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.0 FIXED] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.1 FIXED] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -70,8 +128,13 @@ _G.Settings = {
     AttackRange         = 20,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
+    CruiseStuckTimeout  = 20,
     TargetLostTimeout   = 3,
     TravelTimeout       = 45,
+    CruiseThreshold     = 500,
+    CruiseAltitude      = 60,
+    ApproachThreshold   = 120,
+    TravelTimeoutMargin = 20,
     RandomFruitInterval = 120,
     AttackDelay         = 0.15,
     QuestDelay          = 1.5,
@@ -320,7 +383,7 @@ task.spawn(function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.0 FIXED] UI Ready!")
+    print("[BobonHub v16.1 FIXED] UI Ready!")
 end)
 
 
@@ -400,6 +463,87 @@ local function HasQuest()
 end
 
 
+-- [FIX-P11] Kiểm tra Vector3 hợp lệ (reject NaN / vô hạn)
+local function IsValidPos(p)
+    return p ~= nil and typeof(p) == "Vector3"
+        and p.X == p.X and p.Y == p.Y and p.Z == p.Z
+end
+
+
+-- [FIX-P2] Đọc quest text với nhiều fallback (TextLabel chính + QuestModel)
+-- Trả về text đọc được, hoặc nil nếu UI không đọc được.
+local function GetQuestText()
+    local ok, text = pcall(function()
+        local main = LP:FindFirstChild("PlayerGui")
+            and LP.PlayerGui:FindFirstChild("Main")
+        local quest = main and main:FindFirstChild("Quest")
+        if not quest then return nil end
+        local container = quest:FindFirstChild("Container")
+        if not container then return nil end
+        -- QuestModel: tên model hiển thị = tên mob (chính xác hơn text)
+        local qm = container:FindFirstChild("QuestModel")
+        if qm and qm.Name and qm.Name ~= "" then
+            return qm.Name
+        end
+        -- TextLabel chính
+        local label = container:FindFirstChild("TextLabel")
+        if label and label.Text and label.Text ~= "" then
+            return label.Text
+        end
+        -- Fallback: tìm mọi TextLabel trong Container
+        for _, d in ipairs(container:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
+                return d.Text
+            end
+        end
+        return nil
+    end)
+    if not ok then return nil end
+    return text
+end
+
+
+-- [FIX-P2] Kiểm tra quest hiện tại có đúng mob q.M hay không.
+-- Trả về: true = khớp, false = sai mob, nil = không đọc được UI.
+local function QuestMatches(mobName)
+    local text = GetQuestText()
+    if not text then return nil end
+    return string.find(text, mobName) ~= nil
+end
+
+
+-- [FIX-P3] Request quest tại giver với retry có giới hạn, không spam remote.
+-- Trả về true = "đã xử lý (đừng farm)", false = "chưa tới giver".
+local function HandleQuestAtGiver(q, atGiver)
+    if not atGiver then return false end
+    local now = os.time()
+    if now - _G.State.LastQuestRequest < _G.Settings.QuestDelay then
+        _G.BobonStatus = "Quest: Chờ xác nhận " .. q.M
+        return true
+    end
+    if _G.State.QuestRetries > _G.Settings.QuestRetryLimit then
+        -- Quá số lần retry → backoff, không spam remote, không farm
+        _G.BobonStatus = "Quest: Fail, chờ retry"
+        if now - _G.State.LastQuestRequest >= 20 then
+            _G.State.QuestRetries = 0
+        end
+        return true
+    end
+    _G.State.LastQuestRequest = now
+    _G.State.QuestRetries = _G.State.QuestRetries + 1
+    local okRQ = pcall(function()
+        CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
+    end)
+    if okRQ then
+        _G.BobonStatus = "Quest: Đã gửi " .. q.M
+    else
+        warn("[BobonHub] RequestQuest error (retry " .. _G.State.QuestRetries .. ")")
+        _G.BobonStatus = "Quest: Lỗi, retry " .. q.M
+    end
+    return true
+end
+
+
 local function Attack()
     if not IsAlive() then return end
     local now = tick()
@@ -416,14 +560,19 @@ local MeleeList = {
 }
 
 
+-- [FIX-P5] Equip melee, trả về true nếu đã có melee trên tay (thành công)
 local function EquipMelee()
     local c = Char()
-    if not c or not c:FindFirstChildOfClass("Humanoid") then return end
-    for _,n in ipairs(MeleeList) do if c:FindFirstChild(n) then return end end
+    if not c or not c:FindFirstChildOfClass("Humanoid") then return false end
+    for _,n in ipairs(MeleeList) do if c:FindFirstChild(n) then return true end end
     for _,n in ipairs(MeleeList) do
         local t = LP.Backpack:FindFirstChild(n)
-        if t then c:FindFirstChildOfClass("Humanoid"):EquipTool(t); return end
+        if t then
+            pcall(function() c:FindFirstChildOfClass("Humanoid"):EquipTool(t) end)
+            return true
+        end
     end
+    return false
 end
 
 
@@ -602,6 +751,10 @@ function TravelManager:Request(targetCF, owner, options)
             local okY, posY = pcall(function() return targetCF.Position.Y end)
             if okY and posY < _G.Settings.MinY - 10 then return false, "InvalidTarget" end
         end
+    elseif typeof(targetCF) == "CFrame" or typeof(targetCF) == "Vector3" then
+        -- [FIX-P11] Reject NaN/invalid position ngay tại Request()
+        local pos = typeof(targetCF) == "CFrame" and targetCF.Position or targetCF
+        if not IsValidPos(pos) then return false, "InvalidTarget" end
     end
 
 
@@ -609,6 +762,25 @@ function TravelManager:Request(targetCF, owner, options)
     if _G.State.IsTraveling and _G.State.MovementOwner == owner and self.ActiveThread then
         self.TargetRef = targetCF
         return true, self.CurrentToken
+    end
+
+
+    -- [FIX-P1] Detect long-distance travel → cruise mode + timeout động
+    local startPos = HRP() and HRP().Position
+    local startDist = nil
+    if startPos and IsValidPos(startPos) then
+        local tpos
+        if typeof(targetCF) == "CFrame" then
+            tpos = targetCF.Position
+        elseif typeof(targetCF) == "Vector3" then
+            tpos = targetCF
+        elseif typeof(targetCF) == "Instance" and targetCF:IsA("BasePart") then
+            local ok, p = pcall(function() return targetCF.Position end)
+            tpos = ok and p or nil
+        end
+        if tpos and IsValidPos(tpos) then
+            startDist = (startPos - tpos).Magnitude
+        end
     end
 
 
@@ -662,6 +834,31 @@ function TravelManager:Request(targetCF, owner, options)
         local arrivalThresh = options.arrivalThreshold or _G.Settings.CloseThreshold
         local flySpeed = options.speed or _G.Settings.FlySpeed
         local isFarmHover = (owner == "Farm")
+        local fallback = options.fallback
+
+        -- [FIX-P1] Long-distance/cruise mode + timeout động theo khoảng cách
+        local longTravel = startDist ~= nil and startDist > _G.Settings.CruiseThreshold
+        local travelTimeout = _G.Settings.TravelTimeout
+        if longTravel and startDist then
+            travelTimeout = math.max(_G.Settings.TravelTimeout,
+                startDist / flySpeed + _G.Settings.TravelTimeoutMargin)
+            travelTimeout = math.min(travelTimeout, 300)
+        end
+
+        -- [FIX-13] Khi target farm chết/mất giữa đường bay → về khu farm (fallback)
+        -- Thay vì break (drop khỏi không trung) → đổi TargetRef sang CFrame an toàn
+        local function HandleFarmInvalid(reason)
+            _G.State:ClearTargets()
+            if fallback then
+                self.TargetRef = fallback
+                fallback = nil
+                travelStart = os.time()
+                stuckTimer = 0
+                _G.BobonStatus = "Farm: " .. reason .. ", về khu farm"
+                return true
+            end
+            return false
+        end
 
 
         while self.CurrentToken == myToken
@@ -669,8 +866,12 @@ function TravelManager:Request(targetCF, owner, options)
             and IsAlive() do
 
 
-            -- Travel timeout
-            if os.time() - travelStart > _G.Settings.TravelTimeout then
+            -- Travel timeout (động theo khoảng cách khi long travel) [FIX-P1]
+            if os.time() - travelStart > travelTimeout then
+                -- Farm timeout → về khu farm (fallback), không recover giữa biển [FIX-13]
+                if isFarmHover and HandleFarmInvalid("Timeout") then
+                    continue
+                end
                 warn("[Travel] Timeout by " .. owner)
                 _G.State.IsRecovering = true
                 break
@@ -682,9 +883,11 @@ function TravelManager:Request(targetCF, owner, options)
             local targetType = typeof(self.TargetRef)
             if targetType == "Instance" then
                 if not self.TargetRef.Parent then
-                    -- Mob biến mất: farm → clear target ngay, resume nhanh
+                    -- Mob biến mất: farm → về khu farm (fallback), không drop giữa không trung [FIX-13]
                     if isFarmHover then
-                        _G.State:ClearTargets()
+                        if HandleFarmInvalid("Target mất") then
+                            continue
+                        end
                         break
                     end
                     targetLostTimer = targetLostTimer + task.wait(0.2)
@@ -696,9 +899,12 @@ function TravelManager:Request(targetCF, owner, options)
                 end
                 local hum = self.TargetRef.Parent:FindFirstChild("Humanoid")
                 if hum and hum.Health <= 0 then
+                    -- Mob chết: farm → về khu farm (fallback) để tiếp tục [FIX-13]
                     if isFarmHover then
-                        _G.State:ClearTargets()
-                        _G.BobonStatus = "Farm: Target chết, tìm mob mới"
+                        if HandleFarmInvalid("Target chết") then
+                            continue
+                        end
+                        break
                     end
                     break
                 end
@@ -708,15 +914,23 @@ function TravelManager:Request(targetCF, owner, options)
                     end
                     return self.TargetRef:GetPivot().Position
                 end)
-                if not okP then
-                    if isFarmHover then _G.State:ClearTargets() end
+                -- [FIX-P11] Reject NaN/invalid position
+                if not okP or not IsValidPos(p) then
+                    if isFarmHover then
+                        if HandleFarmInvalid("Target lỗi") then
+                            continue
+                        end
+                        break
+                    end
                     break
                 end
                 targetLostTimer = 0
                 if isFarmHover then
                     targetPos = GetFarmPosition(p)
                     if not targetPos then
-                        _G.State:ClearTargets()
+                        if HandleFarmInvalid("Không lấy được vị trí") then
+                            continue
+                        end
                         break
                     end
                 else
@@ -725,7 +939,12 @@ function TravelManager:Request(targetCF, owner, options)
                 -- Reject target dưới biển
                 if targetPos.Y < _G.Settings.MinY - 10 then
                     warn("[Travel] Reject target dưới biển (Y=" .. string.format("%.1f", targetPos.Y) .. ")")
-                    if isFarmHover then _G.State:ClearTargets() end
+                    if isFarmHover then
+                        if HandleFarmInvalid("Target dưới biển") then
+                            continue
+                        end
+                        break
+                    end
                     break
                 end
             elseif targetType == "CFrame" then
@@ -737,7 +956,7 @@ function TravelManager:Request(targetCF, owner, options)
             end
 
 
-            if not targetPos then break end
+            if not targetPos or not IsValidPos(targetPos) then break end
 
 
             -- Anti-fall clamp target Y (chỉ cho target cố định CFrame/Vector3)
@@ -746,17 +965,39 @@ function TravelManager:Request(targetCF, owner, options)
             end
 
 
-            -- Anti-fall lift character nếu rơi dưới MinY
-            if root.Position.Y < _G.Settings.MinY then
-                bv.Velocity = Vector3.new(0, 60, 0)
-                bg.CFrame = CFrame.lookAt(root.Position, root.Position + Vector3.new(0,1,0))
-                task.wait(0.03)
-                continue
+            local currentPos = root.Position
+            if not IsValidPos(currentPos) then currentPos = lastPos end
+            local dist = (currentPos - targetPos).Magnitude
+
+
+            -- [FIX-P1] CRUISE MODE: bay xa qua biển → giữ độ cao an toàn,
+            -- chỉ approach target Y thật khi đã gần đảo
+            if longTravel and dist > _G.Settings.ApproachThreshold then
+                local cruiseY = math.max(targetPos.Y, _G.Settings.CruiseAltitude)
+                if currentPos.Y < cruiseY - 1 then
+                    -- còn thấp → lên độ cao cruise
+                    targetPos = Vector3.new(targetPos.X, cruiseY, targetPos.Z)
+                elseif currentPos.Y > cruiseY + _G.Settings.CruiseAltitude then
+                    -- quá cao → hạ xuống từ từ (không dive thẳng)
+                    targetPos = Vector3.new(targetPos.X, math.max(currentPos.Y - 2, cruiseY), targetPos.Z)
+                else
+                    -- đã ở độ cao cruise → bay ngang ổn định
+                    targetPos = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
+                end
+                dist = (currentPos - targetPos).Magnitude
             end
 
 
-            local currentPos = root.Position
-            local dist = (currentPos - targetPos).Magnitude
+            -- [FIX-P1] Anti-fall trong travel: VỪA nâng lên VỪA bay ngang về
+            -- target (không kẹt vòng lặp "chỉ đi lên")
+            if currentPos.Y < _G.Settings.MinY then
+                local liftOffset = targetPos - currentPos
+                local liftDir = liftOffset.Magnitude > 0.1 and liftOffset.Unit or Vector3.new(0, 0, 0)
+                bv.Velocity = Vector3.new(liftDir.X * flySpeed, 60, liftDir.Z * flySpeed)
+                bg.CFrame = CFrame.lookAt(currentPos, targetPos)
+                task.wait(0.03)
+                continue
+            end
 
 
             -- Arrival detection
@@ -783,11 +1024,16 @@ function TravelManager:Request(targetCF, owner, options)
             bg.CFrame = CFrame.lookAt(currentPos, targetPos)
 
 
-            -- Stuck detection
+            -- Stuck detection (riêng cho từng mode) [FIX-P1]
             local moveDelta = (currentPos - lastPos).Magnitude
             if moveDelta < 1 then
                 stuckTimer = stuckTimer + task.wait(0.5)
-                local stuckLimit = isFarmHover and _G.Settings.HoverStuckTimeout or _G.Settings.StuckTimeout
+                local stuckLimit = _G.Settings.StuckTimeout
+                if isFarmHover then
+                    stuckLimit = _G.Settings.HoverStuckTimeout
+                elseif longTravel then
+                    stuckLimit = _G.Settings.CruiseStuckTimeout
+                end
                 if stuckTimer >= stuckLimit then
                     _G.State.IsRecovering = true
                     warn("[Travel] Stuck by " .. owner)
@@ -857,6 +1103,53 @@ LP.CharacterAdded:Connect(function(char)
         _G.State:SetMode("Idle")
     end)
 end)
+
+
+-- [FIX-P8/P9] Travel + verify tới nơi trước khi gọi remote.
+-- Thay cho "task.wait(2)" giả định thành công. Check alive + token
+-- mỗi bước; nếu chưa tới thì chờ travel tới (TravelManager tự bay).
+-- Trả về true khi đã tới + còn sống + token còn hợp lệ.
+local function TravelAndWait(owner, token, cf, opts)
+    opts = opts or {}
+    if not _G.State:IsActionValid(token) then return false end
+    if not IsAlive() then return false end
+    local ok = TravelManager:Request(cf, owner)
+    if not ok then return false end
+    local hrp = HRP()
+    local thresh = opts.arrivalThreshold or _G.Settings.CloseThreshold
+    local timeout = os.time() + (opts.timeout or 60)
+    while _G.State:IsActionValid(token) and IsAlive() and os.time() < timeout do
+        hrp = HRP()
+        if hrp and (hrp.Position - cf.Position).Magnitude <= thresh then
+            break
+        end
+        task.wait(0.5)
+    end
+    task.wait(opts.settle or 1)
+    return _G.State:IsActionValid(token) and IsAlive()
+end
+-- ══════════════════════════════════════════════════════════════════
+--         [FIX-13] ANTI-FALL SAFETY NET (chỉ khi KHÔNG có travel)
+--   Background loop an toàn: KHÔNG điều khiển movement bình thường.
+--   Chỉ kích hoạt khi character rơi dưới MinY (sắp chết đuối) MÀ
+--   không có travel nào đang chạy → đẩy lên đến khi > MinY.
+--   Khi travel hoạt động → loop này bỏ qua hoàn toàn (travel tự xử lý).
+--   Ngăn hoàn toàn việc "rớt xuống biển" trong khoảng trống recovery/tick.
+-- ══════════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(function()
+            if not IsAlive() then return end
+            if _G.State.IsTraveling then return end
+            local root = HRP()
+            if not root then return end
+            if root.Position.Y < _G.Settings.MinY then
+                root.AssemblyLinearVelocity = Vector3.new(
+                    root.AssemblyLinearVelocity.X, 45, root.AssemblyLinearVelocity.Z)
+            end
+        end)
+    end
+end)
 -- ══════════════════════════════════════════════════════════════════
 --         RECOVERY MANAGER v7 (Fix #2,#6)
 --   State machine: STOP → CLEANUP → RESET → WAIT → CHECK → IDLE
@@ -882,49 +1175,54 @@ function RecoveryManager:Handle(reason)
 
 
     task.spawn(function()
-        -- STEP 3: Wait for stability
-        task.wait(_G.Settings.RecoveryDelay)
+        -- [FIX-P10] xpcall toàn bộ → dù lỗi vẫn guaranteed reset về Idle.
+        -- Không bao giờ kẹt ở Mode=Recovering (nguyên nhân "đứng yên giữa biển")
+        local success, noChar = xpcall(function()
+            -- STEP 3: Wait for stability
+            task.wait(_G.Settings.RecoveryDelay)
 
 
-        -- STEP 4: Check character alive với timeout
-        local retries = 0
-        while not IsAlive() and retries < 15 do
-            task.wait(1)
-            retries = retries + 1
-        end
-
-
-        -- Nếu character không xuất hiện sau timeout → reset sạch, về Idle
-        if not IsAlive() then
-            _G.BobonStatus = "Recovery: Failed - no character"
-            _G.State.ConsecutiveFails = _G.State.ConsecutiveFails + 1
-            _G.State.MovementOwner = nil
-            _G.State.IsTraveling = false
-            _G.State.IsRecovering = false
-            _G.State:ForceReleaseAction("RecoveryFail")
-            _G.State:ClearTargets()
-            _G.State:SetMode("Idle")
-            return
-        end
-
-
-        -- STEP 5: Reset HRP velocity chống residual momentum
-        pcall(function()
-            local hrp = HRP()
-            if hrp then
-                hrp.Velocity = Vector3.zero
-                hrp.RotVelocity = Vector3.zero
+            -- STEP 4: Check character alive với timeout
+            local retries = 0
+            while not IsAlive() and retries < 15 do
+                task.wait(1)
+                retries = retries + 1
             end
-        end)
 
 
-        -- STEP 6: Full state reset
+            -- Nếu character không xuất hiện sau timeout → báo fail, vẫn reset
+            if not IsAlive() then
+                _G.BobonStatus = "Recovery: Failed - no character"
+                _G.State.ConsecutiveFails = _G.State.ConsecutiveFails + 1
+                return true
+            end
+
+
+            -- STEP 5: Reset HRP velocity chống residual momentum
+            pcall(function()
+                local hrp = HRP()
+                if hrp then
+                    hrp.Velocity = Vector3.zero
+                    hrp.RotVelocity = Vector3.zero
+                end
+            end)
+            return false
+        end, debug.traceback)
+        if not success then
+            warn("[BobonHub] Module Error: RecoveryManager: " .. tostring(noChar))
+            noChar = nil
+        end
+
+
+        -- STEP 6: Full state reset (GUARANTEED)
         _G.State:ClearTargets()
         _G.State.MovementOwner = nil
         _G.State.IsTraveling = false
         _G.State.IsRecovering = false
         _G.State:ForceReleaseAction("RecoveryComplete")
-        _G.State.ConsecutiveFails = 0
+        if not noChar then
+            _G.State.ConsecutiveFails = 0
+        end
         _G.State.Sea = GetSea()
 
 
@@ -950,7 +1248,7 @@ end)
 
 
 -- ══════════════════════════════════════════════════════════════════
---          QUEST DATABASE v16.0 AUDITED (GIỮ NGUYÊN)
+--          QUEST DATABASE v16.1 AUDITED (GIỮ NGUYÊN)
 -- ══════════════════════════════════════════════════════════════════
 local QDB = {
     {Min=1,Max=14,Q="BanditQuest1",M="Bandit",QL=1,QC=CFrame.new(1059,17,1550),MC=CFrame.new(1145,17,1634)},
@@ -1000,8 +1298,8 @@ local QDB = {
     {Min=2275,Max=2324,Q="CakeQuest2",M="Baking Staff",QL=1,QC=CFrame.new(-1927,38,-12843),MC=CFrame.new(-1980,38,-12763)},
     {Min=2325,Max=2374,Q="CakeQuest2",M="Head Baker",QL=2,QC=CFrame.new(-1927,38,-12843),MC=CFrame.new(-2235,53,-12858)},
     {Min=2375,Max=2424,Q="ChocQuest1",M="Cocoa Warrior",QL=1,QC=CFrame.new(233,25,-12201),MC=CFrame.new(167,26,-12238)},
-    {Min=2425,Max=2474,Q="ChocQuest1",M="Chocolate Bar Battler",QL=2,QC=CFrame.new(233,25,-12201),MC=CFrame.new(507,73,-12789)},
-    {Min=2475,Max=2524,Q="ChocQuest2",M="Sweet Thief",QL=1,QC=CFrame.new(151,25,-12774),MC=CFrame.new(-71,25,-12381)},
+    {Min=2425,Max=2474,Q="ChocQuest1",M="Chocolate Bar Battler",QL=2,QC=CFrame.new(233,25,-12201),MC=CFrame.new(583,77,-12463)},
+    {Min=2475,Max=2524,Q="ChocQuest2",M="Sweet Thief",QL=1,QC=CFrame.new(151,25,-12774),MC=CFrame.new(165,76,-12601)},
     {Min=2525,Max=2574,Q="ChocQuest2",M="Candy Rebel",QL=2,QC=CFrame.new(151,25,-12774),MC=CFrame.new(134,77,-12882)},
     {Min=2575,Max=2649,Q="CandyQuest1",M="Candy Pirate",QL=1,QC=CFrame.new(-1149,14,-14453),MC=CFrame.new(-1380,14,-14453)},
     {Min=2650,Max=2800,Q="CandyQuest1",M="Snow Demon",QL=2,QC=CFrame.new(-1149,14,-14453),MC=CFrame.new(-907,14,-14453)},
@@ -1016,7 +1314,7 @@ local function GetQ()
     return nil
 end
 -- ══════════════════════════════════════════════════════════════════
---     AUTO ITEMS + SEA PROGRESSION v16.0 (GIỮ NGUYÊN)
+--     AUTO ITEMS + SEA PROGRESSION v16.1 (GIỮ NGUYÊN + FIX-P8/P9)
 --   ActionToken system: ClaimAction → IsActionValid → ReleaseAction
 --   Mọi subsystem check token trước MỌI operation
 --   ReleaseAction LUÔN được gọi trong finally block (xpcall)
@@ -1043,18 +1341,20 @@ function ItemProgression:CheckSaber()
                 {N="Torch4",C=CFrame.new(-5070,23,4325)},
                 {N="Torch5",C=CFrame.new(-1675,7,-2985)},
             }
+            -- [FIX-P8] Mỗi torch: travel + VERIFY tới nơi + check alive/token
+            -- rồi mới gọi remote (không "task.wait(2)" giả định thành công)
             for _, t in ipairs(torches) do
                 if not _G.State:IsActionValid(myToken) then return end
-                TravelManager:Request(t.C, "Saber")
-                task.wait(2.5)
-                pcall(function() CommF_:InvokeServer("Torch", t.N) end)
+                if TravelAndWait("Saber", myToken, t.C, {timeout=90}) then
+                    pcall(function() CommF_:InvokeServer("Torch", t.N) end)
+                end
                 task.wait(0.5)
             end
             local timeout = os.time() + 300
             while _G.State:IsActionValid(myToken) and not HasItem("Saber")
                 and os.time() < timeout and IsAlive() do
                 local boss = FindBoss("Saber Expert")
-                if boss then
+                if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
                     EquipMelee()
                     TravelManager:Request(boss.HumanoidRootPart, "Saber")
                     Attack()
@@ -1065,7 +1365,7 @@ function ItemProgression:CheckSaber()
                 task.wait(0.1)
             end
         end, debug.traceback)
-        if not ok then warn("[Saber] Error:", err) end
+        if not ok then warn("[BobonHub] Module Error: Saber: " .. tostring(err)) end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "GettingItem" then
             _G.State:SetMode("Idle")
@@ -1087,12 +1387,13 @@ function ItemProgression:CheckPoleV1()
     task.spawn(function()
         local ok, err = xpcall(function()
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(-7748,5606,-2305), "PoleV1")
-            task.wait(2.5)
-            pcall(function() CommF_:InvokeServer("BuyPoleV1") end)
+            -- [FIX-P8] Travel + verify tới Skylands rồi mới BuyPoleV1
+            if TravelAndWait("PoleV1", myToken, CFrame.new(-7748,5606,-2305), {timeout=120}) then
+                pcall(function() CommF_:InvokeServer("BuyPoleV1") end)
+            end
             task.wait(1)
         end, debug.traceback)
-        if not ok then warn("[PoleV1] Error:", err) end
+        if not ok then warn("[BobonHub] Module Error: PoleV1: " .. tostring(err)) end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "GettingItem" then
             _G.State:SetMode("Idle")
@@ -1113,47 +1414,69 @@ function ItemProgression:CheckSecondSea()
     task.spawn(function()
         local ok, err = xpcall(function()
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(-4909,4,4450), "Sea2"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Detective") end); task.wait(1)
+            -- [FIX-P9] Mỗi bước: travel + verify tới nơi + check alive/token
+            if TravelAndWait("Sea2", myToken, CFrame.new(-4909,4,4450), {timeout=90}) then
+                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Detective") end)
+            end
+            task.wait(1)
 
 
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(932,13,4482), "Sea2"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end); task.wait(1)
+            if TravelAndWait("Sea2", myToken, CFrame.new(932,13,4482), {timeout=90}) then
+                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
+            end
+            task.wait(1)
 
 
-            local kills, timeout = 0, os.time()+600
+            -- Kill 50 Swan Pirate, đếm chính xác qua Humanoid.Died (1 lần/mob)
+            local kills = 0
+            local function TryCount(mob)
+                local hm = mob:FindFirstChild("Humanoid")
+                if hm and not hm:GetAttribute("Sea2Counted") then
+                    hm:SetAttribute("Sea2Counted", true)
+                    hm.Died:Connect(function()
+                        kills = kills + 1
+                    end)
+                end
+            end
+            local timeout = os.time()+600
             while _G.State:IsActionValid(myToken) and kills < 50
                 and os.time() < timeout and IsAlive() do
                 local mob = FindMob("Swan Pirate")
-                if mob then
+                if mob and mob:FindFirstChild("HumanoidRootPart") then
                     EquipMelee()
+                    TryCount(mob)
                     TravelManager:Request(mob.HumanoidRootPart, "Sea2")
                     Attack()
-                    if mob.Humanoid.Health <= 0 then kills = kills + 1 end
                 else
-                    TravelManager:Request(CFrame.new(878,122,1235), "Sea2"); task.wait(2)
+                    TravelManager:Request(CFrame.new(878,122,1235), "Sea2")
+                    task.wait(2)
                 end
                 task.wait(0.1)
             end
 
 
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(932,13,4482), "Sea2"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end); task.wait(1)
+            if TravelAndWait("Sea2", myToken, CFrame.new(932,13,4482), {timeout=90}) then
+                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
+            end
+            task.wait(1)
 
 
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(-12471,374,-7551), "Sea2"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Door") end); task.wait(2)
+            if TravelAndWait("Sea2", myToken, CFrame.new(-12471,374,-7551), {timeout=120}) then
+                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Door") end)
+            end
+            task.wait(2)
 
 
-            if _G.State:IsActionValid(myToken) then
+            -- [FIX-P9] Chỉ teleport sang Sea 2 khi progression hoàn tất + còn sống
+            if _G.State:IsActionValid(myToken) and IsAlive() then
                 TeleportSvc:Teleport(4442272183, LP)
                 _G.State.LastServerHop = os.time()
             end
         end, debug.traceback)
-        if not ok then warn("[Sea2] Error:", err) end
+        if not ok then warn("[BobonHub] Module Error: Sea2: " .. tostring(err)) end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "UnlockingSea" then
             _G.State:SetMode("Idle")
@@ -1174,14 +1497,17 @@ function ItemProgression:CheckThirdSea()
     task.spawn(function()
         local ok, err = xpcall(function()
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(-285,306,611), "Sea3"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("ZQuestProgress","Check") end); task.wait(1)
+            -- [FIX-P9] Verify từng bước trước khi gọi ZQuestProgress
+            if TravelAndWait("Sea3", myToken, CFrame.new(-285,306,611), {timeout=90}) then
+                pcall(function() CommF_:InvokeServer("ZQuestProgress","Check") end)
+            end
+            task.wait(1)
 
 
             local timeout = os.time()+600
             while _G.State:IsActionValid(myToken) and os.time() < timeout and IsAlive() do
                 local boss = FindBoss("Don Swan")
-                if boss and boss.Humanoid.Health > 0 then
+                if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
                     EquipMelee()
                     TravelManager:Request(boss.HumanoidRootPart, "Sea3")
                     Attack()
@@ -1192,16 +1518,19 @@ function ItemProgression:CheckThirdSea()
 
 
             if not _G.State:IsActionValid(myToken) then return end
-            TravelManager:Request(CFrame.new(-285,306,611), "Sea3"); task.wait(2)
-            pcall(function() CommF_:InvokeServer("ZQuestProgress","Begin") end); task.wait(2)
+            if TravelAndWait("Sea3", myToken, CFrame.new(-285,306,611), {timeout=90}) then
+                pcall(function() CommF_:InvokeServer("ZQuestProgress","Begin") end)
+            end
+            task.wait(2)
 
 
-            if _G.State:IsActionValid(myToken) then
+            -- [FIX-P9] Chỉ teleport sang Sea 3 khi progression hoàn tất + còn sống
+            if _G.State:IsActionValid(myToken) and IsAlive() then
                 TeleportSvc:Teleport(7449423635, LP)
                 _G.State.LastServerHop = os.time()
             end
         end, debug.traceback)
-        if not ok then warn("[Sea3] Error:", err) end
+        if not ok then warn("[BobonHub] Module Error: Sea3: " .. tostring(err)) end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "UnlockingSea" then
             _G.State:SetMode("Idle")
@@ -1241,7 +1570,7 @@ end
 
 
 -- ══════════════════════════════════════════════════════════════════
---    MAIN CONTROLLER v16.0 FIXED — SINGLE LOOP
+--    MAIN CONTROLLER v16.1 FIXED — SINGLE LOOP
 --
 --   Priority: Recovery > Sea > Items > Boss > Quest+Farm
 --   CHỈ gọi TravelManager:Request(), KHÔNG tự ghi MovementOwner
@@ -1301,77 +1630,44 @@ task.spawn(function()
             end
 
 
-            -- ═══ QUEST HANDLING ═══
-            if HasQuest() then
-                -- Validate quest hiện tại khớp QDB mob name
-                local currentQuestValid = false
-                local okT, questText = pcall(function()
-                    return LP.PlayerGui.Main.Quest.Container.TextLabel.Text or ""
-                end)
-                if okT and questText and questText ~= "" then
-                    currentQuestValid = string.find(questText, q.M) ~= nil
-                else
-                    -- Không đọc được text → coi như hợp lệ, tránh reset nhầm
-                    currentQuestValid = true
-                end
+            -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
+            local hasQuest = HasQuest()
+            -- QuestMatches: true = đúng mob | false = sai mob | nil = không đọc được UI.
+            -- Lưu ý: dùng `and` (không `or nil`) để giữ giá trị `false` khi quest sai mob.
+            local questOk = hasQuest and QuestMatches(q.M)
 
-
-                if not currentQuestValid then
-                    -- [FIX-9] Quest sai mob: tới giver → re-request quest đúng
-                    local hrp = HRP()
-                    local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
-                    local now = os.time()
-                    if atGiver then
-                        if now - _G.State.LastQuestRequest >= _G.Settings.QuestDelay then
-                            _G.State:SetMode("GettingQuest")
-                            _G.BobonStatus = "Quest: Reset " .. q.M
-                            local okRQ = pcall(function()
-                                CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
-                            end)
-                            if not okRQ then
-                                warn("[BobonHub] RequestQuest error")
-                            end
-                            _G.State.LastQuestRequest = now
-                            _G.State.QuestRetries = _G.State.QuestRetries + 1
-                            if _G.State.QuestRetries >= _G.Settings.QuestRetryLimit then
-                                _G.State.QuestRetries = 0
-                            end
+            if hasQuest and questOk ~= false then
+                -- Quest hợp lệ (true) hoặc nil = UI không đọc được nhưng vừa
+                -- request gần đây → cho farm trong khoảng grace ngắn
+                if questOk == nil then
+                    local gNow = os.time()
+                    if gNow - _G.State.LastQuestRequest >= _G.Settings.QuestDelay then
+                        -- Không đọc được UI lâu → về giver verify lại, KHÔNG farm
+                        _G.State:SetMode("GettingQuest")
+                        _G.BobonStatus = "Quest: Verify lại " .. q.M
+                        local atGiver = HRP() and (HRP().Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
+                        if HandleQuestAtGiver(q, atGiver) then
+                            return
+                        else
+                            TravelManager:Request(q.QC, "Farm")
+                            return
                         end
-                    else
-                        _G.BobonStatus = "Quest: Về giver reset quest"
-                        TravelManager:Request(q.QC, "Farm")
                     end
-                    return
-                else
-                    _G.State.QuestRetries = 0
                 end
+                _G.State.QuestRetries = 0
             else
-                -- [FIX-10] Chưa có quest → đi nhận quest, KHÔNG farm
+                -- [FIX-10] Chưa có quest hoặc [FIX-9] quest sai mob:
+                -- CHỈ đi lấy/đổi quest, KHÔNG farm
+                _G.State:SetMode("GettingQuest")
                 local hrp = HRP()
                 local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
-                local now = os.time()
-
-                _G.State:SetMode("GettingQuest")
-                if atGiver then
-                    if now - _G.State.LastQuestRequest >= _G.Settings.QuestDelay then
-                        _G.BobonStatus = "Quest: Nhận " .. q.M
-                        local okRQ = pcall(function()
-                            CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
-                        end)
-                        if not okRQ then
-                            warn("[BobonHub] RequestQuest error")
-                        end
-                        _G.State.LastQuestRequest = now
-                        _G.State.QuestRetries = _G.State.QuestRetries + 1
-                        if _G.State.QuestRetries >= _G.Settings.QuestRetryLimit then
-                            _G.State.QuestRetries = 0
-                        end
-                    end
+                if HandleQuestAtGiver(q, atGiver) then
+                    return
                 else
                     _G.BobonStatus = "Quest: Đi tới " .. q.M
                     TravelManager:Request(q.QC, "Farm")
+                    return
                 end
-                return
             end
 
 
@@ -1406,25 +1702,30 @@ task.spawn(function()
                     end
 
                     -- Target còn sống → KHÔNG restart travel, chỉ update ref
+                    -- [FIX-P4] Vẫn truyền fallback=q.MC để giữ an toàn mid-flight
                     if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
                         TravelManager:Request(targetHRP, "Farm", {
-                            arrivalThreshold = _G.Settings.FarmArrivalThreshold
+                            arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                            fallback = q.MC
                         })
                     else
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(targetHRP, "Farm", {
-                                arrivalThreshold = _G.Settings.FarmArrivalThreshold
+                                arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                                fallback = q.MC
                             })
                         end
                     end
 
                     -- [FIX-3] Attack theo khoảng cách XZ (hover phía trên đầu mob)
+                    -- [FIX-P5] Chỉ attack khi đã equip melee + target còn sống
                     if _G.State:IsTargetValid(_G.State.FarmTarget) then
                         local flatDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
                             - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
                         if flatDist <= _G.Settings.AttackRange then
-                            EquipMelee()
-                            Attack()
+                            if EquipMelee() then
+                                Attack()
+                            end
                         end
                     end
                 end
@@ -1447,7 +1748,8 @@ task.spawn(function()
                         _G.BobonStatus = "Farm: " .. q.M
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(mob.HumanoidRootPart, "Farm", {
-                                arrivalThreshold = _G.Settings.FarmArrivalThreshold
+                                arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                                fallback = q.MC
                             })
                         end
                     end
@@ -1510,7 +1812,9 @@ LP.Idled:Connect(function()
 end)
 
 
--- Hitbox extender an toàn (Fix #17)
+-- Hitbox extender an toàn (Fix #17 / FIX-P6)
+-- Chỉ resize khi size thay đổi (tránh physics jitter), CanCollide=false
+-- để weapon không làm character stuck. Handle không tồn tại → bỏ qua.
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -1520,8 +1824,11 @@ task.spawn(function()
                 if tool:IsA("Tool") then
                     local h = tool:FindFirstChild("Handle")
                     if h and h:IsA("BasePart") and h.Parent then
-                        h.Size = Vector3.new(_G.Settings.HitboxSize,_G.Settings.HitboxSize,_G.Settings.HitboxSize)
-                        h.Transparency = 1; h.CanCollide = false
+                        if h.Size.X ~= _G.Settings.HitboxSize then
+                            h.Size = Vector3.new(_G.Settings.HitboxSize,_G.Settings.HitboxSize,_G.Settings.HitboxSize)
+                        end
+                        h.Transparency = 1
+                        if h.CanCollide then h.CanCollide = false end
                     end
                 end
             end
@@ -1530,7 +1837,9 @@ task.spawn(function()
 end)
 
 
--- Auto Stats batch limit (Fix #15)
+-- Auto Stats batch limit (Fix #15 / FIX-P7)
+-- Giữ batch limit, Points=0 → không làm gì, lỗi remote không ảnh hưởng
+-- Farm. KHÔNG tạo ActionToken cho background stat.
 task.spawn(function()
     while task.wait(3) do
         if not _G.Settings.AutoStats then continue end
@@ -1583,9 +1892,9 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.0 FIXED] ✅ Full Script Loaded Successfully!")
-print("[BobonHub v16.0 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.0 FIXED] Core: TravelManager(v7) | StateManager(v7) | RecoveryManager(v7)")
-print("[BobonHub v16.0 FIXED] Modules: QuestFarm | BossManager | ItemProgression | AutoStats")
-print("[BobonHub v16.0 FIXED] Audit: 12-Point Fix Applied (Boss stub, target validation, quest flow)")
-print("[BobonHub v16.0 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.1 FIXED] Full Script Loaded Successfully!")
+print("[BobonHub v16.1 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.1 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.1 FIXED] Modules: QuestFarm(P2/P3) | BossManager | ItemProgression(P8/P9) | AutoStats")
+print("[BobonHub v16.1 FIXED] Audit: 15-Point Fix (Cruise mode, dynamic timeout, quest verify)")
+print("[BobonHub v16.1 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
