@@ -293,72 +293,134 @@ local function FindBoss(name)
     return nil
 end
 -- ══════════════════════════════════════════════════════════════════
---     RESPAWN-BASED TRAVEL
+--     RESPAWN-BASED TRAVEL (FIX CHO TẤT CẢ ĐẢO)
 -- ══════════════════════════════════════════════════════════════════
-local SPAM_SECS   = 4.0
-local SPAM_TICK   = 0.04
-local NEAR_DIST   = 400
+local SPAM_SECS   = 5.0
+local SPAM_TICK   = 0.03
+local NEAR_DIST   = 800
 
-local function RespawnTravelTo(targetCF)
-    if _G.State.IsTraveling then return end
-    _G.State.IsTraveling = true
-    _G.State.SpamTarget  = targetCF
-    _G.BobonStatus       = "Di chuyển..."
-
+-- Hàm force teleport (dùng cho mọi tình huống)
+local function ForceTeleport(cf)
+    local hrp = HRP()
+    if not hrp then return end
     pcall(function()
-        local h = Hum()
-        if h then h.Health = 0 end
+        hrp.CFrame = cf
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
     end)
-
-    local conn
-    conn = LP.CharacterAdded:Connect(function(newChar)
-        conn:Disconnect()
-        task.spawn(function()
-            local hrp = newChar:WaitForChild("HumanoidRootPart", 8)
-            if not hrp then
-                _G.State.IsTraveling = false
-                return
-            end
-
-            for _, p in ipairs(newChar:GetDescendants()) do
-                if p:IsA("BasePart") then p.CanCollide = false end
-            end
-
-            local deadline = tick() + SPAM_SECS
-            while tick() < deadline do
-                pcall(function()
-                    if _G.State.SpamTarget then
-                        hrp.CFrame      = _G.State.SpamTarget
-                        hrp.Velocity    = Vector3.zero
-                        hrp.RotVelocity = Vector3.zero
-                    end
-                end)
-                task.wait(SPAM_TICK)
-            end
-
-            _G.State.IsTraveling = false
-            _G.State.SpamTarget  = nil
-        end)
-    end)
-
-    task.delay(15, function()
-        if _G.State.IsTraveling then
-            pcall(function() conn:Disconnect() end)
-            _G.State.IsTraveling = false
-            _G.State.SpamTarget  = nil
+    -- Spam thêm để chắc chắn
+    task.spawn(function()
+        for i = 1, 30 do
+            pcall(function()
+                if hrp and hrp.Parent then
+                    hrp.CFrame = cf
+                    hrp.Velocity = Vector3.zero
+                    hrp.RotVelocity = Vector3.zero
+                end
+            end)
+            task.wait(0.02)
         end
     end)
 end
 
+-- Hàm Travel chính - xử lý cho TẤT CẢ đảo
 local function Travel(cf)
     if _G.State.IsTraveling then return end
+    
     local hrp = HRP()
     if not hrp then return end
+    
     local dist = (hrp.Position - cf.Position).Magnitude
-    if dist <= NEAR_DIST then
-        hrp.CFrame = cf
+    local isUnderwater = math.abs(hrp.Position.Y) < 5
+    
+    -- Nếu đang ở biển hoặc cách xa > 1500 → dùng respawn
+    if isUnderwater or dist > 1500 then
+        _G.State.IsTraveling = true
+        _G.BobonStatus = "Di chuyển đến đảo..."
+        
+        -- Kill character để respawn
+        pcall(function()
+            local h = Hum()
+            if h then 
+                h.Health = 0
+                h.BreakJointsOnDeath = true
+            end
+        end)
+        
+        local conn
+        conn = LP.CharacterAdded:Connect(function(newChar)
+            conn:Disconnect()
+            task.spawn(function()
+                local hrp2 = newChar:WaitForChild("HumanoidRootPart", 10)
+                if not hrp2 then
+                    _G.State.IsTraveling = false
+                    return
+                end
+                
+                -- Tắt collision ngay lập tức
+                for _, p in ipairs(newChar:GetDescendants()) do
+                    if p:IsA("BasePart") then 
+                        p.CanCollide = false 
+                    end
+                end
+                
+                -- SPAM CFrame liên tục 5 giây tại target
+                local deadline = tick() + SPAM_SECS
+                while tick() < deadline do
+                    pcall(function()
+                        hrp2.CFrame = cf
+                        hrp2.Velocity = Vector3.zero
+                        hrp2.RotVelocity = Vector3.zero
+                    end)
+                    task.wait(SPAM_TICK)
+                end
+                
+                -- Spam thêm 1 giây nữa cho chắc
+                for i = 1, 20 do
+                    pcall(function()
+                        hrp2.CFrame = cf
+                        hrp2.Velocity = Vector3.zero
+                    end)
+                    task.wait(0.05)
+                end
+                
+                _G.State.IsTraveling = false
+                _G.BobonStatus = "Đã đến đảo!"
+            end)
+        end)
+        
+        -- Timeout sau 20 giây
+        task.delay(20, function()
+            if _G.State.IsTraveling then
+                pcall(function() conn:Disconnect() end)
+                _G.State.IsTraveling = false
+                _G.BobonStatus = "Timeout - thử lại..."
+            end
+        end)
     else
-        RespawnTravelTo(cf)
+        -- Gần thì bay thẳng
+        ForceTeleport(cf)
+    end
+end
+
+-- Hàm Travel đến NPC cụ thể (dùng trong loop farm)
+local function TravelToNPC(npcCF)
+    if _G.State.IsTraveling then return end
+    
+    local hrp = HRP()
+    if not hrp then return end
+    
+    local dist = (hrp.Position - npcCF.Position).Magnitude
+    local isUnderwater = math.abs(hrp.Position.Y) < 5
+    
+    -- Luôn ưu tiên teleport về NPC nếu đang ở biển hoặc xa
+    if isUnderwater or dist > 300 then
+        Travel(npcCF)
+        return true
+    else
+        -- Đã gần NPC, chỉ cần set CFrame chính xác
+        ForceTeleport(npcCF)
+        return true
     end
 end
 -- ══════════════════════════════════════════════════════════════════
@@ -668,18 +730,23 @@ local function GetQ()
     end
     return nil
 end
-
 -- ══════════════════════════════════════════════════════════════════
---    LOOP FARM CHÍNH
+--    LOOP FARM CHÍNH (XỬ LÝ THEO TỪNG ĐẢO)
 -- ══════════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
-            if _G.State.IsTraveling then return end
+            if _G.State.IsTraveling then 
+                _G.BobonStatus = "Đang di chuyển đến đảo..."
+                return 
+            end
 
             local lv = Level()
+            
+            -- Kiểm tra đúng Sea
+            if GoToCorrectSea() then return end
 
-            -- Auto items
+            -- Auto items (Saber, Pole, unlock sea)
             if lv >= 200 and lv < 700 and GetSea()==1 and not HasItem("Saber") then
                 if AutoSaber() then return end
             end
@@ -693,18 +760,34 @@ task.spawn(function()
                 if AutoThirdSea() then return end
             end
 
-            -- Lấy quest phù hợp
+            -- Lấy quest theo level
             local q = GetQ()
             if not q then
                 _G.BobonStatus = "Chưa có quest cho level " .. lv
                 return
             end
 
-            -- Nhận quest nếu chưa có
+            -- ==== BƯỚC 1: Luôn kiểm tra và về NPC của đảo ====
+            local hrp = HRP()
+            if not hrp then return end
+            
+            local distToNPC = (hrp.Position - q.QC.Position).Magnitude
+            local isUnderwater = math.abs(hrp.Position.Y) < 5
+            
+            -- Nếu đang ở biển hoặc cách NPC > 200 -> về NPC ngay
+            if isUnderwater or distToNPC > 200 then
+                _G.BobonStatus = "Về NPC: " .. q.Q
+                TravelToNPC(q.QC)
+                task.wait(1.5)
+                return
+            end
+
+            -- ==== BƯỚC 2: Nhận quest ====
             if not HasQuest() then
                 _G.BobonStatus = "Nhận quest: " .. q.Q
-                Travel(q.QC)
-                task.wait(2)
+                -- Đứng đúng vị trí NPC
+                ForceTeleport(q.QC)
+                task.wait(0.3)
                 pcall(function()
                     CommF_:InvokeServer("StartQuest", q.Q, q.QL)
                 end)
@@ -712,18 +795,30 @@ task.spawn(function()
                 return
             end
 
-            -- Tìm mob
+            -- ==== BƯỚC 3: Tìm và đánh mob ====
             local mob = FindMob(q.M)
             if not mob then
                 _G.BobonStatus = "Tìm " .. q.M
+                -- Bay đến khu vực spawn mob
                 Travel(q.MC)
                 return
             end
 
-            -- Đánh
+            -- ==== BƯỚC 4: Đánh mob ====
             _G.BobonStatus = "Đánh " .. q.M
             EquipMelee()
-            Travel(CFrame.new(mob.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)))
+            
+            local targetPos = mob.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)
+            local distToMob = (hrp.Position - mob.HumanoidRootPart.Position).Magnitude
+            
+            -- Nếu xa mob > 80 thì bay đến
+            if distToMob > 80 then
+                Travel(CFrame.new(targetPos))
+                return
+            end
+            
+            -- Đánh
+            ForceTeleport(CFrame.new(targetPos))
             Attack()
         end)
     end
