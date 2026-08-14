@@ -1,218 +1,154 @@
 -- ================================================================= --
---         BOBON HUB v13.0 | KAITUN BLOX FRUIT                      --
---         UI: Vxeze Style | Respawn TP | Full Fix by Axiom          --
+--         KAITUN BLOX FRUIT | FIX FULL by Axiom                    --
+--         Auto Farm + Auto Quest + Auto Teleport                   --
 -- ================================================================= --
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
 repeat task.wait() until game.Players.LocalPlayer.Character
 repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-repeat task.wait() until game.Players.LocalPlayer:FindFirstChild("Data")
 
-print("[BobonHub v13] Loading...")
+print("[Kaitun] Loading...")
 
--- ══════════════════════════════════════════════════════════════════
---                          SERVICES
--- ══════════════════════════════════════════════════════════════════
-local Players      = game:GetService("Players")
-local RS           = game:GetService("ReplicatedStorage")
-local RunService   = game:GetService("RunService")
-local VU           = game:GetService("VirtualUser")
-local TS           = game:GetService("TweenService")
-local TeleportSvc  = game:GetService("TeleportService")
-local CoreGui      = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VU = game:GetService("VirtualUser")
+local TP = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
 
-local LP      = Players.LocalPlayer
+local LP = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
-local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub] CommF_ not found!") return end
+local CommF_ = Remotes and Remotes:WaitForChild("CommF_", 10)
+if not CommF_ then return end
 
--- ══════════════════════════════════════════════════════════════════
---                       GLOBAL STATE
--- ══════════════════════════════════════════════════════════════════
-_G.BobonStatus = "Starting..."
-_G.State = {
-    CurrentTarget   = nil,
-    KillCount       = 0,
-    StartTime       = os.time(),
-    LastQuest       = 0,
-    LastRandomFruit = 0,
-    IsTraveling     = false,
-    SpamTarget      = nil,
-    SpamDeadline    = 0,
+-- ================================================================= --
+--                      🚀 TÍNH NĂNG CHÍNH 🚀
+-- ================================================================= --
+-- ✅ Auto Farm theo Level (1-2800) | ✅ Auto Nhận Quest
+-- ✅ Auto Teleport về NPC | ✅ Auto Chọn Team Pirates
+-- ✅ Auto Bật Haki (1 lần duy nhất - không bật tắt)
+-- ✅ Auto Nâng Stat | ✅ Auto Noclip + Anti AFK
+-- ✅ Auto Unlock Sea 2 & 3 | ✅ Auto Saber + Pole
+-- ✅ Đếm Kill | ✅ UI hiển thị Beli, Frag, Time
+-- ================================================================= --
+
+-- ================================================================= --
+--                          STATE
+-- ================================================================= --
+_G.Kaitun = {
+    Status = "Starting...",
+    Kills = 0,
+    StartTime = os.time(),
+    IsTraveling = false,
+    TeamSet = false,
 }
-_G.Settings = {
-    FarmHeight          = 22,
-    HitboxSize          = 50,
-    RandomFruitInterval = 120,
-}
--- ══════════════════════════════════════════════════════════════════
---             UI — VXEZE HUB STYLE (thuần text, nền mờ)
--- ══════════════════════════════════════════════════════════════════
-if CoreGui:FindFirstChild("BobonHubUI") then
-    CoreGui.BobonHubUI:Destroy()
-end
+
+-- ================================================================= --
+--                          UI
+-- ================================================================= --
+if CoreGui:FindFirstChild("KaitunUI") then CoreGui.KaitunUI:Destroy() end
 
 local SG = Instance.new("ScreenGui")
-SG.Name           = "BobonHubUI"
-SG.Parent         = CoreGui
-SG.ResetOnSpawn   = false
-SG.DisplayOrder   = 10000
-SG.IgnoreGuiInset = true
+SG.Name = "KaitunUI"
+SG.Parent = CoreGui
+SG.ResetOnSpawn = false
 
-local Dim = Instance.new("Frame", SG)
-Dim.Size                   = UDim2.new(1,0,1,0)
-Dim.BackgroundColor3       = Color3.fromRGB(0,0,0)
-Dim.BackgroundTransparency = 1
-Dim.BorderSizePixel        = 0
-Dim.ZIndex                 = 1
+local Main = Instance.new("Frame", SG)
+Main.Size = UDim2.new(0, 350, 0, 200)
+Main.Position = UDim2.new(0.5, -175, 0.5, -100)
+Main.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+Main.BackgroundTransparency = 0.15
+Main.BorderSizePixel = 0
 
-local Con = Instance.new("Frame", SG)
-Con.AnchorPoint        = Vector2.new(0.5, 0.5)
-Con.Position           = UDim2.new(0.5, 0, 0.5, 0)
-Con.Size               = UDim2.new(0, 500, 0, 270)
-Con.BackgroundTransparency = 1
-Con.BorderSizePixel    = 0
-Con.ZIndex             = 2
+local Title = Instance.new("TextLabel", Main)
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.Position = UDim2.new(0, 0, 0, 5)
+Title.BackgroundTransparency = 1
+Title.Text = "Kaitun Blox Fruit"
+Title.TextColor3 = Color3.fromRGB(100, 210, 255)
+Title.TextSize = 22
+Title.Font = Enum.Font.GothamBold
 
-local ULL = Instance.new("UIListLayout", Con)
-ULL.SortOrder           = Enum.SortOrder.LayoutOrder
-ULL.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ULL.VerticalAlignment   = Enum.VerticalAlignment.Center
-ULL.Padding             = UDim.new(0, 3)
+local StatusL = Instance.new("TextLabel", Main)
+StatusL.Size = UDim2.new(1, 0, 0, 25)
+StatusL.Position = UDim2.new(0, 0, 0, 45)
+StatusL.BackgroundTransparency = 1
+StatusL.Text = "Status: Starting..."
+StatusL.TextColor3 = Color3.fromRGB(85, 255, 130)
+StatusL.TextSize = 15
+StatusL.Font = Enum.Font.GothamMedium
 
-local function MkLabel(txt, sz, col, bold, order)
-    local lb = Instance.new("TextLabel", Con)
-    lb.Size                  = UDim2.new(1, 0, 0, sz + 12)
-    lb.BackgroundTransparency= 1
-    lb.Text                  = txt
-    lb.TextColor3            = col
-    lb.TextSize              = sz
-    lb.Font                  = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
-    lb.TextXAlignment        = Enum.TextXAlignment.Center
-    lb.TextYAlignment        = Enum.TextYAlignment.Center
-    lb.TextTransparency      = 1
-    lb.TextStrokeTransparency= 0.6
-    lb.TextStrokeColor3      = Color3.fromRGB(0,0,0)
-    lb.LayoutOrder           = order
-    lb.ZIndex                = 3
-    return lb
-end
+local TimeL = Instance.new("TextLabel", Main)
+TimeL.Size = UDim2.new(1, 0, 0, 25)
+TimeL.Position = UDim2.new(0, 0, 0, 70)
+TimeL.BackgroundTransparency = 1
+TimeL.Text = "Time: 00:00:00"
+TimeL.TextColor3 = Color3.fromRGB(200, 200, 210)
+TimeL.TextSize = 14
+TimeL.Font = Enum.Font.Gotham
 
-local function MkDiv(order)
-    local f = Instance.new("Frame", Con)
-    f.Size               = UDim2.new(0.40, 0, 0, 1)
-    f.BackgroundColor3   = Color3.fromRGB(255,255,255)
-    f.BackgroundTransparency = 0.72
-    f.BorderSizePixel    = 0
-    f.LayoutOrder        = order
-    f.ZIndex             = 3
-    return f
-end
+local KillL = Instance.new("TextLabel", Main)
+KillL.Size = UDim2.new(1, 0, 0, 25)
+KillL.Position = UDim2.new(0, 0, 0, 95)
+KillL.BackgroundTransparency = 1
+KillL.Text = "Kills: 0"
+KillL.TextColor3 = Color3.fromRGB(255, 150, 150)
+KillL.TextSize = 14
+KillL.Font = Enum.Font.Gotham
 
-local function MkCurrRow(order)
-    local row = Instance.new("Frame", Con)
-    row.Size               = UDim2.new(1, 0, 0, 30)
-    row.BackgroundTransparency = 1
-    row.BorderSizePixel    = 0
-    row.LayoutOrder        = order
-    row.ZIndex             = 3
+local BeliL = Instance.new("TextLabel", Main)
+BeliL.Size = UDim2.new(0.5, 0, 0, 25)
+BeliL.Position = UDim2.new(0, 10, 0, 125)
+BeliL.BackgroundTransparency = 1
+BeliL.Text = "Beli: 0"
+BeliL.TextColor3 = Color3.fromRGB(255, 195, 60)
+BeliL.TextSize = 14
+BeliL.Font = Enum.Font.Gotham
+BeliL.TextXAlignment = Enum.TextXAlignment.Left
 
-    local function Side(txt, col, anchor, pos, align)
-        local lb = Instance.new("TextLabel", row)
-        lb.AnchorPoint        = anchor
-        lb.Position           = pos
-        lb.Size               = UDim2.new(0.47, 0, 1, 0)
-        lb.BackgroundTransparency = 1
-        lb.Text               = txt
-        lb.TextColor3         = col
-        lb.TextSize           = 15
-        lb.Font               = Enum.Font.GothamBold
-        lb.TextXAlignment     = align
-        lb.TextYAlignment     = Enum.TextYAlignment.Center
-        lb.TextTransparency   = 1
-        lb.TextStrokeTransparency = 0.6
-        lb.TextStrokeColor3   = Color3.fromRGB(0,0,0)
-        lb.ZIndex             = 3
-        return lb
-    end
-
-    local sep = Instance.new("TextLabel", row)
-    sep.AnchorPoint        = Vector2.new(0.5, 0.5)
-    sep.Position           = UDim2.new(0.5, 0, 0.5, 0)
-    sep.Size               = UDim2.new(0, 14, 1, 0)
-    sep.BackgroundTransparency = 1
-    sep.Text               = "│"
-    sep.TextColor3         = Color3.fromRGB(200,200,200)
-    sep.TextSize           = 15
-    sep.Font               = Enum.Font.Gotham
-    sep.TextXAlignment     = Enum.TextXAlignment.Center
-    sep.TextYAlignment     = Enum.TextYAlignment.Center
-    sep.TextTransparency   = 1
-    sep.TextStrokeTransparency = 0.75
-    sep.ZIndex             = 3
-
-    local beli = Side("Beli: 0",  Color3.fromRGB(255,195,60),
-        Vector2.new(0,0.5), UDim2.new(0,0,0.5,0), Enum.TextXAlignment.Right)
-    local frag = Side("Frag: 0",  Color3.fromRGB(90,175,255),
-        Vector2.new(1,0.5), UDim2.new(1,0,0.5,0), Enum.TextXAlignment.Left)
-
-    return row, beli, sep, frag
-end
-
-local TitleL    = MkLabel("BobonHub",           34, Color3.fromRGB(100,210,255), true,  1)
-local SubL      = MkLabel("Kaitun Blox Fruit",  16, Color3.fromRGB(170,195,220), false, 2)
-                  MkDiv(3)
-local StatL     = MkLabel("Status: Starting...",16, Color3.fromRGB(85,255,130),  true,  4)
-local TimeL     = MkLabel("Time: 00:00:00",     14, Color3.fromRGB(205,215,230), false, 5)
-                  MkDiv(6)
-local CurrRow, BeliL, SepL, FragL = MkCurrRow(7)
-local KillL     = MkLabel("Kills: 0",           13, Color3.fromRGB(255,110,110), false, 8)
-
-local function FadeText(lb, dur)
-    TS:Create(lb, TweenInfo.new(dur, Enum.EasingStyle.Quad), {TextTransparency=0}):Play()
-end
-
-task.spawn(function()
-    task.wait(0.3)
-    TS:Create(Dim, TweenInfo.new(0.9, Enum.EasingStyle.Quad), {BackgroundTransparency=0.48}):Play()
-    task.wait(0.5)
-    local seq = {TitleL, SubL, StatL, TimeL, BeliL, SepL, FragL, KillL}
-    for i, lb in ipairs(seq) do
-        task.delay((i-1)*0.09, function() FadeText(lb, 0.55) end)
-    end
-    print("[BobonHub] UI Ready!")
-end)
+local FragL = Instance.new("TextLabel", Main)
+FragL.Size = UDim2.new(0.5, 0, 0, 25)
+FragL.Position = UDim2.new(0.5, 0, 0, 125)
+FragL.BackgroundTransparency = 1
+FragL.Text = "Frag: 0"
+FragL.TextColor3 = Color3.fromRGB(90, 175, 255)
+FragL.TextSize = 14
+FragL.Font = Enum.Font.Gotham
+FragL.TextXAlignment = Enum.TextXAlignment.Right
 
 local function Fmt(n)
     local s = tostring(math.floor(n or 0))
-    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,","")
+    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
 end
 
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
-            local e = os.time() - _G.State.StartTime
+            local e = os.time() - _G.Kaitun.StartTime
             TimeL.Text = ("Time: %02d:%02d:%02d"):format(
-                math.floor(e/3600), math.floor(e%3600/60), e%60)
-            StatL.Text = "Status: " .. (_G.BobonStatus or "Idle")
-            KillL.Text = "Kills: " .. Fmt(_G.State.KillCount)
+                math.floor(e/3600), math.floor(e%3600/60), e%60
+            )
+            StatusL.Text = "Status: " .. (_G.Kaitun.Status or "Idle")
+            KillL.Text = "Kills: " .. Fmt(_G.Kaitun.Kills)
             local d = LP:FindFirstChild("Data")
             if d then
-                BeliL.Text = "Beli: " .. Fmt(d:FindFirstChild("Beli") and d.Beli.Value or 0)
-                FragL.Text = "Frag: " .. Fmt(d:FindFirstChild("Fragments") and d.Fragments.Value or 0)
+                local beli = d:FindFirstChild("Beli")
+                local frag = d:FindFirstChild("Fragments")
+                if beli then BeliL.Text = "Beli: " .. Fmt(beli.Value) end
+                if frag then FragL.Text = "Frag: " .. Fmt(frag.Value) end
             end
         end)
     end
 end)
--- ══════════════════════════════════════════════════════════════════
---                       HELPER FUNCTIONS
--- ══════════════════════════════════════════════════════════════════
-local function Char()  return LP.Character end
-local function HRP()   local c=Char(); return c and c:FindFirstChild("HumanoidRootPart") end
-local function Hum()   local c=Char(); return c and c:FindFirstChild("Humanoid") end
-local function Level() local d=LP:FindFirstChild("Data"); return d and d:FindFirstChild("Level") and d.Level.Value or 1 end
-local function Beli()  local d=LP:FindFirstChild("Data"); return d and d:FindFirstChild("Beli") and d.Beli.Value or 0 end
+-- ================================================================= --
+--                          HELPERS
+-- ================================================================= --
+local function Char() return LP.Character end
+local function HRP() local c = Char(); return c and c:FindFirstChild("HumanoidRootPart") end
+local function Hum() local c = Char(); return c and c:FindFirstChild("Humanoid") end
+local function Level() local d = LP:FindFirstChild("Data"); return d and d:FindFirstChild("Level") and d.Level.Value or 1 end
+local function Beli() local d = LP:FindFirstChild("Data"); return d and d:FindFirstChild("Beli") and d.Beli.Value or 0 end
 
 local function GetSea()
     local id = game.PlaceId
@@ -223,8 +159,7 @@ local function GetSea()
 end
 
 local function HasItem(name)
-    return LP.Backpack:FindFirstChild(name)
-        or (Char() and Char():FindFirstChild(name))
+    return LP.Backpack:FindFirstChild(name) or (Char() and Char():FindFirstChild(name))
 end
 
 local function HasQuest()
@@ -242,21 +177,23 @@ local function Attack()
 end
 
 local MeleeList = {
-    "Godhuman","Superhuman","Death Step","Electric Claw",
-    "Dragon Talon","Sharkman Karate","Dragon Claw",
-    "Fishman Karate","Black Leg","Electro","Combat","Sanguine Art"
+    "Godhuman", "Superhuman", "Death Step", "Electric Claw",
+    "Dragon Talon", "Sharkman Karate", "Dragon Claw",
+    "Fishman Karate", "Black Leg", "Electro", "Combat", "Sanguine Art"
 }
 
 local function EquipMelee()
     local c = Char()
-    if not c or not c:FindFirstChildOfClass("Humanoid") then return end
+    if not c then return end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
     for _, n in ipairs(MeleeList) do
         if c:FindFirstChild(n) then return end
     end
     for _, n in ipairs(MeleeList) do
-        local t = LP.Backpack:FindFirstChild(n)
-        if t then
-            c:FindFirstChildOfClass("Humanoid"):EquipTool(t)
+        local tool = LP.Backpack:FindFirstChild(n)
+        if tool then
+            hum:EquipTool(tool)
             return
         end
     end
@@ -265,17 +202,16 @@ end
 local function FindMob(name)
     local folder = workspace:FindFirstChild("Enemies")
     if not folder then return nil end
-    local best, bd = nil, math.huge
+    local best, bestDist = nil, math.huge
     local hrp = HRP()
     for _, v in ipairs(folder:GetChildren()) do
-        if v.Name == name
-            and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0
-            and v:FindFirstChild("HumanoidRootPart")
-        then
+        if v.Name == name and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
             if hrp then
                 local d = (v.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if d < bd then best, bd = v, d end
-            else return v end
+                if d < bestDist then best, bestDist = v, d end
+            else
+                return v
+            end
         end
     end
     return best
@@ -285,21 +221,19 @@ local function FindBoss(name)
     local folder = workspace:FindFirstChild("Enemies")
     if not folder then return nil end
     for _, v in ipairs(folder:GetChildren()) do
-        if v.Name == name
-            and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0
-            and v:FindFirstChild("HumanoidRootPart")
-        then return v end
+        if v.Name == name and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
+            return v
+        end
     end
     return nil
 end
--- ══════════════════════════════════════════════════════════════════
---     RESPAWN-BASED TRAVEL (FIX CHO TẤT CẢ ĐẢO)
--- ══════════════════════════════════════════════════════════════════
-local SPAM_SECS   = 5.0
-local SPAM_TICK   = 0.03
-local NEAR_DIST   = 800
 
--- Hàm force teleport (dùng cho mọi tình huống)
+-- ================================================================= --
+--                          TELEPORT (FIX)
+-- ================================================================= --
+local SPAM_SECS = 5.0
+local SPAM_TICK = 0.03
+
 local function ForceTeleport(cf)
     local hrp = HRP()
     if not hrp then return end
@@ -308,63 +242,51 @@ local function ForceTeleport(cf)
         hrp.Velocity = Vector3.zero
         hrp.RotVelocity = Vector3.zero
     end)
-    -- Spam thêm để chắc chắn
     task.spawn(function()
-        for i = 1, 30 do
+        for i = 1, 15 do
             pcall(function()
                 if hrp and hrp.Parent then
                     hrp.CFrame = cf
                     hrp.Velocity = Vector3.zero
-                    hrp.RotVelocity = Vector3.zero
                 end
             end)
-            task.wait(0.02)
+            task.wait(0.03)
         end
     end)
 end
 
--- Hàm Travel chính - xử lý cho TẤT CẢ đảo
-local function Travel(cf)
-    if _G.State.IsTraveling then return end
+local function TeleportTo(cf)
+    if _G.Kaitun.IsTraveling then return end
     
     local hrp = HRP()
     if not hrp then return end
     
     local dist = (hrp.Position - cf.Position).Magnitude
-    local isUnderwater = math.abs(hrp.Position.Y) < 5
+    local isUnderwater = math.abs(hrp.Position.Y) < 8
     
-    -- Nếu đang ở biển hoặc cách xa > 1500 → dùng respawn
-    if isUnderwater or dist > 1500 then
-        _G.State.IsTraveling = true
-        _G.BobonStatus = "Di chuyển đến đảo..."
+    if isUnderwater or dist > 1000 then
+        _G.Kaitun.IsTraveling = true
+        _G.Kaitun.Status = "Teleporting..."
         
-        -- Kill character để respawn
         pcall(function()
             local h = Hum()
-            if h then 
-                h.Health = 0
-                h.BreakJointsOnDeath = true
-            end
+            if h then h.Health = 0 end
         end)
         
         local conn
         conn = LP.CharacterAdded:Connect(function(newChar)
             conn:Disconnect()
             task.spawn(function()
-                local hrp2 = newChar:WaitForChild("HumanoidRootPart", 10)
+                local hrp2 = newChar:WaitForChild("HumanoidRootPart", 8)
                 if not hrp2 then
-                    _G.State.IsTraveling = false
+                    _G.Kaitun.IsTraveling = false
                     return
                 end
                 
-                -- Tắt collision ngay lập tức
                 for _, p in ipairs(newChar:GetDescendants()) do
-                    if p:IsA("BasePart") then 
-                        p.CanCollide = false 
-                    end
+                    if p:IsA("BasePart") then p.CanCollide = false end
                 end
                 
-                -- SPAM CFrame liên tục 5 giây tại target
                 local deadline = tick() + SPAM_SECS
                 while tick() < deadline do
                     pcall(function()
@@ -375,7 +297,6 @@ local function Travel(cf)
                     task.wait(SPAM_TICK)
                 end
                 
-                -- Spam thêm 1 giây nữa cho chắc
                 for i = 1, 20 do
                     pcall(function()
                         hrp2.CFrame = cf
@@ -384,81 +305,76 @@ local function Travel(cf)
                     task.wait(0.05)
                 end
                 
-                _G.State.IsTraveling = false
-                _G.BobonStatus = "Đã đến đảo!"
+                _G.Kaitun.IsTraveling = false
+                _G.Kaitun.Status = "Ready"
             end)
         end)
         
-        -- Timeout sau 20 giây
         task.delay(20, function()
-            if _G.State.IsTraveling then
+            if _G.Kaitun.IsTraveling then
                 pcall(function() conn:Disconnect() end)
-                _G.State.IsTraveling = false
-                _G.BobonStatus = "Timeout - thử lại..."
+                _G.Kaitun.IsTraveling = false
+                _G.Kaitun.Status = "Timeout - retry..."
             end
         end)
     else
-        -- Gần thì bay thẳng
         ForceTeleport(cf)
     end
 end
-
--- Hàm Travel đến NPC cụ thể (dùng trong loop farm)
-local function TravelToNPC(npcCF)
-    if _G.State.IsTraveling then return end
-    
-    local hrp = HRP()
-    if not hrp then return end
-    
-    local dist = (hrp.Position - npcCF.Position).Magnitude
-    local isUnderwater = math.abs(hrp.Position.Y) < 5
-    
-    -- Luôn ưu tiên teleport về NPC nếu đang ở biển hoặc xa
-    if isUnderwater or dist > 300 then
-        Travel(npcCF)
-        return true
-    else
-        -- Đã gần NPC, chỉ cần set CFrame chính xác
-        ForceTeleport(npcCF)
-        return true
-    end
-end
--- ══════════════════════════════════════════════════════════════════
---                   TEAM + HAKI INIT
--- ══════════════════════════════════════════════════════════════════
-local TeamDone = false
+-- ================================================================= --
+--                          TEAM + HAKI (FIX - 1 LẦN DUY NHẤT)
+-- ================================================================= --
 task.spawn(function()
     task.wait(3)
-    for _ = 1, 6 do
-        if LP.Team and LP.Team.Name == "Pirates" then break end
-        pcall(function() CommF_:InvokeServer("SetTeam",    "Pirates") end)
-        task.wait(1.5)
+    
+    -- Chọn team PIRATES
+    local teamSet = false
+    for i = 1, 10 do
+        if LP.Team and LP.Team.Name == "Pirates" then 
+            teamSet = true
+            break 
+        end
+        pcall(function() CommF_:InvokeServer("SetTeam", "Pirates") end)
+        task.wait(1)
         pcall(function() CommF_:InvokeServer("ChooseTeam", "Pirates") end)
-        task.wait(1.5)
+        task.wait(1)
     end
-    TeamDone = true
-    _G.BobonStatus = "Team: Pirates ✓"
-    task.wait(0.5)
-    pcall(function() CommF_:InvokeServer("Ken",  true) end)
-    pcall(function() CommF_:InvokeServer("Buso", true) end)
-    _G.BobonStatus = "Haki: ON ✓"
-    task.wait(0.5)
-    _G.BobonStatus = "Sẵn sàng!"
-end)
-
-task.spawn(function()
-    while task.wait(20) do
+    
+    if teamSet or (LP.Team and LP.Team.Name == "Pirates") then
+        _G.Kaitun.Status = "Team: Pirates ✓"
+    else
+        _G.Kaitun.Status = "Team: Pirates (Manual)"
+    end
+    
+    -- Bật Haki 1 LẦN - KHÔNG LOOP
+    task.wait(1)
+    local hakiOn = false
+    for i = 1, 3 do
         pcall(function()
-            CommF_:InvokeServer("Ken",  true)
+            CommF_:InvokeServer("Ken", true)
             CommF_:InvokeServer("Buso", true)
+            hakiOn = true
         end)
+        task.wait(0.5)
+        if hakiOn then break end
     end
+    
+    if hakiOn then
+        _G.Kaitun.Status = "Haki: ON ✓"
+    else
+        _G.Kaitun.Status = "Haki: Check manually"
+    end
+    
+    task.wait(0.5)
+    _G.Kaitun.Status = "✅ Ready!"
+    print("[Kaitun] Loaded - Haki ON, Team Pirates")
 end)
 
--- ══════════════════════════════════════════════════════════════════
---                    BACKGROUND SYSTEMS
--- ══════════════════════════════════════════════════════════════════
+-- KHÔNG CÓ LOOP RE-ENABLE HAKI - TRÁNH BẬT TẮT
 
+-- ================================================================= --
+--                          BACKGROUND
+-- ================================================================= --
 LP.Idled:Connect(function()
     pcall(function()
         VU:CaptureController()
@@ -476,49 +392,17 @@ RunService.Stepped:Connect(function()
     end)
 end)
 
-task.spawn(function()
-    while task.wait(1) do
-        pcall(function()
-            local c = Char()
-            if not c then return end
-            for _, tool in ipairs(c:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local h = tool:FindFirstChild("Handle")
-                    if h then
-                        local sz = _G.Settings.HitboxSize
-                        h.Size        = Vector3.new(sz,sz,sz)
-                        h.Transparency = 1
-                        h.CanCollide  = false
-                    end
-                end
-            end
-        end)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(3) do
-        pcall(function()
-            local d = LP:FindFirstChild("Data")
-            if not d then return end
-            local pts = d:FindFirstChild("Points") and d.Points.Value or 0
-            if pts > 0 then
-                CommF_:InvokeServer("AddPoint","Melee",  math.floor(pts*0.7))
-                CommF_:InvokeServer("AddPoint","Defense",math.floor(pts*0.3))
-            end
-        end)
-    end
-end)
-
+-- Kill counter
 local function HookMob(mob)
     local h = mob:FindFirstChild("Humanoid")
-    if h and not h:GetAttribute("BHooked") then
-        h:SetAttribute("BHooked", true)
+    if h and not h:GetAttribute("Hooked") then
+        h:SetAttribute("Hooked", true)
         h.Died:Connect(function()
-            _G.State.KillCount = _G.State.KillCount + 1
+            _G.Kaitun.Kills = _G.Kaitun.Kills + 1
         end)
     end
 end
+
 task.spawn(function()
     local function Watch()
         local f = workspace:FindFirstChild("Enemies")
@@ -527,15 +411,27 @@ task.spawn(function()
         f.ChildAdded:Connect(function(mob) task.wait(0.1); HookMob(mob) end)
     end
     Watch()
-    if not workspace:FindFirstChild("Enemies") then
-        workspace.ChildAdded:Connect(function(c)
-            if c.Name == "Enemies" then task.wait(0.3); Watch() end
+    workspace.ChildAdded:Connect(function(c)
+        if c.Name == "Enemies" then task.wait(0.5); Watch() end
+    end)
+end)
+
+-- Auto stat
+task.spawn(function()
+    while task.wait(5) do
+        pcall(function()
+            local d = LP:FindFirstChild("Data")
+            if not d then return end
+            local pts = d:FindFirstChild("Points") and d.Points.Value or 0
+            if pts > 0 then
+                CommF_:InvokeServer("AddPoint", "Melee", math.floor(pts * 0.7))
+                CommF_:InvokeServer("AddPoint", "Defense", math.floor(pts * 0.3))
+            end
         end)
     end
 end)
--- ══════════════════════════════════════════════════════════════════
---                   AUTO FRUIT (Sea 2+)
--- ══════════════════════════════════════════════════════════════════
+
+-- Auto Fruit (Sea 2+)
 local FruitPrices = {[1]=38000,[2]=100000,[3]=250000}
 
 local function AutoStoreFruit()
@@ -556,33 +452,82 @@ local function AutoRandomFruit()
     local sea = GetSea()
     if sea < 2 then return end
     local price = FruitPrices[sea] or 100000
-    local now   = os.time()
-    if now - _G.State.LastRandomFruit < _G.Settings.RandomFruitInterval then return end
     if Beli() < price then return end
-    _G.BobonStatus = "Random Fruit..."
-    pcall(function() CommF_:InvokeServer("Cousin","Buy") end)
-    _G.State.LastRandomFruit = os.time()
+    _G.Kaitun.Status = "Random Fruit..."
+    pcall(function() CommF_:InvokeServer("Cousin", "Buy") end)
     task.wait(2)
     AutoStoreFruit()
 end
 
 task.spawn(function() while task.wait(15) do pcall(AutoRandomFruit) end end)
-task.spawn(function() while task.wait(30) do pcall(AutoStoreFruit)  end end)
--- ══════════════════════════════════════════════════════════════════
---                   AUTO ITEMS (Saber, Pole, Sea unlock)
--- ══════════════════════════════════════════════════════════════════
+task.spawn(function() while task.wait(30) do pcall(AutoStoreFruit) end end)
+-- ================================================================= --
+--                    AUTO UNLOCK SEA
+-- ================================================================= --
+local function AutoSecondSea()
+    if GetSea() >= 2 or Level() < 700 then return false end
+    _G.Kaitun.Status = "Unlocking Sea 2..."
+    TeleportTo(CFrame.new(-4909, 4, 4450)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Detective") end); task.wait(1)
+    TeleportTo(CFrame.new(932, 13, 4482)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo") end); task.wait(1)
+    local kills = 0
+    while kills < 50 do
+        local mob = FindMob("Swan Pirate")
+        if mob then
+            EquipMelee()
+            TeleportTo(CFrame.new(mob.HumanoidRootPart.Position + Vector3.new(0, 22, 0)))
+            Attack()
+            if mob.Humanoid.Health <= 0 then kills = kills + 1 end
+        else
+            TeleportTo(CFrame.new(878, 122, 1235)); task.wait(2)
+        end
+        task.wait(0.1)
+    end
+    TeleportTo(CFrame.new(932, 13, 4482)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Bartilo") end); task.wait(1)
+    TeleportTo(CFrame.new(-12471, 374, -7551)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress", "Door") end); task.wait(1)
+    TP:Teleport(4442272183, LP)
+    return true
+end
+
+local function AutoThirdSea()
+    if GetSea() ~= 2 or Level() < 1500 then return false end
+    _G.Kaitun.Status = "Unlocking Sea 3..."
+    TeleportTo(CFrame.new(-285, 306, 611)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("ZQuestProgress", "Check") end); task.wait(1)
+    local timeout = os.time() + 300
+    while os.time() < timeout do
+        local boss = FindBoss("Don Swan")
+        if boss and boss.Humanoid.Health > 0 then
+            EquipMelee()
+            TeleportTo(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, 22, 0)))
+            Attack()
+        else break end
+        task.wait(0.1)
+    end
+    TeleportTo(CFrame.new(-285, 306, 611)); task.wait(2)
+    pcall(function() CommF_:InvokeServer("ZQuestProgress", "Begin") end); task.wait(1)
+    TP:Teleport(7449423635, LP)
+    return true
+end
+
+-- ================================================================= --
+--                    AUTO SABER + POLE
+-- ================================================================= --
 local function AutoSaber()
     if HasItem("Saber") or Level() < 200 or GetSea() ~= 1 then return false end
-    _G.BobonStatus = "Quest: Saber Sword"
+    _G.Kaitun.Status = "Getting Saber..."
     local torches = {
-        {N="Torch1", C=CFrame.new(-1610,11,163)},
-        {N="Torch2", C=CFrame.new(1114,4,4350)},
-        {N="Torch3", C=CFrame.new(1400,101,-1250)},
-        {N="Torch4", C=CFrame.new(-5070,23,4325)},
-        {N="Torch5", C=CFrame.new(-1675,7,-2985)},
+        {N="Torch1", C=CFrame.new(-1610, 11, 163)},
+        {N="Torch2", C=CFrame.new(1114, 4, 4350)},
+        {N="Torch3", C=CFrame.new(1400, 101, -1250)},
+        {N="Torch4", C=CFrame.new(-5070, 23, 4325)},
+        {N="Torch5", C=CFrame.new(-1675, 7, -2985)},
     }
     for _, t in ipairs(torches) do
-        Travel(t.C); task.wait(2.5)
+        TeleportTo(t.C); task.wait(2)
         pcall(function() CommF_:InvokeServer("Torch", t.N) end)
         task.wait(0.5)
     end
@@ -591,10 +536,10 @@ local function AutoSaber()
         local boss = FindBoss("Saber Expert")
         if boss then
             EquipMelee()
-            Travel(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0,22,0)))
+            TeleportTo(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, 22, 0)))
             Attack()
         else
-            Travel(CFrame.new(-1405,30,-3330)); task.wait(3)
+            TeleportTo(CFrame.new(-1405, 30, -3330)); task.wait(3)
         end
         task.wait(0.1)
     end
@@ -603,71 +548,15 @@ end
 
 local function AutoPoleV1()
     if HasItem("Pole (1st Form)") or Level() < 150 or GetSea() ~= 1 then return false end
-    _G.BobonStatus = "Quest: Pole v1"
-    Travel(CFrame.new(-7748,5606,-2305)); task.wait(2.5)
+    _G.Kaitun.Status = "Getting Pole..."
+    TeleportTo(CFrame.new(-7748, 5606, -2305)); task.wait(2)
     pcall(function() CommF_:InvokeServer("BuyPoleV1") end)
     task.wait(1)
     return true
 end
-
-local function AutoSecondSea()
-    if GetSea() >= 2 or Level() < 700 then return false end
-    _G.BobonStatus = "Quest: Unlock 2nd Sea"
-    Travel(CFrame.new(-4909,4,4450)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Detective") end)
-    task.wait(0.5)
-    Travel(CFrame.new(932,13,4482)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
-    task.wait(0.5)
-    local kills, timeout = 0, os.time()+600
-    while kills < 50 and os.time() < timeout do
-        local mob = FindMob("Swan Pirate")
-        if mob then
-            EquipMelee()
-            Travel(CFrame.new(mob.HumanoidRootPart.Position + Vector3.new(0,22,0)))
-            Attack()
-            if mob.Humanoid.Health <= 0 then kills = kills + 1 end
-        else
-            Travel(CFrame.new(878,122,1235)); task.wait(2)
-        end
-        task.wait(0.1)
-    end
-    Travel(CFrame.new(932,13,4482)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
-    task.wait(0.5)
-    Travel(CFrame.new(-12471,374,-7551)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Door") end)
-    task.wait(1)
-    TeleportSvc:Teleport(4442272183, LP)
-    return true
-end
-
-local function AutoThirdSea()
-    if GetSea() ~= 2 or Level() < 1500 then return false end
-    _G.BobonStatus = "Quest: Unlock 3rd Sea"
-    Travel(CFrame.new(-285,306,611)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("ZQuestProgress","Check") end)
-    task.wait(0.5)
-    local timeout = os.time()+600
-    while os.time() < timeout do
-        local boss = FindBoss("Don Swan")
-        if boss and boss.Humanoid.Health > 0 then
-            EquipMelee()
-            Travel(CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0,22,0)))
-            Attack()
-        else break end
-        task.wait(0.1)
-    end
-    task.wait(2)
-    Travel(CFrame.new(-285,306,611)); task.wait(2)
-    pcall(function() CommF_:InvokeServer("ZQuestProgress","Begin") end)
-    task.wait(1)
-    TeleportSvc:Teleport(7449423635, LP)
-    return true
-end
--- ══════════════════════════════════════════════════════════════════
+-- ================================================================= --
 --                      QUEST DATABASE (lv 1–2800)
--- ══════════════════════════════════════════════════════════════════
+-- ================================================================= --
 local QDB = {
     {Min=1,    Max=14,   Q="BanditQuest1",          M="Bandit",               QL=1, QC=CFrame.new(1059,17,1550),     MC=CFrame.new(1145,17,1634)},
     {Min=15,   Max=29,   Q="JungleQuest",            M="Monkey",               QL=1, QC=CFrame.new(-1598,37,153),     MC=CFrame.new(-1448,50,24)},
@@ -730,62 +619,59 @@ local function GetQ()
     end
     return nil
 end
--- ══════════════════════════════════════════════════════════════════
---    LOOP FARM CHÍNH (XỬ LÝ THEO TỪNG ĐẢO)
--- ══════════════════════════════════════════════════════════════════
+
+-- ================================================================= --
+--                    MAIN FARM LOOP
+-- ================================================================= --
 task.spawn(function()
-    while task.wait(0.3) do
+    while task.wait(0.2) do
         pcall(function()
-            if _G.State.IsTraveling then 
-                _G.BobonStatus = "Đang di chuyển đến đảo..."
-                return 
-            end
-
-            local lv = Level()
+            if _G.Kaitun.IsTraveling then return end
             
-            -- Kiểm tra đúng Sea
-            if GoToCorrectSea() then return end
-
-            -- Auto items (Saber, Pole, unlock sea)
-            if lv >= 200 and lv < 700 and GetSea()==1 and not HasItem("Saber") then
-                if AutoSaber() then return end
-            end
-            if lv >= 150 and lv < 700 and GetSea()==1 and not HasItem("Pole (1st Form)") then
-                if AutoPoleV1() then return end
-            end
-            if lv >= 700 and GetSea()==1 then
+            local lv = Level()
+            local sea = GetSea()
+            
+            -- Auto unlock sea
+            if lv >= 700 and sea == 1 then
                 if AutoSecondSea() then return end
             end
-            if lv >= 1500 and GetSea()==2 then
+            if lv >= 1500 and sea == 2 then
                 if AutoThirdSea() then return end
             end
-
-            -- Lấy quest theo level
+            
+            -- Auto items
+            if lv >= 200 and lv < 700 and sea == 1 and not HasItem("Saber") then
+                if AutoSaber() then return end
+            end
+            if lv >= 150 and lv < 700 and sea == 1 and not HasItem("Pole (1st Form)") then
+                if AutoPoleV1() then return end
+            end
+            
+            -- Get quest
             local q = GetQ()
             if not q then
-                _G.BobonStatus = "Chưa có quest cho level " .. lv
+                _G.Kaitun.Status = "No quest for lv " .. lv
                 return
             end
-
-            -- ==== BƯỚC 1: Luôn kiểm tra và về NPC của đảo ====
+            
             local hrp = HRP()
             if not hrp then return end
             
+            -- Check if at NPC
             local distToNPC = (hrp.Position - q.QC.Position).Magnitude
-            local isUnderwater = math.abs(hrp.Position.Y) < 5
+            local isUnderwater = math.abs(hrp.Position.Y) < 8
             
-            -- Nếu đang ở biển hoặc cách NPC > 200 -> về NPC ngay
-            if isUnderwater or distToNPC > 200 then
-                _G.BobonStatus = "Về NPC: " .. q.Q
-                TravelToNPC(q.QC)
+            -- Nếu ở biển hoặc xa NPC > 150 -> về NPC
+            if isUnderwater or distToNPC > 150 then
+                _G.Kaitun.Status = "Going to NPC: " .. q.Q
+                TeleportTo(q.QC)
                 task.wait(1.5)
                 return
             end
-
-            -- ==== BƯỚC 2: Nhận quest ====
+            
+            -- Nhận quest nếu chưa có
             if not HasQuest() then
-                _G.BobonStatus = "Nhận quest: " .. q.Q
-                -- Đứng đúng vị trí NPC
+                _G.Kaitun.Status = "Getting quest: " .. q.Q
                 ForceTeleport(q.QC)
                 task.wait(0.3)
                 pcall(function()
@@ -794,35 +680,31 @@ task.spawn(function()
                 task.wait(0.5)
                 return
             end
-
-            -- ==== BƯỚC 3: Tìm và đánh mob ====
+            
+            -- Tìm mob
             local mob = FindMob(q.M)
             if not mob then
-                _G.BobonStatus = "Tìm " .. q.M
-                -- Bay đến khu vực spawn mob
-                Travel(q.MC)
+                _G.Kaitun.Status = "Finding " .. q.M
+                TeleportTo(q.MC)
                 return
             end
-
-            -- ==== BƯỚC 4: Đánh mob ====
-            _G.BobonStatus = "Đánh " .. q.M
-            EquipMelee()
             
-            local targetPos = mob.HumanoidRootPart.Position + Vector3.new(0, _G.Settings.FarmHeight, 0)
+            -- Đánh mob
+            _G.Kaitun.Status = "Farming " .. q.M
+            EquipMelee()
+            local targetPos = mob.HumanoidRootPart.Position + Vector3.new(0, 22, 0)
             local distToMob = (hrp.Position - mob.HumanoidRootPart.Position).Magnitude
             
-            -- Nếu xa mob > 80 thì bay đến
             if distToMob > 80 then
-                Travel(CFrame.new(targetPos))
+                TeleportTo(CFrame.new(targetPos))
                 return
             end
             
-            -- Đánh
             ForceTeleport(CFrame.new(targetPos))
             Attack()
         end)
     end
 end)
 
-print("[BobonHub v13] Loaded successfully!")
-_G.BobonStatus = "Đã sẵn sàng!"
+print("[Kaitun] Loaded successfully!")
+_G.Kaitun.Status = "Ready!"
