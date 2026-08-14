@@ -1,4 +1,4 @@
--- Blox Fruits Status Menu - Full Clone
+-- Blox Fruits Status Menu - Fixed Version
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -12,16 +12,17 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = game.CoreGui
 
 -- Variables
-local MenuVisible = true -- BẬT SẴN
+local MenuVisible = true
 
 -- Toggle Button (Icon tròn - DRAGGABLE)
 local ToggleButton = Instance.new("ImageButton")
 ToggleButton.Name = "ToggleBtn"
 ToggleButton.Size = UDim2.new(0, 80, 0, 80)
 ToggleButton.Position = UDim2.new(0, 10, 0.35, 0)
-ToggleButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(170, 220, 170)
 ToggleButton.BorderSizePixel = 0
-ToggleButton.Image = "rbxassetid://18134683241" -- Icon chuối
+ToggleButton.BackgroundTransparency = 0
+ToggleButton.Image = "" -- Để trống, tự vẽ text
 ToggleButton.Parent = ScreenGui
 
 local ToggleBtnCorner = Instance.new("UICorner")
@@ -29,18 +30,28 @@ ToggleBtnCorner.CornerRadius = UDim.new(1, 0)
 ToggleBtnCorner.Parent = ToggleButton
 
 local ToggleBtnStroke = Instance.new("UIStroke")
-ToggleBtnStroke.Color = Color3.fromRGB(100, 100, 100)
+ToggleBtnStroke.Color = Color3.fromRGB(80, 80, 80)
 ToggleBtnStroke.Thickness = 3
 ToggleBtnStroke.Parent = ToggleButton
 
--- Status Bar (Top)
+local ToggleLabel = Instance.new("TextLabel")
+ToggleLabel.Size = UDim2.new(1, 0, 1, 0)
+ToggleLabel.BackgroundTransparency = 1
+ToggleLabel.Text = "OFF"
+ToggleLabel.TextColor3 = Color3.fromRGB(30, 30, 30)
+ToggleLabel.TextSize = 24
+ToggleLabel.Font = Enum.Font.GothamBold
+ToggleLabel.Parent = ToggleButton
+
+-- Status Bar (Top) - NGẮN HỢP, LÊN TRÊN
 local StatusBar = Instance.new("Frame")
 StatusBar.Name = "StatusBar"
-StatusBar.Size = UDim2.new(0, 380, 0, 55)
-StatusBar.Position = UDim2.new(0.5, -190, 0.05, 0)
+StatusBar.Size = UDim2.new(0, 350, 0, 50)
+StatusBar.Position = UDim2.new(0.5, -175, 0.08, 0) -- Lên trên hơn
 StatusBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+StatusBar.BackgroundTransparency = 0.3 -- TRONG SUỐT
 StatusBar.BorderSizePixel = 0
-StatusBar.Visible = true -- BẬT SẴN
+StatusBar.Visible = true
 StatusBar.Parent = ScreenGui
 
 local StatusBarCorner = Instance.new("UICorner")
@@ -53,23 +64,23 @@ StatusBarStroke.Thickness = 2
 StatusBarStroke.Parent = StatusBar
 
 local StatusFarm = Instance.new("TextLabel")
-StatusFarm.Size = UDim2.new(1, -20, 0, 25)
-StatusFarm.Position = UDim2.new(0, 10, 0, 5)
+StatusFarm.Size = UDim2.new(1, -20, 0, 23)
+StatusFarm.Position = UDim2.new(0, 10, 0, 3)
 StatusFarm.BackgroundTransparency = 1
 StatusFarm.Text = "Status Farm : Take Quest"
 StatusFarm.TextColor3 = Color3.fromRGB(255, 200, 0)
-StatusFarm.TextSize = 15
+StatusFarm.TextSize = 14
 StatusFarm.Font = Enum.Font.GothamBold
 StatusFarm.TextXAlignment = Enum.TextXAlignment.Left
 StatusFarm.Parent = StatusBar
 
 local StatusItem = Instance.new("TextLabel")
-StatusItem.Size = UDim2.new(1, -20, 0, 25)
-StatusItem.Position = UDim2.new(0, 10, 0, 28)
+StatusItem.Size = UDim2.new(1, -20, 0, 23)
+StatusItem.Position = UDim2.new(0, 10, 0, 26)
 StatusItem.BackgroundTransparency = 1
 StatusItem.Text = "Status Item : None"
 StatusItem.TextColor3 = Color3.fromRGB(255, 200, 0)
-StatusItem.TextSize = 15
+StatusItem.TextSize = 14
 StatusItem.Font = Enum.Font.GothamBold
 StatusItem.TextXAlignment = Enum.TextXAlignment.Left
 StatusItem.Parent = StatusBar
@@ -83,17 +94,18 @@ DiscordLink.Text = "discord.gg/chuoihub"
 DiscordLink.TextColor3 = Color3.fromRGB(255, 200, 0)
 DiscordLink.TextSize = 14
 DiscordLink.Font = Enum.Font.GothamBold
-DiscordLink.Visible = true -- BẬT SẴN
+DiscordLink.Visible = true
 DiscordLink.Parent = ScreenGui
 
--- Main Frame
+-- Main Frame - TRONG SUỐT
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 430, 0, 270)
 MainFrame.Position = UDim2.new(0.5, -215, 0.5, -135)
 MainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+MainFrame.BackgroundTransparency = 0.3 -- TRONG SUỐT
 MainFrame.BorderSizePixel = 0
-MainFrame.Visible = true -- BẬT SẴN
+MainFrame.Visible = true
 MainFrame.Parent = ScreenGui
 
 local MainFrameCorner = Instance.new("UICorner")
@@ -116,6 +128,7 @@ Title.TextSize = 18
 Title.Font = Enum.Font.GothamBold
 Title.Parent = MainFrame
 
+-- CHỈ CÓ GẠCH NGANG TRÊN
 local TitleLine = Instance.new("Frame")
 TitleLine.Size = UDim2.new(0.88, 0, 0, 2)
 TitleLine.Position = UDim2.new(0.06, 0, 0, 42)
@@ -125,7 +138,7 @@ TitleLine.Parent = MainFrame
 
 -- Account Stats (Left)
 local AccountStatsTitle = Instance.new("TextLabel")
-AccountStatsTitle.Size = UDim2.new(0.45, 0, 0, 30)
+AccountStatsTitle.Size = UDim2.new(0.5, 0, 0, 30)
 AccountStatsTitle.Position = UDim2.new(0.05, 0, 0, 50)
 AccountStatsTitle.BackgroundTransparency = 1
 AccountStatsTitle.Text = "Account Stats"
@@ -136,7 +149,7 @@ AccountStatsTitle.TextXAlignment = Enum.TextXAlignment.Left
 AccountStatsTitle.Parent = MainFrame
 
 local LevelLabel = Instance.new("TextLabel")
-LevelLabel.Size = UDim2.new(0.45, 0, 0, 25)
+LevelLabel.Size = UDim2.new(0.5, 0, 0, 25)
 LevelLabel.Position = UDim2.new(0.05, 0, 0, 85)
 LevelLabel.BackgroundTransparency = 1
 LevelLabel.Text = "Level: 2800"
@@ -147,7 +160,7 @@ LevelLabel.TextXAlignment = Enum.TextXAlignment.Left
 LevelLabel.Parent = MainFrame
 
 local RaceLabel = Instance.new("TextLabel")
-RaceLabel.Size = UDim2.new(0.45, 0, 0, 25)
+RaceLabel.Size = UDim2.new(0.5, 0, 0, 25)
 RaceLabel.Position = UDim2.new(0.05, 0, 0, 115)
 RaceLabel.BackgroundTransparency = 1
 RaceLabel.Text = "Race: Ghoul"
@@ -158,7 +171,7 @@ RaceLabel.TextXAlignment = Enum.TextXAlignment.Left
 RaceLabel.Parent = MainFrame
 
 local BeliLabel = Instance.new("TextLabel")
-BeliLabel.Size = UDim2.new(0.45, 0, 0, 25)
+BeliLabel.Size = UDim2.new(0.5, 0, 0, 25)
 BeliLabel.Position = UDim2.new(0.05, 0, 0, 145)
 BeliLabel.BackgroundTransparency = 1
 BeliLabel.Text = "Beli: 7,880,375"
@@ -169,7 +182,7 @@ BeliLabel.TextXAlignment = Enum.TextXAlignment.Left
 BeliLabel.Parent = MainFrame
 
 local FragLabel = Instance.new("TextLabel")
-FragLabel.Size = UDim2.new(0.45, 0, 0, 25)
+FragLabel.Size = UDim2.new(0.5, 0, 0, 25)
 FragLabel.Position = UDim2.new(0.05, 0, 0, 175)
 FragLabel.BackgroundTransparency = 1
 FragLabel.Text = "Frag: 5,228"
@@ -179,17 +192,10 @@ FragLabel.Font = Enum.Font.GothamBold
 FragLabel.TextXAlignment = Enum.TextXAlignment.Left
 FragLabel.Parent = MainFrame
 
-local MiddleLine = Instance.new("Frame")
-MiddleLine.Size = UDim2.new(0, 2, 0.65, 0)
-MiddleLine.Position = UDim2.new(0.5, 0, 0.25, 0)
-MiddleLine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-MiddleLine.BorderSizePixel = 0
-MiddleLine.Parent = MainFrame
-
--- Account Items (Right)
+-- Account Items (Right) - KHÔNG CÓ GẠCH DỌC
 local AccountItemsTitle = Instance.new("TextLabel")
-AccountItemsTitle.Size = UDim2.new(0.45, 0, 0, 30)
-AccountItemsTitle.Position = UDim2.new(0.52, 0, 0, 50)
+AccountItemsTitle.Size = UDim2.new(0.5, 0, 0, 30)
+AccountItemsTitle.Position = UDim2.new(0.5, 0, 0, 50)
 AccountItemsTitle.BackgroundTransparency = 1
 AccountItemsTitle.Text = "Account Items"
 AccountItemsTitle.TextColor3 = Color3.fromRGB(255, 200, 0)
@@ -220,7 +226,7 @@ ItemLabel2.Font = Enum.Font.Gotham
 ItemLabel2.TextXAlignment = Enum.TextXAlignment.Left
 ItemLabel2.Parent = MainFrame
 
--- Bottom Line
+-- CHỈ CÓ GẠCH NGANG DƯỚI
 local BottomLine = Instance.new("Frame")
 BottomLine.Size = UDim2.new(0.88, 0, 0, 2)
 BottomLine.Position = UDim2.new(0.06, 0, 0, 215)
@@ -299,6 +305,7 @@ ToggleButton.MouseButton1Click:Connect(function()
         MainFrame.Visible = MenuVisible
         StatusBar.Visible = MenuVisible
         DiscordLink.Visible = MenuVisible
+        ToggleLabel.Text = MenuVisible and "ON" or "OFF"
     end
 end)
 
@@ -324,4 +331,4 @@ spawn(function()
     end
 end)
 
-print("✅ Blox Fruits Status Menu Loaded - Menu is ON by default!")
+print("✅ Blox Fruits Status Menu Fixed!")
