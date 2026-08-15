@@ -184,6 +184,7 @@ _G.Settings = {
     AttackDelay         = 0.15,
     QuestDelay          = 1.5,
     QuestRetryLimit     = 3,
+    QuestRetryBackoff   = 6,
     RecoveryDelay       = 3,
     ActionLockTimeout   = 180,
     BossEnabled         = true,
@@ -549,12 +550,33 @@ local function HasQuest()
                 or lower:find("bounty", 1, true) ~= nil
                 or lower:match("%d+%s*/%s*%d+") ~= nil
         end
-        -- The wrapper can stay Visible after a quest is completed.  The
-        -- actual state is Quest.Container.QuestTitle.Title.Text; only treat
-        -- it as active when that title contains real quest text.
+        -- The wrapper is the authoritative active/inactive signal in the
+        -- current UI.  A hidden wrapper means the previous quest is over.
+        if quest:IsA("GuiObject") and not quest.Visible then return false end
         local container = quest:FindFirstChild("Container") or quest
         local title = container:FindFirstChild("QuestTitle", true)
         local titleText = title and title:FindFirstChild("Title", true)
+
+        -- Completed objectives can leave the title text visible for a short
+        -- time.  A visible x/y counter at x >= y is an immediate completion
+        -- signal, so request the next quest on this same controller tick.
+        for _, node in ipairs(container:GetDescendants()) do
+            if node:IsA("TextLabel") and node.Visible then
+                local labelText = tostring(node.Text or "")
+                local labelLower = string.lower(labelText)
+                if labelLower:find("quest completed", 1, true)
+                    or labelLower:find("quest complete", 1, true)
+                    or labelLower:find("completed", 1, true)
+                    or labelLower:find("finished", 1, true) then
+                    return false
+                end
+                local current, total = labelText:match("(%d+)%s*/%s*(%d+)")
+                if current and total and tonumber(current) >= tonumber(total) then
+                    return false
+                end
+            end
+        end
+
         if titleText and titleText:IsA("TextLabel") then
             local text = tostring(titleText.Text or "")
             local lower = string.lower(text)
@@ -620,7 +642,16 @@ local function GetQuestText()
             -- When the canonical title exists but is empty, the quest is
             -- genuinely closed; do not resurrect stale descendant labels.
             if titleText.Text == "" then return nil end
-            return titleText.Text
+            -- Include the task/counter labels too.  Some UI revisions put
+            -- only a generic quest name in QuestTitle and the mob name in
+            -- QuestTask, so matching the title alone can reject a valid quest.
+            local parts = {titleText.Text}
+            for _, d in ipairs(container:GetDescendants()) do
+                if d:IsA("TextLabel") and d ~= titleText and d.Text and d.Text ~= "" then
+                    parts[#parts + 1] = d.Text
+                end
+            end
+            return table.concat(parts, " ")
         end
         -- Đọc text thực tế từ UI; không dùng tên object QuestModel.
         local parts = {}
@@ -658,7 +689,7 @@ local function HandleQuestAtGiver(q, atGiver)
     if _G.State.QuestRetries >= _G.Settings.QuestRetryLimit then
         -- Quá số lần retry → backoff, không spam remote, không farm
         _G.BobonStatus = "Quest: Fail, chờ retry"
-        if now - _G.State.LastQuestRequest >= 20 then
+        if now - _G.State.LastQuestRequest >= (_G.Settings.QuestRetryBackoff or 6) then
             _G.State.QuestRetries = 0
         end
         return true
@@ -668,17 +699,18 @@ local function HandleQuestAtGiver(q, atGiver)
     DLog("QUEST", "StartQuest " .. q.Q .. " level " .. q.QL)
     -- Dọn quest cũ sai mob trước khi request quest mới; nếu không server sẽ
     -- giữ quest cũ và controller tưởng rằng StartQuest bị lỗi.
-    if HasQuest() then
-        local currentMatch = QuestMatches(q.M)
-        if currentMatch == false then
-            pcall(function() CommF_:InvokeServer("AbandonQuest") end)
-            task.wait(0.15)
-        end
+    local currentMatch = QuestMatches(q.M)
+    if currentMatch == false then
+        pcall(function() CommF_:InvokeServer("AbandonQuest") end)
+        task.wait(0.15)
     end
     local function VerifyQuestTitle()
         local deadline = tick() + 3
         repeat
-            if QuestMatches(q.M) == true then return true end
+            -- Verify both the title and the wrapper.  A completed quest can
+            -- leave stale title text behind for a few frames; that must not
+            -- be mistaken for a newly accepted quest.
+            if HasQuest() == true and QuestMatches(q.M) == true then return true end
             task.wait(0.2)
         until tick() >= deadline
         return false
@@ -698,6 +730,7 @@ local function HandleQuestAtGiver(q, atGiver)
         accepted = VerifyQuestTitle()
     end
     if okRQ and accepted then
+        _G.State.QuestRetries = 0
         _G.BobonStatus = "Quest: Đã gửi " .. q.M
         DLog("QUEST", "Đã gửi: " .. q.M)
     else
@@ -2751,10 +2784,41 @@ task.spawn(function()
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
             local questState = HasQuest() -- true / false / nil (UI not ready)
             local questMatch = QuestMatches(q.M)
-            local hasQuest = questState == true or questMatch == true
-            -- QuestMatches: true = đúng mob | false = sai mob | nil = không đọc được UI.
-            -- Lưu ý: dùng `and` (không `or nil`) để giữ giá trị `false` khi quest sai mob.
-            local questOk = hasQuest and questMatch
+            -- Farm chỉ được phép khi UI xác nhận đồng thời wrapper đang mở
+            -- và title đúng mob.  Không dùng title cũ/stale để tiếp tục farm.
+            local hasQuest = questState == true and questMatch == true
+            local questOk = hasQuest
+
+            -- Quest-first invariant: quest vừa hết, bị mất, sai mob, hoặc UI
+            -- không còn xác nhận được đều phải quay lại giver ngay trong tick
+            -- này.  Dừng target/travel cũ trước để không bay tiếp tới mob cũ.
+            if not hasQuest then
+                local okSea, seaResult = pcall(function()
+                    -- Sea gates vẫn là bắt buộc ở level 700/1500; optional
+                    -- item/boss tuyệt đối không được chen vào giữa quest.
+                    return ItemProgression:RunChecks(true, false)
+                end)
+                if not okSea then
+                    warn("[BobonHub] Module Error: ItemProgression: " .. tostring(seaResult))
+                elseif seaResult then
+                    return
+                end
+
+                _G.State:ClearTargets()
+                if _G.State.IsTraveling then
+                    TravelManager:Stop("QuestRefresh")
+                end
+                _G.State:SetMode("GettingQuest")
+                _G.BobonStatus = "Quest: Nhận lại " .. q.M
+                DLog("QUEST", "Quest missing/complete/wrong → refresh " .. q.M)
+                local hrp = HRP()
+                local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
+                if HandleQuestAtGiver(q, atGiver) then
+                    return
+                end
+                TravelManager:Request(q.QC, "Farm")
+                return
+            end
 
             -- No quest means a safe window: finish mandatory Sea progression,
             -- then claim level-appropriate items before requesting the next
