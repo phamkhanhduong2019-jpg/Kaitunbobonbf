@@ -194,6 +194,8 @@ _G.Settings = {
     RedeemCodeDelay     = 0.45,
     -- Local-only bring-mob for nearby quest enemies; no extra movement loop.
     GatherMobs          = true,
+    -- Optional item failure/timeout must not block level farming forever.
+    ItemRetryCooldown   = 300,
     ServerHopCooldown   = 120,
     MaxFarmDistance     = 300,
     StatBatchLimit      = 100,
@@ -520,7 +522,9 @@ local function HasQuest()
         local main = LP:FindFirstChild("PlayerGui")
             and LP.PlayerGui:FindFirstChild("Main")
         local quest = main and main:FindFirstChild("Quest")
-        if not quest then return false end
+        -- nil means the quest UI is not ready/readable yet.  Do not let the
+        -- main controller mistake that transient state for a safe item window.
+        if not quest then return nil end
         local function IsDynamicQuestLabel(node)
             if not node:IsA("TextLabel") or not node.Visible then return false end
             local text = tostring(node.Text or "")
@@ -564,7 +568,8 @@ local function HasQuest()
         end
         return false
     end)
-    return ok and r or false
+    if not ok then return nil end
+    return r
 end
 
 
@@ -611,7 +616,10 @@ local function GetQuestText()
         local container = quest:FindFirstChild("Container") or quest
         local title = container:FindFirstChild("QuestTitle", true)
         local titleText = title and title:FindFirstChild("Title", true)
-        if titleText and titleText:IsA("TextLabel") and titleText.Text ~= "" then
+        if titleText and titleText:IsA("TextLabel") then
+            -- When the canonical title exists but is empty, the quest is
+            -- genuinely closed; do not resurrect stale descendant labels.
+            if titleText.Text == "" then return nil end
             return titleText.Text
         end
         -- Đọc text thực tế từ UI; không dùng tên object QuestModel.
@@ -1598,7 +1606,10 @@ function TravelManager:Request(targetCF, owner, options)
 
 
     self.ActiveThread = task.spawn(function()
+        -- Travel runs in its own coroutine; isolate unexpected physics/API
+        -- errors so IsTraveling can never remain stuck forever.
         local char = Char()
+        local threadOk, threadErr = xpcall(function()
         if not char or not char:FindFirstChild("HumanoidRootPart") then
             self:CleanupPhysics(char)
             _G.State.IsTraveling = false
@@ -1856,13 +1867,22 @@ function TravelManager:Request(targetCF, owner, options)
 
             lastPos = currentPos
             task.wait(0.03)
+            end
+        end, debug.traceback)
+        if not threadOk then
+            warn("[BobonHub] Module Error: TravelManager: " .. tostring(threadErr))
+            if self.CurrentToken == myToken then
+                _G.State.IsRecovering = true
+            end
         end
 
 
         -- Thread exited: only cleanup if still active token
         if self.CurrentToken == myToken then
-            self:CleanupPhysics(char)
-            self:DisableNoclip()
+            pcall(function()
+                self:CleanupPhysics(char)
+                self:DisableNoclip()
+            end)
             _G.State.IsTraveling = false
             _G.State.MovementOwner = nil
             self.ActiveThread = nil
@@ -1875,8 +1895,35 @@ function TravelManager:Request(targetCF, owner, options)
 end
 
 
+-- Haki is enabled once for each character lifetime.  Re-sending `Buso`
+-- repeatedly can act like a toggle on some builds, so never run it from a
+-- heartbeat/watchdog; reset and re-enable only after CharacterAdded.
+local HakiController = {
+    Character = nil,
+    Enabled = false,
+}
+
+function HakiController:Reset()
+    self.Character = nil
+    self.Enabled = false
+end
+
+function HakiController:EnableForCharacter()
+    local character = Char()
+    if not character or not IsAlive() then return false end
+    if self.Character == character and self.Enabled then return true end
+    self.Character = character
+    self.Enabled = false
+    local okBuso = pcall(function() CommF_:InvokeServer("Buso", true) end)
+    pcall(function() CommF_:InvokeServer("Ken", true) end)
+    self.Enabled = okBuso
+    return okBuso
+end
+
+
 -- Death/Respawn handlers
 LP.CharacterRemoving:Connect(function()
+    HakiController:Reset()
     TravelManager:Stop("CharacterRemoving")
     _G.State:SetMode("Dead")
     _G.State:ClearTargets()
@@ -1896,6 +1943,9 @@ LP.CharacterAdded:Connect(function(char)
 
 
         pcall(function() LP:WaitForChild("Data", 10) end)
+
+        task.wait(0.5)
+        HakiController:EnableForCharacter()
 
 
         _G.State.IsTraveling = false
@@ -2223,6 +2273,18 @@ end
 --   Death/Recovery invalidate token → subsystem tự dừng
 -- ══════════════════════════════════════════════════════════════════
 local ItemProgression = {}
+ItemProgression.NextOptional = {
+    Saber = 0,
+    PoleV1 = 0,
+}
+
+function ItemProgression:OptionalReady(name)
+    return tick() >= (self.NextOptional[name] or 0)
+end
+
+function ItemProgression:DelayOptional(name)
+    self.NextOptional[name] = tick() + (_G.Settings.ItemRetryCooldown or 300)
+end
 
 -- Catalog item progression. Những mục có puzzle/điều kiện server phức tạp
 -- được đánh dấu Manual để controller không gọi remote đoán mò làm mất tài nguyên.
@@ -2257,8 +2319,10 @@ end
 function ItemProgression:CheckSaber()
     if not _G.Settings.AutoItems then return false end
     if HasItem("Saber") or Level() < 200 or GetSea() ~= 1 then return false end
+    if not self:OptionalReady("Saber") then return false end
     local myToken = _G.State:ClaimAction("Saber")
     if myToken == 0 then return false end
+    self:DelayOptional("Saber")
     _G.State:SetMode("GettingItem")
     _G.BobonStatus = "Item: Saber Sword"
 
@@ -2310,8 +2374,10 @@ end
 function ItemProgression:CheckPoleV1()
     if not _G.Settings.AutoItems then return false end
     if HasItem("Pole (1st Form)") or Level() < 150 or GetSea() ~= 1 then return false end
+    if not self:OptionalReady("PoleV1") then return false end
     local myToken = _G.State:ClaimAction("PoleV1")
     if myToken == 0 then return false end
+    self:DelayOptional("PoleV1")
     _G.State:SetMode("GettingItem")
     _G.BobonStatus = "Item: Pole v1"
 
@@ -2651,6 +2717,15 @@ task.spawn(function()
         local okMain, mainErr = pcall(function()
             _G.State.Sea = GetSea()
 
+            -- Repair a stale travel flag before quest/farm logic.  A travel
+            -- coroutine can finish between ticks; never let that leave the
+            -- farm loop believing movement is still owned forever.
+            if _G.State.IsTraveling and not TravelManager.ActiveThread then
+                TravelManager:Stop("StaleTravel")
+            elseif _G.State.IsTraveling and not _G.State.MovementOwner then
+                TravelManager:Stop("MissingMovementOwner")
+            end
+
             -- Team phải được xác nhận trước mọi remote/item/boss; nếu chưa có
             -- team thì không được bắt đầu một travel dang dở.
             if not TeamController:AutoSelectTeam() then
@@ -2674,18 +2749,20 @@ task.spawn(function()
 
 
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
-            local questText = GetQuestText()
-            local hasQuest = HasQuest()
-                or (questText ~= nil and QuestMatches(q.M) == true)
+            local questState = HasQuest() -- true / false / nil (UI not ready)
+            local questMatch = QuestMatches(q.M)
+            local hasQuest = questState == true or questMatch == true
             -- QuestMatches: true = đúng mob | false = sai mob | nil = không đọc được UI.
             -- Lưu ý: dùng `and` (không `or nil`) để giữ giá trị `false` khi quest sai mob.
-            local questOk = hasQuest and QuestMatches(q.M)
+            local questOk = hasQuest and questMatch
 
             -- No quest means a safe window: finish mandatory Sea progression,
             -- then claim level-appropriate items before requesting the next
             -- farming quest.  Wrong/unknown quest stays on quest repair first.
-            local seaWindow = (not hasQuest) or questOk == false
-            local itemWindow = not hasQuest
+            -- Only a confirmed `false` UI state opens optional item/boss work;
+            -- an unreadable quest UI must keep the controller on quest repair.
+            local itemWindow = questState == false and questMatch ~= true
+            local seaWindow = itemWindow or questMatch == false
             local okMod, modResult = pcall(function()
                 return ItemProgression:RunChecks(seaWindow, itemWindow)
             end)
@@ -2912,32 +2989,14 @@ task.spawn(function()
         DLog("TEAM", "Verified team: " .. LP.Team.Name)
     end
     task.wait(0.5)
-    pcall(function() CommF_:InvokeServer("Ken", true) end)
-    pcall(function() CommF_:InvokeServer("Buso", true) end)
-    _G.BobonStatus = "Haki: ON ✓"
+    if HakiController:EnableForCharacter() then
+        _G.BobonStatus = "Haki: ON ✓"
+    else
+        _G.BobonStatus = "Haki: Chờ character"
+    end
     task.wait(0.5)
     _G.State:SetMode("Idle")
 end)
-
-
--- Haki watchdog: re-assert both observation and Busoshoku after every
--- respawn/server state reset, while keeping a conservative remote cooldown.
-local HakiController = {LastEnsure = 0}
-function HakiController:Ensure()
-    if not IsAlive() then return end
-    local now = tick()
-    if now - self.LastEnsure < 4 then return end
-    self.LastEnsure = now
-    pcall(function() CommF_:InvokeServer("Ken", true) end)
-    pcall(function() CommF_:InvokeServer("Buso", true) end)
-end
-
-task.spawn(function()
-    while task.wait(1) do
-        pcall(function() HakiController:Ensure() end)
-    end
-end)
-
 
 -- ══════════════════════════════════════════════════════════════════
 --              BACKGROUND SYSTEMS (Fix #15,#16,#17,#18)
