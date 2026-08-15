@@ -195,6 +195,8 @@ _G.Settings = {
     RedeemCodeDelay     = 0.45,
     -- Local-only bring-mob for nearby quest enemies; no extra movement loop.
     GatherMobs          = true,
+    -- Sea 1 optimized skip route (Fountain, bosses, Upper Sky/Galley).
+    SkipLevelRoute      = true,
     -- Bring every mob whose name matches the currently accepted quest (q.M)
     -- to the selected farm target.  Set false to keep nearby-only behavior.
     GatherAllQuestMobs  = true,
@@ -357,7 +359,7 @@ end)
 
 
 -- ══════════════════════════════════════════════════════════════════
---             UI — VXEZE STYLE (GIỮ NGUYÊN)
+--             UI — BOBONHUB MODERN OVERLAY
 -- ══════════════════════════════════════════════════════════════════
 if CoreGui:FindFirstChild("BobonHubUI") then CoreGui.BobonHubUI:Destroy() end
 
@@ -367,86 +369,95 @@ SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
 
+-- A soft dimmer keeps the overlay readable without hiding the game world.
 local Dim = Instance.new("Frame", SG)
-Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(0,0,0)
-Dim.BackgroundTransparency = 1; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(1,5,15)
+Dim.BackgroundTransparency = 0.86; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
 
 
+-- Center card inspired by the reference image: one clear brand mark, then
+-- status and economy values in a compact hierarchy.
 local Con = Instance.new("Frame", SG)
-Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.new(0.5,0,0.5,0)
-Con.Size = UDim2.new(0,500,0,310); Con.BackgroundTransparency = 1
-Con.BorderSizePixel = 0; Con.ZIndex = 2
+Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.new(0.5,0,0.47,0)
+Con.Size = UDim2.new(0,640,0,350); Con.BackgroundColor3 = Color3.fromRGB(6,16,32)
+Con.BackgroundTransparency = 0.18; Con.BorderSizePixel = 0; Con.ZIndex = 2
+Instance.new("UICorner", Con).CornerRadius = UDim.new(0,18)
+local ConStroke = Instance.new("UIStroke", Con)
+ConStroke.Color = Color3.fromRGB(88,196,255); ConStroke.Transparency = 0.52; ConStroke.Thickness = 1.5
+local ConGradient = Instance.new("UIGradient", Con)
+ConGradient.Rotation = 90
+ConGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(9,28,53)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(4,10,22)),
+})
 
+local Accent = Instance.new("Frame", Con)
+Accent.Position = UDim2.new(0.08,0,0,0); Accent.Size = UDim2.new(0.84,0,0,3)
+Accent.BackgroundColor3 = Color3.fromRGB(88,214,255); Accent.BorderSizePixel = 0; Accent.ZIndex = 3
+Instance.new("UICorner", Accent).CornerRadius = UDim.new(0,3)
 
-local ULL = Instance.new("UIListLayout", Con)
-ULL.SortOrder = Enum.SortOrder.LayoutOrder
-ULL.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ULL.VerticalAlignment = Enum.VerticalAlignment.Center
-ULL.Padding = UDim.new(0,3)
-
-
-local function MkLabel(txt,sz,col,bold,order)
+local function MkLabel(txt,sz,col,bold,pos,height,align)
     local lb = Instance.new("TextLabel", Con)
-    lb.Size = UDim2.new(1,0,0,sz+12); lb.BackgroundTransparency = 1
+    lb.Position = pos; lb.Size = UDim2.new(1,-48,0,height or (sz+8))
+    lb.AnchorPoint = Vector2.new(0,0); lb.BackgroundTransparency = 1
     lb.Text = txt; lb.TextColor3 = col; lb.TextSize = sz
-    lb.Font = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
-    lb.TextXAlignment = Enum.TextXAlignment.Center
+    lb.Font = bold and Enum.Font.GothamBlack or Enum.Font.GothamMedium
+    lb.TextXAlignment = align or Enum.TextXAlignment.Center
     lb.TextYAlignment = Enum.TextYAlignment.Center
-    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.6
-    lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.LayoutOrder = order; lb.ZIndex = 3
+    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+    lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
     return lb
 end
 
 
-local function MkDiv(order)
+local function MkDivider(y)
     local f = Instance.new("Frame", Con)
-    f.Size = UDim2.new(0.40,0,0,1); f.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    f.BackgroundTransparency = 0.72; f.BorderSizePixel = 0; f.LayoutOrder = order; f.ZIndex = 3
-    Instance.new("UIListLayout", f).HorizontalAlignment = Enum.HorizontalAlignment.Center
+    f.Position = UDim2.new(0.09,0,0,y); f.Size = UDim2.new(0.82,0,0,1)
+    f.BackgroundColor3 = Color3.fromRGB(120,205,255); f.BackgroundTransparency = 0.72
+    f.BorderSizePixel = 0; f.ZIndex = 3
     return f
 end
 
 
-local function MkCurrRow(order)
+local function MkCurrRow()
     local row = Instance.new("Frame", Con)
-    row.Size = UDim2.new(1,0,0,30); row.BackgroundTransparency = 1
-    row.BorderSizePixel = 0; row.LayoutOrder = order; row.ZIndex = 3
-    local function Side(txt,col,anchor,pos,align)
+    row.Position = UDim2.new(0.04,0,0,218); row.Size = UDim2.new(0.92,0,0,32)
+    row.BackgroundTransparency = 1; row.BorderSizePixel = 0; row.ZIndex = 3
+    local function Side(txt,col,pos,align)
         local lb = Instance.new("TextLabel", row)
-        lb.AnchorPoint = anchor; lb.Position = pos; lb.Size = UDim2.new(0.47,0,1,0)
-        lb.BackgroundTransparency = 1; lb.Text = txt; lb.TextColor3 = col; lb.TextSize = 15
-        lb.Font = Enum.Font.GothamBold; lb.TextXAlignment = align
-        lb.TextYAlignment = Enum.TextYAlignment.Center; lb.TextTransparency = 1
-        lb.TextStrokeTransparency = 0.6; lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 3
+        lb.Position = pos; lb.Size = UDim2.new(0.44,0,1,0); lb.BackgroundTransparency = 1
+        lb.Text = txt; lb.TextColor3 = col; lb.TextSize = 16; lb.Font = Enum.Font.GothamBold
+        lb.TextXAlignment = align; lb.TextYAlignment = Enum.TextYAlignment.Center
+        lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+        lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
         return lb
     end
     local sep = Instance.new("TextLabel", row)
     sep.AnchorPoint = Vector2.new(0.5,0.5); sep.Position = UDim2.new(0.5,0,0.5,0)
-    sep.Size = UDim2.new(0,14,1,0); sep.BackgroundTransparency = 1; sep.Text = "│"
-    sep.TextColor3 = Color3.fromRGB(200,200,200); sep.TextSize = 15; sep.Font = Enum.Font.Gotham
+    sep.Size = UDim2.new(0,24,1,0); sep.BackgroundTransparency = 1; sep.Text = "•"
+    sep.TextColor3 = Color3.fromRGB(130,205,235); sep.TextSize = 18; sep.Font = Enum.Font.GothamBold
     sep.TextXAlignment = Enum.TextXAlignment.Center; sep.TextYAlignment = Enum.TextYAlignment.Center
-    sep.TextTransparency = 1; sep.TextStrokeTransparency = 0.75; sep.ZIndex = 3
-    local beli = Side("Beli: 0",Color3.fromRGB(255,195,60),Vector2.new(0,0.5),UDim2.new(0,0,0.5,0),Enum.TextXAlignment.Right)
-    local frag = Side("Frag: 0",Color3.fromRGB(90,175,255),Vector2.new(1,0.5),UDim2.new(1,0,0.5,0),Enum.TextXAlignment.Left)
+    sep.TextTransparency = 1; sep.TextStrokeTransparency = 1; sep.ZIndex = 4
+    local beli = Side("Beli: 0",Color3.fromRGB(255,205,76),UDim2.new(0,0,0,0),Enum.TextXAlignment.Right)
+    local frag = Side("Fragments: 0",Color3.fromRGB(94,194,255),UDim2.new(0.56,0,0,0),Enum.TextXAlignment.Left)
     return row, beli, sep, frag
 end
 
 
-local TitleL = MkLabel("BobonHub",34,Color3.fromRGB(100,210,255),true,1)
-local SubL   = MkLabel("Kaitun Blox Fruit",16,Color3.fromRGB(170,195,220),false,2)
-MkDiv(3)
-local StatL  = MkLabel("Status: Initializing...",16,Color3.fromRGB(85,255,130),true,4)
-local ModeL  = MkLabel("Mode: Idle",13,Color3.fromRGB(180,200,220),false,5)
-local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(205,215,230),false,6)
-MkDiv(7)
-local CurrRow, BeliL, SepL, FragL = MkCurrRow(8)
-local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,110,110),false,9)
-local InfoL  = MkLabel("Sea: 1 | Lv: 1",12,Color3.fromRGB(160,180,200),false,10)
+local TitleL = MkLabel("BoBonHub",58,Color3.fromRGB(245,252,255),true,UDim2.new(0,24,0,21),70)
+local SubL   = MkLabel("STABLE KAITUN  •  AUTO FARM",12,Color3.fromRGB(102,214,255),true,UDim2.new(0,24,0,90),24)
+local StatL  = MkLabel("Status: Initializing...",17,Color3.fromRGB(101,255,157),true,UDim2.new(0,24,0,120),30)
+local ModeL  = MkLabel("Mode: Idle",13,Color3.fromRGB(188,211,235),false,UDim2.new(0,24,0,151),22)
+local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(218,228,242),false,UDim2.new(0,24,0,174),23)
+MkDivider(204)
+local CurrRow, BeliL, SepL, FragL = MkCurrRow()
+local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,126,126),false,UDim2.new(0,24,0,260),22)
+local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDim2.new(0,24,0,286),22)
 
 
 task.spawn(function()
     task.wait(0.3)
-    TS:Create(Dim,TweenInfo.new(0.9,Enum.EasingStyle.Quad),{BackgroundTransparency=0.48}):Play()
+    TS:Create(Dim,TweenInfo.new(0.9,Enum.EasingStyle.Quad),{BackgroundTransparency=0.78}):Play()
     task.wait(0.5)
     for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL}) do
         task.delay((i-1)*0.08,function()
@@ -474,9 +485,9 @@ task.spawn(function()
             local d = LP:FindFirstChild("Data")
             if d then
                 BeliL.Text = "Beli: " .. Fmt(d:FindFirstChild("Beli") and d.Beli.Value or 0)
-                FragL.Text = "Frag: " .. Fmt(d:FindFirstChild("Fragments") and d.Fragments.Value or 0)
+                FragL.Text = "Fragments: " .. Fmt(d:FindFirstChild("Fragments") and d.Fragments.Value or 0)
                 local lv = d:FindFirstChild("Level") and d.Level.Value or 1
-                InfoL.Text = ("Sea: %d | Lv: %s"):format(_G.State.Sea, Fmt(lv))
+                InfoL.Text = ("Sea: %d  |  Level: %s"):format(_G.State.Sea, Fmt(lv))
             end
         end)
     end
@@ -689,12 +700,12 @@ local function HandleQuestAtGiver(q, atGiver)
     if not atGiver then return false end
     local now = tick()
     if now - _G.State.LastQuestRequest < _G.Settings.QuestDelay then
-        _G.BobonStatus = "Quest: Chờ xác nhận " .. q.M
+        _G.BobonStatus = "Quest: Waiting for confirmation " .. q.M
         return true
     end
     if _G.State.QuestRetries >= _G.Settings.QuestRetryLimit then
         -- Quá số lần retry → backoff, không spam remote, không farm
-        _G.BobonStatus = "Quest: Fail, chờ retry"
+        _G.BobonStatus = "Quest: Failed, waiting to retry"
         if now - _G.State.LastQuestRequest >= (_G.Settings.QuestRetryBackoff or 6) then
             _G.State.QuestRetries = 0
         end
@@ -737,12 +748,12 @@ local function HandleQuestAtGiver(q, atGiver)
     end
     if okRQ and accepted then
         _G.State.QuestRetries = 0
-        _G.BobonStatus = "Quest: Đã gửi " .. q.M
-        DLog("QUEST", "Đã gửi: " .. q.M)
+        _G.BobonStatus = "Quest: Accepted " .. q.M
+        DLog("QUEST", "Accepted: " .. q.M)
     else
         warn("[BobonHub] RequestQuest error (retry " .. _G.State.QuestRetries .. ")")
-        _G.BobonStatus = "Quest: Lỗi, retry " .. q.M
-        DLog("QUEST", "Lỗi remote (retry " .. _G.State.QuestRetries .. ")")
+        _G.BobonStatus = "Quest: Error, retrying " .. q.M
+        DLog("QUEST", "Remote error (retry " .. _G.State.QuestRetries .. ")")
     end
     return true
 end
@@ -1236,7 +1247,7 @@ function TeamController:AutoSelectTeam()
     end
     self.LastCheck = now
     self.Retries = self.Retries + 1
-    DLog("TEAM", "Chưa có team → chọn Pirates (retry " .. self.Retries .. ")")
+    DLog("TEAM", "No team → selecting Pirates (retry " .. self.Retries .. ")")
     -- Ưu tiên nút UI khi ChooseTeam đang mở; một số server không nhận
     -- SetTeam cho tới khi client Activate button trước.
     ClickPiratesChoice()
@@ -1383,6 +1394,13 @@ end
 -- intentionally repeated at a small interval while farming.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
+    -- Never pull NPCs while the player is still travelling to the anchor.
+    -- The selected mob is the movement anchor; gathering starts only after
+    -- the player is actually hovering above that mob.
+    if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
+        or not _G.State:IsTargetValid(primary) then
+        return 0
+    end
     local now = tick()
     if now - self.LastGather < (_G.Settings.GatherInterval or 0.3) then return 0 end
     self.LastGather = now
@@ -1391,6 +1409,14 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primaryRoot or not folder then return 0 end
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
+    local playerRoot = HRP()
+    local anchorPos = self:GetFarmPos(primary)
+    if not playerRoot or not anchorPos then return 0 end
+    local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
+    if not okPlayerPos or not IsValidPos(playerPos)
+        or (playerPos - anchorPos).Magnitude > (_G.Settings.FarmArrivalThreshold or 15) then
+        return 0
+    end
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
     local maxDistance = gatherAll
         and (_G.Settings.GatherMaxDistance or math.huge)
@@ -1721,7 +1747,7 @@ function TravelManager:Request(targetCF, owner, options)
                 fallback = nil
                 travelStart = os.time()
                 stuckTimer = 0
-                _G.BobonStatus = "Farm: " .. reason .. ", về khu farm"
+                _G.BobonStatus = "Farm: " .. reason .. ", returning to farm area"
                 return true
             end
             return false
@@ -1753,7 +1779,7 @@ function TravelManager:Request(targetCF, owner, options)
                 if not self.TargetRef.Parent then
                     -- Mob biến mất: farm → về khu farm (fallback), không drop giữa không trung [FIX-13]
                     if isFarmHover then
-                        if HandleFarmInvalid("Target mất") then
+                        if HandleFarmInvalid("Target lost") then
                             continue
                         end
                         break
@@ -1769,7 +1795,7 @@ function TravelManager:Request(targetCF, owner, options)
                 if hum and hum.Health <= 0 then
                     -- Mob chết: farm → về khu farm (fallback) để tiếp tục [FIX-13]
                     if isFarmHover then
-                        if HandleFarmInvalid("Target chết") then
+                        if HandleFarmInvalid("Target defeated") then
                             continue
                         end
                         break
@@ -1785,7 +1811,7 @@ function TravelManager:Request(targetCF, owner, options)
                 -- [FIX-P11] Reject NaN/invalid position
                 if not okP or not IsValidPos(p) then
                     if isFarmHover then
-                        if HandleFarmInvalid("Target lỗi") then
+                        if HandleFarmInvalid("Invalid target") then
                             continue
                         end
                         break
@@ -1794,13 +1820,14 @@ function TravelManager:Request(targetCF, owner, options)
                 end
                 targetLostTimer = 0
                 if isFarmHover then
-                    -- [A-9] Vị trí farm phía TRÊN đầu mob (adaptive theo size)
-                    targetPos = FarmPositionController:GetClusterFarmPos(self.TargetRef.Parent)
+                    -- Always anchor on the selected mob first.  Other quest
+                    -- mobs are gathered only after the player arrives above it.
+                    targetPos = FarmPositionController:GetFarmPos(self.TargetRef.Parent)
                     if not targetPos then
                         targetPos = GetFarmPosition(p)
                     end
                     if not targetPos then
-                        if HandleFarmInvalid("Không lấy được vị trí") then
+                        if HandleFarmInvalid("Position unavailable") then
                             continue
                         end
                         break
@@ -1812,7 +1839,7 @@ function TravelManager:Request(targetCF, owner, options)
                 if not IsAllowedWorldY(targetPos.Y) then
                     warn("[Travel] Reject target dưới biển (Y=" .. string.format("%.1f", targetPos.Y) .. ")")
                     if isFarmHover then
-                        if HandleFarmInvalid("Target dưới biển") then
+                        if HandleFarmInvalid("Target below sea level") then
                             continue
                         end
                         break
@@ -2192,8 +2219,8 @@ task.spawn(function()
             if _G.State.IsTraveling and _G.State.MovementOwner then
                 if os.time() - _G.State.LastMoveTime > _G.Settings.WatchdogStuckThreshold then
                     lightFails = lightFails + 1
-                    DLog("RECOVERY", "Travel không tiến (" .. lightFails .. " lần) → Stop + retry")
-                    _G.BobonStatus = "Watchdog: Travel không tiến, retry"
+                    DLog("RECOVERY", "Travel stalled (" .. lightFails .. " times) → stop + retry")
+                    _G.BobonStatus = "Watchdog: Travel stalled, retrying"
                     TravelManager:Stop("WatchdogStuck")
                     if lightFails >= 3 then
                         lightFails = 0
@@ -2323,6 +2350,129 @@ local function GetQ()
     end
     return nil
 end
+
+
+-- Sea 1 fast-route controller.  This is deliberately called from the main
+-- controller instead of creating another movement loop.  The route follows
+-- the commonly used skip path: Fountain/Galley early, then live bosses, then
+-- Upper Sky/Galley before the normal Sea 2 progression gate at level 700.
+-- A live instance is always preferred; fallback coordinates only keep the
+-- player over a safe island while a boss or mob is respawning.
+local SkipRouteController = {
+    Enabled = true,
+    CurrentKey = nil,
+}
+
+local SkipRouteDB = {
+    {Key="FountainEarly", Min=10, Max=54, Kind="Mob", Display="Galley Pirate", Names={"Galley Pirate"}, Fallback=CFrame.new(5551.02,78.90,3930.41)},
+    {Key="Bobby", Min=55, Max=89, Kind="Boss", Display="Bobby", Names={"Bobby"}, Fallback=CFrame.new(-1141.07,14.81,4322.92)},
+    {Key="Yeti", Min=90, Max=119, Kind="Boss", Display="Yeti", Names={"Yeti"}, Fallback=CFrame.new(1201.64,144.58,-1550.07)},
+    {Key="MobLeader", Min=120, Max=129, Kind="Boss", Display="Mob Leader", Names={"Mob Leader"}, Fallback=CFrame.new(-4870.00,25.00,4300.00)},
+    {Key="ViceAdmiral", Min=130, Max=219, Kind="Boss", Display="Vice Admiral", Names={"Vice Admiral"}, Fallback=CFrame.new(-4881.23,22.65,4273.75)},
+    {Key="PrisonBosses", Min=220, Max=349, Kind="Boss", Display="Warden / Chief Warden", Names={"Warden","Chief Warden"}, Fallback=CFrame.new(5098.97,15.00,474.24)},
+    {Key="MagmaAdmiral", Min=350, Max=424, Kind="Boss", Display="Magma Admiral", Names={"Magma Admiral"}, Fallback=CFrame.new(-5411.16,11.08,8454.29)},
+    {Key="FishmanLord", Min=425, Max=499, Kind="Boss", Display="Fishman Lord", Names={"Fishman Lord"}, Fallback=CFrame.new(60878.30,18.48,1543.76)},
+    {Key="Wysper", Min=500, Max=624, Kind="Boss", Display="Wysper", Names={"Wysper"}, Fallback=CFrame.new(-7678.49,5566.40,-497.22)},
+    {Key="FountainLate", Min=625, Max=699, Kind="Mob", Display="Galley Pirate", Names={"Galley Pirate"}, Fallback=CFrame.new(5551.02,78.90,3930.41)},
+}
+
+function SkipRouteController:GetRoute()
+    if not self.Enabled or _G.Settings.SkipLevelRoute == false or GetSea() ~= 1 then return nil end
+    local lv = Level()
+    for _, route in ipairs(SkipRouteDB) do
+        if lv >= route.Min and lv <= route.Max then return route end
+    end
+    return nil
+end
+
+function SkipRouteController:Reset(reason)
+    if self.CurrentKey then
+        DLog("SKIP", "Route ended: " .. tostring(self.CurrentKey) .. " (" .. tostring(reason or "reset") .. ")")
+        if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
+            TravelManager:Stop("SkipRouteReset")
+        end
+        _G.State:ClearTargets()
+        self.CurrentKey = nil
+    end
+end
+
+function SkipRouteController:FindTarget(route)
+    if route.Kind == "Mob" then
+        for _, name in ipairs(route.Names) do
+            local mob = FindNearestMob(name)
+            if mob then return mob, name end
+        end
+    else
+        for _, name in ipairs(route.Names) do
+            local boss = FindBoss(name)
+            if boss then return boss, name end
+        end
+    end
+    return nil, nil
+end
+
+function SkipRouteController:Run()
+    local route = self:GetRoute()
+    if not route then
+        self:Reset("Sea or level outside skip route")
+        return false
+    end
+
+    if self.CurrentKey ~= route.Key then
+        self:Reset("level transition")
+        self.CurrentKey = route.Key
+        DLog("SKIP", "Route selected: " .. route.Key)
+    end
+
+    _G.State:SetMode("Farming")
+    _G.State.FState = "SKIP_FARM"
+    _G.BobonStatus = "Skip Farm: " .. route.Display
+
+    local target, targetName = self:FindTarget(route)
+    if target and (not _G.State:IsTargetValid(target) or not target.Parent
+        or not target:FindFirstChild("HumanoidRootPart")) then
+        target = nil
+    end
+    if target then
+        local hum = target:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then
+            target = nil
+        end
+    end
+
+    if target then
+        local targetRoot = target:FindFirstChild("HumanoidRootPart")
+        _G.State.FarmTarget = target
+        _G.State.CurrentTarget = target
+        PrepareCombatTarget(target)
+        if _G.State:CanRequestTravel() then
+            TravelManager:Request(targetRoot, "Farm", {
+                arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                fallback = route.Fallback,
+            })
+        end
+
+        local hrp = HRP()
+        if hrp and targetRoot then
+            local a = Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
+            local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
+            local farmHolds = not _G.State.IsTraveling or _G.State.MovementOwner == "Farm"
+            if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds
+                and EquipCombatTool() then
+                Attack(target)
+                DLog("SKIP", "Attacking " .. tostring(targetName or target.Name))
+            end
+        end
+    else
+        _G.State:ClearTargets()
+        _G.BobonStatus = "Skip Farm: Waiting for " .. route.Display
+        if _G.State:CanRequestTravel() then
+            TravelManager:Request(route.Fallback, "Farm")
+        end
+    end
+    return true
+end
+
 -- ══════════════════════════════════════════════════════════════════
 --     AUTO ITEMS + SEA PROGRESSION v16.1 (GIỮ NGUYÊN + FIX-P8/P9)
 --   ActionToken system: ClaimAction → IsActionValid → ReleaseAction
@@ -2787,7 +2937,7 @@ task.spawn(function()
             -- Team phải được xác nhận trước mọi remote/item/boss; nếu chưa có
             -- team thì không được bắt đầu một travel dang dở.
             if not TeamController:AutoSelectTeam() then
-                _G.BobonStatus = "Team: Đang xác nhận Pirates"
+                _G.BobonStatus = "Team: Confirming Pirates"
                 return
             end
 
@@ -2802,6 +2952,14 @@ task.spawn(function()
             if not q then
                 _G.State:SetMode("Idle")
                 _G.BobonStatus = "Max Level / No Quest"
+                return
+            end
+
+
+            -- Fast Sea 1 route runs before the normal quest gate.  It keeps
+            -- the level-skip behavior deterministic and still uses the same
+            -- TravelManager, target validation, attack gate and watchdog.
+            if SkipRouteController:Run() then
                 return
             end
 
@@ -2834,7 +2992,7 @@ task.spawn(function()
                     TravelManager:Stop("QuestRefresh")
                 end
                 _G.State:SetMode("GettingQuest")
-                _G.BobonStatus = "Quest: Nhận lại " .. q.M
+                _G.BobonStatus = "Quest: Refreshing " .. q.M
                 DLog("QUEST", "Quest missing/complete/wrong → refresh " .. q.M)
                 local hrp = HRP()
                 local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
@@ -2885,7 +3043,7 @@ task.spawn(function()
                     if gNow - _G.State.LastQuestRequest >= _G.Settings.QuestDelay then
                         -- Không đọc được UI lâu → về giver verify lại, KHÔNG farm
                         _G.State:SetMode("GettingQuest")
-                        _G.BobonStatus = "Quest: Verify lại " .. q.M
+                        _G.BobonStatus = "Quest: Verifying " .. q.M
                         local atGiver = HRP() and (HRP().Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
                         if HandleQuestAtGiver(q, atGiver) then
                             return
@@ -2900,13 +3058,13 @@ task.spawn(function()
                 -- [FIX-10] Chưa có quest hoặc [FIX-9] quest sai mob:
                 -- CHỈ đi lấy/đổi quest, KHÔNG farm
                 _G.State:SetMode("GettingQuest")
-                DLog("QUEST", "Chưa có quest / sai mob → đi giver " .. q.M)
+                DLog("QUEST", "Missing or wrong quest → going to giver for " .. q.M)
                 local hrp = HRP()
                 local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
                 if HandleQuestAtGiver(q, atGiver) then
                     return
                 else
-                    _G.BobonStatus = "Quest: Đi tới " .. q.M
+                    _G.BobonStatus = "Quest: Traveling to " .. q.M
                     TravelManager:Request(q.QC, "Farm")
                     return
                 end
@@ -2928,7 +3086,7 @@ task.spawn(function()
             DLog("FARM", "State = CHECK_SEA")
             _G.State.Sea = GetSea()
             if not TeamController:AutoSelectTeam() then
-                _G.BobonStatus = "Team: Đang chọn Pirates"
+                _G.BobonStatus = "Team: Selecting Pirates"
                 return
             end
 
@@ -2937,7 +3095,7 @@ task.spawn(function()
             if not _G.State:IsTargetValid(_G.State.FarmTarget) then
                 _G.State:ClearTargets()
                 _G.State.FState = "NEXT_TARGET"
-                DLog("TARGET", "Target cũ invalid → chọn mới")
+                DLog("TARGET", "Old target invalid → selecting a new one")
             end
 
 
@@ -2959,8 +3117,8 @@ task.spawn(function()
                         or not IsAllowedWorldY(targetPos.Y) then
                         _G.State:ClearTargets()
                         _G.State.FState = "NEXT_TARGET"
-                        _G.BobonStatus = "Farm: Target lỗi, về khu farm"
-                        DLog("TARGET", "Target lỗi (xa/dưới biển) → về khu farm")
+                        _G.BobonStatus = "Farm: Invalid target, returning to farm area"
+                        DLog("TARGET", "Invalid target (far/below sea) → returning to farm area")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(q.MC, "Farm")
                         end
@@ -3009,8 +3167,13 @@ task.spawn(function()
                     -- `hasQuest` is the strict UI-verified quest state above;
                     -- q.M is therefore the mob of the quest currently held,
                     -- never a stale/next-level mob name.
-                    if _G.Settings.GatherMobs and hasQuest
-                        and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
+                    local anchorFarmPos = FarmPositionController:GetFarmPos(_G.State.FarmTarget)
+                    local atAnchor = false
+                    if anchorFarmPos and hrp then
+                        atAnchor = (hrp.Position - anchorFarmPos).Magnitude
+                            <= (_G.Settings.FarmArrivalThreshold or 15)
+                    end
+                    if _G.Settings.GatherMobs and hasQuest and atAnchor then
                         FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
                     end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
@@ -3034,8 +3197,8 @@ task.spawn(function()
                     if dist > _G.Settings.MaxFarmDistance then
                         -- Mob quá xa → về khu farm, KHÔNG giữ target xa
                         _G.State:ClearTargets()
-                        _G.BobonStatus = "Farm: " .. q.M .. " xa, về khu farm"
-                        DLog("TARGET", q.M .. " quá xa (" .. string.format("%.0f", dist) .. ") → về khu farm")
+                        _G.BobonStatus = "Farm: " .. q.M .. " is far, returning to farm area"
+                        DLog("TARGET", q.M .. " is too far (" .. string.format("%.0f", dist) .. ") → returning to farm area")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(q.MC, "Farm")
                         end
@@ -3053,8 +3216,8 @@ task.spawn(function()
                         end
                     end
                 else
-                    _G.BobonStatus = "Farm: Chờ spawn " .. q.M
-                    DLog("TARGET", "Chờ spawn " .. q.M)
+                    _G.BobonStatus = "Farm: Waiting for " .. q.M .. " spawn"
+                    DLog("TARGET", "Waiting for " .. q.M .. " spawn")
                     if _G.State:CanRequestTravel() then
                         TravelManager:Request(q.MC, "Farm")
                     end
@@ -3084,7 +3247,7 @@ task.spawn(function()
     if HakiController:EnableForCharacter() then
         _G.BobonStatus = "Haki: ON ✓"
     else
-        _G.BobonStatus = "Haki: Chờ character"
+        _G.BobonStatus = "Haki: Waiting for character"
     end
     task.wait(0.5)
     _G.State:SetMode("Idle")
