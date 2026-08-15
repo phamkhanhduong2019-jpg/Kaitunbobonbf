@@ -167,7 +167,10 @@ _G.Settings = {
     TeamCooldown        = 5,
     -- [A-7] Watchdog: travel không tiến quá N giây → light fix
     WatchdogStuckThreshold = 25,
-    AttackRange         = 20,
+    -- Current FastAttack path accepts nearby enemies up to 100 studs.  A
+    -- 20-stud gate made cluster farming stop attacking while hovering over
+    -- the average position of several mobs, so keep the gate in sync.
+    AttackRange         = 100,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
     CruiseStuckTimeout  = 20,
@@ -539,6 +542,11 @@ local function IsEnemyNamed(enemy, wanted)
     if not enemy or not wanted then return false end
     local function normalize(value)
         value = tostring(value):gsub("%s*%[%s*Lv%.%s*%d+%s*%]", "")
+        -- Boss models are commonly named `Name [Lv. n] [Boss]` (or
+        -- `[Raid Boss]`).  Keep the database names clean and strip those
+        -- display-only tags before comparing.
+        value = value:gsub("%s*%[%s*Raid%s+Boss%s*%]", "")
+        value = value:gsub("%s*%[%s*Boss%s*%]", "")
         value = value:gsub("^%s+", ""):gsub("%s+$", "")
         return string.lower(value)
     end
@@ -563,6 +571,11 @@ local function GetQuestText()
         local quest = main and main:FindFirstChild("Quest")
         if not quest then return nil end
         local container = quest:FindFirstChild("Container") or quest
+        local title = container:FindFirstChild("QuestTitle", true)
+        local titleText = title and title:FindFirstChild("Title", true)
+        if titleText and titleText:IsA("TextLabel") and titleText.Text ~= "" then
+            return titleText.Text
+        end
         -- Đọc text thực tế từ UI; không dùng tên object QuestModel.
         local parts = {}
         for _, d in ipairs(container:GetDescendants()) do
@@ -609,9 +622,12 @@ local function HandleQuestAtGiver(q, atGiver)
     DLog("QUEST", "StartQuest " .. q.Q .. " level " .. q.QL)
     -- Dọn quest cũ sai mob trước khi request quest mới; nếu không server sẽ
     -- giữ quest cũ và controller tưởng rằng StartQuest bị lỗi.
-    if HasQuest() and QuestMatches(q.M) == false then
-        pcall(function() CommF_:InvokeServer("AbandonQuest") end)
-        task.wait(0.15)
+    if HasQuest() then
+        local currentMatch = QuestMatches(q.M)
+        if currentMatch ~= true then
+            pcall(function() CommF_:InvokeServer("AbandonQuest") end)
+            task.wait(0.15)
+        end
     end
     -- Remote chuẩn của Blox Fruits là StartQuest. RequestQuest chỉ còn là
     -- fallback cho các server/private build cũ.
@@ -640,7 +656,75 @@ local function HandleQuestAtGiver(q, atGiver)
 end
 
 
-local function Attack()
+local function FastRegisterHit(preferred)
+    local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
+    local registerAttack = net and net:FindFirstChild("RE/RegisterAttack")
+    local registerHit = net and net:FindFirstChild("RE/RegisterHit")
+    local me = HRP()
+    if not me or not registerAttack or not registerHit then return false end
+    local hitList = {}
+    local firstPart = nil
+    local folder = workspace:FindFirstChild("Enemies")
+    if folder then
+        for _, enemy in ipairs(folder:GetChildren()) do
+            local hum = enemy:FindFirstChildOfClass("Humanoid")
+            local root = enemy:FindFirstChild("HumanoidRootPart")
+            local head = enemy:FindFirstChild("Head") or root
+            if hum and hum.Health > 0 and root and head
+                and (root.Position - me.Position).Magnitude <= 100 then
+                hitList[#hitList + 1] = {enemy, head}
+                if not firstPart and (not preferred or enemy == preferred) then
+                    firstPart = head
+                end
+            end
+        end
+    end
+    if #hitList == 0 then return false end
+    firstPart = firstPart or hitList[1][2]
+    return pcall(function()
+        registerAttack:FireServer(0)
+        registerHit:FireServer(firstPart, hitList)
+    end)
+end
+
+-- Guns use their own LeftClickRemote in current builds.  RegisterHit is for
+-- blades/melee; sending it with a gun can silently do nothing, so mirror the
+-- current client path and fire a direction for every nearby enemy.
+local function FireGunHits(tool, preferred)
+    if not tool or not tool:FindFirstChild("LeftClickRemote") then return false end
+    local me = HRP()
+    local folder = workspace:FindFirstChild("Enemies")
+    if not me or not folder then return false end
+    local enemies = {}
+    local function add(enemy)
+        local hum = enemy:FindFirstChildOfClass("Humanoid")
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and root
+            and (root.Position - me.Position).Magnitude <= 100 then
+            enemies[#enemies + 1] = enemy
+        end
+    end
+    if preferred and preferred.Parent then add(preferred) end
+    for _, enemy in ipairs(folder:GetChildren()) do
+        if enemy ~= preferred then add(enemy) end
+    end
+    local sent = false
+    for _, enemy in ipairs(enemies) do
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        if root then
+            local direction = (root.Position - me.Position)
+            if direction.Magnitude > 0.01 then
+                pcall(function()
+                    tool.LeftClickRemote:FireServer(direction.Unit, 1)
+                end)
+                sent = true
+            end
+        end
+    end
+    return sent
+end
+
+local function Attack(preferredTarget)
     if not IsAlive() then return end
     local now = tick()
     if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return end
@@ -651,10 +735,40 @@ local function Attack()
         if tool then
             tool:Activate()
         end
+        -- Update combat path: RegisterAttack/RegisterHit xử lý M1 ở các
+        -- client hiện tại ổn định hơn VirtualUser đơn lẻ, đồng thời đánh
+        -- được nhiều mob trong cụm ở cả ba Sea.
+        if tool and tool:FindFirstChild("LeftClickRemote") then
+            FireGunHits(tool, preferredTarget)
+        else
+            FastRegisterHit(preferredTarget)
+        end
+        local camera = workspace.CurrentCamera
+        local viewport = camera and camera.ViewportSize
+        local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+            or Vector2.new(640, 360)
         VU:CaptureController()
-        VU:Button1Down(Vector2.new(0, 0))
-        VU:Button1Up(Vector2.new(0, 0))
-        VU:ClickButton1(Vector2.new(0, 0))
+        -- Giữ M1 theo đúng input flow của game; (0,0) thường không được
+        -- Roblox coi là click gameplay nên trước đây tool không đánh.
+        VU:Button1Down(clickPos)
+        VU:Button1Up(clickPos)
+        VU:ClickButton1(clickPos)
+    end)
+end
+
+local function PrepareCombatTarget(target)
+    if not target then return end
+    local root = target:IsA("BasePart") and target or target:FindFirstChild("HumanoidRootPart")
+    if not root or not root:IsA("BasePart") then return end
+    pcall(function()
+        -- Local hitbox only; avoids relying on a one-frame exact contact while
+        -- hovering above enemies and matches the combat flow used by common
+        -- Blox Fruits farming sources.
+        local size = _G.Settings.HitboxSize
+        if size and root.Size.X < size then
+            root.Size = Vector3.new(size, size, size)
+        end
+        root.CanCollide = false
     end)
 end
 
@@ -927,6 +1041,27 @@ local function ClickPiratesChoice()
     local gui = LP:FindFirstChild("PlayerGui")
     if not gui then return false end
     local choose = gui:FindFirstChild("ChooseTeam", true)
+    -- UIController của bản game mới xử lý chọn team qua closure thay vì
+    -- GuiButton.Activate. Dùng API executor nếu có, nhưng luôn bọc pcall để
+    -- bản chạy không có getgc vẫn tiếp tục bằng remote/button fallback.
+    local controller = gui:FindFirstChild("UIController", true)
+    if choose and choose.Visible and controller
+        and type(getgc) == "function"
+        and type(getconstants) == "function" and type(getfenv) == "function" then
+        local ok = pcall(function()
+            for _, fn in ipairs(getgc(true)) do
+                if type(fn) == "function" and getfenv(fn).script == controller then
+                    local constants = getconstants(fn)
+                    if type(constants) == "table" and #constants == 1
+                        and constants[1] == "Pirates" then
+                        fn("Pirates")
+                        return
+                    end
+                end
+            end
+        end)
+        if ok and LP.Team then return true end
+    end
     local pirates = choose and choose:FindFirstChild("Pirates", true)
     local button = pirates and (pirates:IsA("GuiButton") and pirates
         or pirates:FindFirstChildWhichIsA("GuiButton", true))
@@ -2022,9 +2157,10 @@ function ItemProgression:CheckSaber()
                 and os.time() < timeout and IsAlive() do
                 local boss = FindBoss("Saber Expert")
                 if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
+                    PrepareCombatTarget(boss)
                     EquipMelee()
                     TravelManager:Request(boss.HumanoidRootPart, "Saber")
-                    Attack()
+                    Attack(boss)
                 else
                     TravelManager:Request(CFrame.new(-1405,30,-3330), "Saber")
                     task.wait(3)
@@ -2111,10 +2247,11 @@ function ItemProgression:CheckSecondSea()
                 and os.time() < timeout and IsAlive() do
                 local mob = FindMob("Swan Pirate")
                 if mob and mob:FindFirstChild("HumanoidRootPart") then
+                    PrepareCombatTarget(mob)
                     EquipMelee()
                     TryCount(mob)
                     TravelManager:Request(mob.HumanoidRootPart, "Sea2")
-                    Attack()
+                    Attack(mob)
                 else
                     TravelManager:Request(CFrame.new(878,122,1235), "Sea2")
                     task.wait(2)
@@ -2175,9 +2312,10 @@ function ItemProgression:CheckThirdSea()
             while _G.State:IsActionValid(myToken) and os.time() < timeout and IsAlive() do
                 local boss = FindBoss("Don Swan")
                 if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
+                    PrepareCombatTarget(boss)
                     EquipMelee()
                     TravelManager:Request(boss.HumanoidRootPart, "Sea3")
-                    Attack()
+                    Attack(boss)
                 else break end
                 task.wait(0.1)
             end
@@ -2252,12 +2390,12 @@ local BossDatabase = {
     -- Sea 3
     {N="Stone",Sea=3,MinLevel=1550}, {N="Island Empress",Sea=3,MinLevel=1675},
     {N="Kilo Admiral",Sea=3,MinLevel=1750}, {N="Captain Elephant",Sea=3,MinLevel=1875},
-    {N="Beautiful Pirate",Sea=3,MinLevel=1950}, {N="Longma",Sea=3,MinLevel=2000},
+    {N="Longma",Sea=3,MinLevel=2000},
     {N="Cursed Skeleton Boss",Sea=3,MinLevel=2050}, {N="Cake Queen",Sea=3,MinLevel=2175},
     {N="Soul Reaper",Sea=3,MinLevel=2000}, {N="Cake Prince",Sea=3,MinLevel=2200},
     {N="Dough King",Sea=3,MinLevel=2300},
     {N="Tyrant of the Skies",Sea=3,MinLevel=2600},
-    {N="rip_indra",Sea=3,MinLevel=1500}, {N="Beautiful Pirate",Sea=3,MinLevel=1950},
+    {N="rip_indra",Sea=3,MinLevel=1500},
 }
 
 function BossManager:FindLiveBoss()
@@ -2314,6 +2452,7 @@ function BossManager:_RunBoss(boss, entry, token)
             if not IsValidPos(targetRoot.Position) or not IsAllowedWorldY(targetRoot.Position.Y) then
                 break
             end
+            PrepareCombatTarget(targetRoot)
             TravelManager:Request(targetRoot, "Boss", {
                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
                 fallback = nil,
@@ -2323,7 +2462,7 @@ function BossManager:_RunBoss(boss, entry, token)
                 local a = Vector3.new(me.Position.X, 0, me.Position.Z)
                 local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
                 if (a - b).Magnitude <= _G.Settings.AttackRange then
-                    if EquipCombatTool() then Attack() end
+                    if EquipCombatTool() then Attack(boss) end
                 end
             end
             task.wait(0.12)
@@ -2498,6 +2637,7 @@ task.spawn(function()
                 elseif hrp then
                     local targetPos = targetHRP.Position
                     local dist = (hrp.Position - targetPos).Magnitude
+                    PrepareCombatTarget(_G.State.FarmTarget)
 
                     -- MOVE_TO_TARGET
                     _G.State.FState = "MOVE_TO_TARGET"
@@ -2542,7 +2682,7 @@ task.spawn(function()
                         if flatDist <= _G.Settings.AttackRange and farmHolds then
                             _G.State.FState = "ATTACK"
                             if EquipCombatTool() then
-                                Attack()
+                                Attack(_G.State.FarmTarget)
                                 if os.time() - lastAttackLog >= 5 then
                                     lastAttackLog = os.time()
                                     DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
@@ -2558,7 +2698,7 @@ task.spawn(function()
                     if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
                         if EquipCombatTool() then
-                            Attack()
+                            Attack(_G.State.FarmTarget)
                         end
                     end
                 end
@@ -2571,6 +2711,7 @@ task.spawn(function()
 
 
                 if mob and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
+                    PrepareCombatTarget(mob)
                     if dist > _G.Settings.MaxFarmDistance then
                         -- Mob quá xa → về khu farm, KHÔNG giữ target xa
                         _G.State:ClearTargets()
