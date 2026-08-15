@@ -195,6 +195,12 @@ _G.Settings = {
     RedeemCodeDelay     = 0.45,
     -- Local-only bring-mob for nearby quest enemies; no extra movement loop.
     GatherMobs          = true,
+    -- Bring every mob whose name matches the currently accepted quest (q.M)
+    -- to the selected farm target.  Set false to keep nearby-only behavior.
+    GatherAllQuestMobs  = true,
+    GatherMaxDistance   = 5000,
+    GatherSpacing       = 6,
+    GatherInterval      = 0.3,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
     ServerHopCooldown   = 120,
@@ -1291,7 +1297,9 @@ end
 --   Gom mob: mob quest trong MobGatherRadius quanh điểm farm được
 --   đưa về một cluster cục bộ quanh target; mob ở xa không bị chạm tới.
 -- ══════════════════════════════════════════════════════════════════
-local FarmPositionController = {}
+local FarmPositionController = {
+    LastGather = 0,
+}
 
 
 function FarmPositionController:GetFarmPos(mob)
@@ -1367,16 +1375,27 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
     return false
 end
 
--- Soft local bring-mob: keep only quest mobs already near the selected target
--- in a small cluster.  It does not touch distant enemies or the server map;
--- the existing FastAttack hit list then damages the whole visible group.
+-- Soft local bring-mob: put matching quest mobs into one cluster around the
+-- selected target.  GatherAllQuestMobs extends the old nearby-only behavior
+-- to every matching mob within GatherMaxDistance in the current server.
+-- This stays inside the existing Farm loop; it does not create movement code
+-- for the player.  Roblox may re-sync server-owned NPCs, so the operation is
+-- intentionally repeated at a small interval while farming.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
+    local now = tick()
+    if now - self.LastGather < (_G.Settings.GatherInterval or 0.3) then return 0 end
+    self.LastGather = now
     local primaryRoot = primary:FindFirstChild("HumanoidRootPart")
     local folder = workspace:FindFirstChild("Enemies")
     if not primaryRoot or not folder then return 0 end
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
+    local gatherAll = _G.Settings.GatherAllQuestMobs == true
+    local maxDistance = gatherAll
+        and (_G.Settings.GatherMaxDistance or math.huge)
+        or (_G.Settings.MobGatherRadius or 50)
+    local spacing = _G.Settings.GatherSpacing or 6
     local moved, slot = 0, 0
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
@@ -1385,15 +1404,21 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
             local okPos, mobPos = pcall(function() return root.Position end)
             local offset = okPos and (mobPos - origin) or nil
             if okPos and IsValidPos(mobPos) and IsAllowedWorldY(mobPos.Y)
-                and offset.Magnitude <= _G.Settings.MobGatherRadius then
+                and offset.Magnitude <= maxDistance then
                 slot = slot + 1
                 local angle = slot * 2.4
-                local destination = origin + Vector3.new(math.cos(angle) * 6, 0, math.sin(angle) * 6)
+                local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
                 pcall(function()
                     -- Do not rewrite an already clustered mob every frame;
                     -- this avoids physics jitter while still pulling strays.
-                    if offset.Magnitude > 8 then
-                        root.CFrame = CFrame.new(destination, origin)
+                    if offset.Magnitude > spacing + 2 then
+                        local destinationCF = CFrame.new(destination, origin)
+                        if mob:IsA("Model") then
+                            local pivoted = pcall(function() mob:PivotTo(destinationCF) end)
+                            if not pivoted then root.CFrame = destinationCF end
+                        else
+                            root.CFrame = destinationCF
+                        end
                         root.AssemblyLinearVelocity = Vector3.zero
                         root.AssemblyAngularVelocity = Vector3.zero
                         moved = moved + 1
@@ -2981,7 +3006,10 @@ task.spawn(function()
                     -- GOM MOB [A-4]: gom mềm các mob quest ở gần vào cluster
                     -- cục bộ rồi để FastAttack xử lý cả nhóm; không tạo loop
                     -- movement riêng và không đụng mob ở xa.
-                    if _G.Settings.GatherMobs
+                    -- `hasQuest` is the strict UI-verified quest state above;
+                    -- q.M is therefore the mob of the quest currently held,
+                    -- never a stale/next-level mob name.
+                    if _G.Settings.GatherMobs and hasQuest
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
                         FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
                     end
