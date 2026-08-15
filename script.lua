@@ -116,9 +116,9 @@
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
-repeat task.wait() until game.Players.LocalPlayer.Character
-repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-repeat task.wait() until game.Players.LocalPlayer:FindFirstChild("Data")
+-- Không chờ Character/HRP/Data ở đây: lúc mới execute, ChooseTeam có thể
+-- xuất hiện trước character. Chờ các object này ở từng controller để team
+-- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
 
 
 print("[BobonHub v16.3 DATA] Loading...")
@@ -502,7 +502,9 @@ end
 
 
 local function HasItem(name)
-    return LP.Backpack:FindFirstChild(name) or (Char() and Char():FindFirstChild(name))
+    local backpack = LP:FindFirstChildOfClass("Backpack") or LP:FindFirstChild("Backpack")
+    return (backpack and backpack:FindFirstChild(name))
+        or (Char() and Char():FindFirstChild(name))
 end
 
 
@@ -511,7 +513,15 @@ local function HasQuest()
         local main = LP:FindFirstChild("PlayerGui")
             and LP.PlayerGui:FindFirstChild("Main")
         local quest = main and main:FindFirstChild("Quest")
-        return quest and quest.Visible or false
+        if not quest then return false end
+        if quest.Visible then return true end
+        -- Một số UI update giữ Visible=false ở wrapper nhưng bật label con.
+        for _, node in ipairs(quest:GetDescendants()) do
+            if node:IsA("TextLabel") and node.Visible and node.Text ~= "" then
+                return true
+            end
+        end
+        return false
     end)
     return ok and r or false
 end
@@ -527,9 +537,12 @@ end
 -- vẫn tìm được mob ở mọi sea và không bị phụ thuộc tên hiển thị của server.
 local function IsEnemyNamed(enemy, wanted)
     if not enemy or not wanted then return false end
-    if enemy.Name == wanted then return true end
-    local base = enemy.Name:gsub("%s*%[%s*Lv%.%s*%d+%s*%]$", "")
-    return base == wanted
+    local function normalize(value)
+        value = tostring(value):gsub("%s*%[%s*Lv%.%s*%d+%s*%]", "")
+        value = value:gsub("^%s+", ""):gsub("%s+$", "")
+        return string.lower(value)
+    end
+    return normalize(enemy.Name) == normalize(wanted)
 end
 
 
@@ -549,8 +562,7 @@ local function GetQuestText()
             and LP.PlayerGui:FindFirstChild("Main")
         local quest = main and main:FindFirstChild("Quest")
         if not quest then return nil end
-        local container = quest:FindFirstChild("Container")
-        if not container then return nil end
+        local container = quest:FindFirstChild("Container") or quest
         -- Đọc text thực tế từ UI; không dùng tên object QuestModel.
         local parts = {}
         for _, d in ipairs(container:GetDescendants()) do
@@ -594,12 +606,28 @@ local function HandleQuestAtGiver(q, atGiver)
     end
     _G.State.LastQuestRequest = now
     _G.State.QuestRetries = _G.State.QuestRetries + 1
-    DLog("QUEST", "RequestQuest " .. q.Q .. " level " .. q.QL)
+    DLog("QUEST", "StartQuest " .. q.Q .. " level " .. q.QL)
+    -- Dọn quest cũ sai mob trước khi request quest mới; nếu không server sẽ
+    -- giữ quest cũ và controller tưởng rằng StartQuest bị lỗi.
+    if HasQuest() and QuestMatches(q.M) == false then
+        pcall(function() CommF_:InvokeServer("AbandonQuest") end)
+        task.wait(0.15)
+    end
+    -- Remote chuẩn của Blox Fruits là StartQuest. RequestQuest chỉ còn là
+    -- fallback cho các server/private build cũ.
     local okRQ = pcall(function()
-        CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
+        CommF_:InvokeServer("StartQuest", q.Q, q.QL)
     end)
-    task.wait(0.2)
+    task.wait(0.35)
     local accepted = HasQuest()
+    if not accepted then
+        local okFallback = pcall(function()
+            CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
+        end)
+        okRQ = okRQ or okFallback
+        task.wait(0.25)
+        accepted = HasQuest()
+    end
     if okRQ and accepted then
         _G.BobonStatus = "Quest: Đã gửi " .. q.M
         DLog("QUEST", "Đã gửi: " .. q.M)
@@ -791,7 +819,12 @@ function WeaponController:EquipPreferred()
             if IsGunTool(tool) then candidate = tool; break end
         end
     end
-    if not candidate then self.LastResult = "noWeapon"; return false end
+    if not candidate then
+        -- Combat mặc định của game không nhất thiết là Tool trong Backpack;
+        -- vẫn cho phép M1/VirtualUser đánh bằng fists thay vì đứng im.
+        self.LastResult = "defaultCombat"
+        return true
+    end
     self.LastEquip = now
     local ok = pcall(function() hum:EquipTool(candidate) end)
     self.LastResult = ok and "equipping:" .. candidate.Name or "equipError"
@@ -892,12 +925,27 @@ TeamController.RetryWindow = 30
 
 local function ClickPiratesChoice()
     local gui = LP:FindFirstChild("PlayerGui")
-    local choose = gui and gui:FindFirstChild("ChooseTeam", true)
+    if not gui then return false end
+    local choose = gui:FindFirstChild("ChooseTeam", true)
     local pirates = choose and choose:FindFirstChild("Pirates", true)
-    if not pirates then return false end
-    local button = pirates:IsA("GuiButton") and pirates or pirates:FindFirstChildWhichIsA("GuiButton", true)
+    local button = pirates and (pirates:IsA("GuiButton") and pirates
+        or pirates:FindFirstChildWhichIsA("GuiButton", true))
+    -- Một số bản UI đổi Name của button nhưng vẫn giữ Text="Pirates".
+    if not button then
+        for _, node in ipairs(gui:GetDescendants()) do
+            if node:IsA("GuiButton") then
+                local ok, txt = pcall(function() return node.Text end)
+                if ok and type(txt) == "string"
+                    and string.lower(txt):find("pirates", 1, true) then
+                    button = node
+                    break
+                end
+            end
+        end
+    end
     if not button then return false end
-    return pcall(function() button:Activate() end)
+    local ok = pcall(function() button.Visible = true; button:Activate() end)
+    return ok
 end
 
 
@@ -912,21 +960,21 @@ function TeamController:AutoSelectTeam()
     if now - self.LastCheck < _G.Settings.TeamCooldown then return false end
     if now - self.LastCheck > self.RetryWindow then self.Retries = 0 end
     if self.Retries >= self.MaxRetries then
-        self.LastCheck = now
         return false
     end
     self.LastCheck = now
     self.Retries = self.Retries + 1
     DLog("TEAM", "Chưa có team → chọn Pirates (retry " .. self.Retries .. ")")
+    -- Ưu tiên nút UI khi ChooseTeam đang mở; một số server không nhận
+    -- SetTeam cho tới khi client Activate button trước.
+    ClickPiratesChoice()
     local ok, result = pcall(function()
         return CommF_:InvokeServer("SetTeam", "Pirates")
     end)
     if not ok then
         warn("[BobonHub] SetTeam error: " .. tostring(result))
     end
-    if not LP.Team then
-        ClickPiratesChoice()
-    end
+    if not LP.Team then ClickPiratesChoice() end
     -- VERIFY TEAM, không spam thêm remote.
     task.delay(0.75, function()
         if LP.Team then
@@ -2371,7 +2419,9 @@ task.spawn(function()
 
 
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
+            local questText = GetQuestText()
             local hasQuest = HasQuest()
+                or (questText ~= nil and QuestMatches(q.M) == true)
             -- QuestMatches: true = đúng mob | false = sai mob | nil = không đọc được UI.
             -- Lưu ý: dùng `and` (không `or nil`) để giữ giá trị `false` khi quest sai mob.
             local questOk = hasQuest and QuestMatches(q.M)
@@ -2560,10 +2610,11 @@ end)
 --              TEAM + HAKI INIT (Fix #14 / [A-1] TeamController)
 -- ══════════════════════════════════════════════════════════════════
 task.spawn(function()
-    task.wait(3)
-    for _ = 1, 8 do
+    -- Chạy ngay sau bootstrap; không đợi character vì ChooseTeam thường
+    -- được tạo trước HumanoidRootPart.
+    for _ = 1, 30 do
         if TeamController:AutoSelectTeam() then break end
-        task.wait(2)
+        task.wait(0.25)
     end
     if LP.Team then
         _G.BobonStatus = "Team: " .. LP.Team.Name .. " ✓"
