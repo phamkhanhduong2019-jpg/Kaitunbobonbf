@@ -1,7 +1,7 @@
 -- =================================================================
---         BOBON HUB v16.1 FIXED | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.2 FIXED | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.1 FIXED
+--         Base: v15.0 | Version: v16.2 FIXED
 --
 --  AUDIT FIXES v16.0-FIXED:
 --  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
@@ -83,6 +83,35 @@
 --  [FIX-P15] Long-run stability: clean state sau mob chet/player chet/
 --           respawn/quest xong/quest sai/travel fail/timeout/target
 --           destroy. Khong leak thread/connection.
+--
+--  AUDIT FIXES v16.2-FIXED (A-1..A-10):
+--  [A-1]  TeamController: AutoSelectTeam() — check Player.Team → chưa có
+--         → chọn Pirates → verify → retry giới hạn, cooldown 5s,
+--         KHÔNG spam remote. Chạy được mọi Sea.
+--  [A-2]  EquipmentController: EquipMelee() — scan Character+Backpack,
+--         đang cầm → không re-equip, retry cooldown (EquipCooldown),
+--         verify tool trên tay, không spam EquipTool mỗi frame.
+--  [A-3]  MovementManager: Acquire/Release/IsOwner — API Single Movement
+--         Owner. Travel Request=Acquire, Stop/arrival=Release. Farm
+--         không override khi TRAVEL giữ; travel xong → trả về Farm.
+--  [A-4]  FarmPositionController: farm position PHÍA TRÊN mob (FarmHeight
+--         adaptive theo size mob), gom mob: attack mob quest trong
+--         MobGatherRadius quanh điểm farm để kéo aggro về cluster.
+--  [A-5]  Farm state machine FState (1 loop duy nhất):
+--         IDLE→CHECK_CHARACTER→CHECK_SEA→SELECT_TARGET→MOVE_TO_TARGET→
+--         ATTACK→VERIFY_TARGET→NEXT_TARGET
+--  [A-6]  Attack gating: alive + melee equip + target hợp lệ + Farm giữ
+--         movement (owner Farm hoặc không travel) + AttackRange XZ.
+--  [A-7]  FarmWatchdog merge vào watchdog DUY NHẤT: light fix trước
+--         (travel không tiến → Stop + retry, lightFails đếm), Recovery
+--         nặng chỉ khi light fix thất bại ≥3 lần.
+--  [A-8]  DEBUG log: Settings.DEBUG=false (mặc định), DLog(tag,msg)
+--         [TEAM] [EQUIP] [QUEST] [TARGET] [FARM] [MOVE] [TRAVEL]
+--         [ATTACK] [RECOVERY] [STATE]. Tắt → không spam console.
+--  [A-9]  Hover farm dùng FarmPositionController (đứng trên đầu mob,
+--         không xuyên vào mob, không bay quá cao, clamp MinY).
+--  [A-10] Không thêm loop mới: 1 Farm loop + 1 Travel loop + 1 Watchdog
+--         + 1 Anti-fall net — mỗi chức năng đúng 1 loop điều khiển.
 -- =================================================================
 
 
@@ -93,7 +122,7 @@ repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("Huma
 repeat task.wait() until game.Players.LocalPlayer:FindFirstChild("Data")
 
 
-print("[BobonHub v16.1 FIXED] Loading...")
+print("[BobonHub v16.2 FIXED] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -111,20 +140,32 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.1 FIXED] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.2 FIXED] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
 --                   CONFIG
 -- ══════════════════════════════════════════════════════════════════
 _G.Settings = {
-    FarmHeight          = 22,
+    -- [A-8] DEBUG log: true = in [TAG] log ra console (không spam khi false)
+    DEBUG               = false,
+    FarmHeight          = 8,
     FarmOffsetX         = 3,
     HitboxSize          = 50,
     FlySpeed            = 180,
     MinY                = 10,
     CloseThreshold      = 35,
     FarmArrivalThreshold= 15,
+    -- [A-4] Farm position / gom mob config (điều chỉnh theo game physics)
+    MobGatherRadius     = 50,
+    TargetRefreshInterval = 0.2,
+    PositionRefreshInterval = 0.1,
+    -- [A-2] Cooldown retry equip melee (giây)
+    EquipCooldown       = 3,
+    -- [A-1] Cooldown giữa các lần chọn team (giây)
+    TeamCooldown        = 5,
+    -- [A-7] Watchdog: travel không tiến quá N giây → light fix
+    WatchdogStuckThreshold = 25,
     AttackRange         = 20,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
@@ -162,6 +203,7 @@ _G.BobonStatus = "Initializing..."
 
 _G.State = {
     Mode             = "Idle",
+    FState           = "IDLE",
     CurrentTarget    = nil,
     FarmTarget       = nil,
     KillCount        = 0,
@@ -383,7 +425,7 @@ task.spawn(function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.1 FIXED] UI Ready!")
+    print("[BobonHub v16.2 FIXED] UI Ready!")
 end)
 
 
@@ -470,6 +512,14 @@ local function IsValidPos(p)
 end
 
 
+-- [A-8] DEBUG log: chỉ in khi _G.Settings.DEBUG = true, không spam console
+local function DLog(tag, msg)
+    if _G.Settings and _G.Settings.DEBUG then
+        print("[" .. tag .. "] " .. msg)
+    end
+end
+
+
 -- [FIX-P2] Đọc quest text với nhiều fallback (TextLabel chính + QuestModel)
 -- Trả về text đọc được, hoặc nil nếu UI không đọc được.
 local function GetQuestText()
@@ -480,23 +530,15 @@ local function GetQuestText()
         if not quest then return nil end
         local container = quest:FindFirstChild("Container")
         if not container then return nil end
-        -- QuestModel: tên model hiển thị = tên mob (chính xác hơn text)
-        local qm = container:FindFirstChild("QuestModel")
-        if qm and qm.Name and qm.Name ~= "" then
-            return qm.Name
-        end
-        -- TextLabel chính
-        local label = container:FindFirstChild("TextLabel")
-        if label and label.Text and label.Text ~= "" then
-            return label.Text
-        end
-        -- Fallback: tìm mọi TextLabel trong Container
+        -- Đọc text thực tế từ UI; không dùng tên object QuestModel.
+        local parts = {}
         for _, d in ipairs(container:GetDescendants()) do
             if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
-                return d.Text
+                parts[#parts + 1] = d.Text
             end
         end
-        return nil
+        if #parts == 0 then return nil end
+        return table.concat(parts, " ")
     end)
     if not ok then return nil end
     return text
@@ -507,8 +549,8 @@ end
 -- Trả về: true = khớp, false = sai mob, nil = không đọc được UI.
 local function QuestMatches(mobName)
     local text = GetQuestText()
-    if not text then return nil end
-    return string.find(text, mobName) ~= nil
+    if not text or not mobName then return nil end
+    return string.find(string.lower(text), string.lower(mobName), 1, true) ~= nil
 end
 
 
@@ -521,7 +563,7 @@ local function HandleQuestAtGiver(q, atGiver)
         _G.BobonStatus = "Quest: Chờ xác nhận " .. q.M
         return true
     end
-    if _G.State.QuestRetries > _G.Settings.QuestRetryLimit then
+    if _G.State.QuestRetries >= _G.Settings.QuestRetryLimit then
         -- Quá số lần retry → backoff, không spam remote, không farm
         _G.BobonStatus = "Quest: Fail, chờ retry"
         if now - _G.State.LastQuestRequest >= 20 then
@@ -531,14 +573,17 @@ local function HandleQuestAtGiver(q, atGiver)
     end
     _G.State.LastQuestRequest = now
     _G.State.QuestRetries = _G.State.QuestRetries + 1
+    DLog("QUEST", "RequestQuest " .. q.Q .. " level " .. q.QL)
     local okRQ = pcall(function()
         CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
     end)
     if okRQ then
         _G.BobonStatus = "Quest: Đã gửi " .. q.M
+        DLog("QUEST", "Đã gửi: " .. q.M)
     else
         warn("[BobonHub] RequestQuest error (retry " .. _G.State.QuestRetries .. ")")
         _G.BobonStatus = "Quest: Lỗi, retry " .. q.M
+        DLog("QUEST", "Lỗi remote (retry " .. _G.State.QuestRetries .. ")")
     end
     return true
 end
@@ -560,19 +605,64 @@ local MeleeList = {
 }
 
 
--- [FIX-P5] Equip melee, trả về true nếu đã có melee trên tay (thành công)
-local function EquipMelee()
+-- [A-2] EQUIPMENT CONTROLLER — melee equip có cooldown + verify
+-- [FIX-P5] EquipMelee() trả về true nếu đã có melee trên tay
+local EquipmentController = {}
+EquipmentController.LastEquip = 0
+EquipmentController.LastResult = "none"
+
+
+function EquipmentController:EquipMelee()
     local c = Char()
-    if not c or not c:FindFirstChildOfClass("Humanoid") then return false end
-    for _,n in ipairs(MeleeList) do if c:FindFirstChild(n) then return true end end
-    for _,n in ipairs(MeleeList) do
-        local t = LP.Backpack:FindFirstChild(n)
-        if t then
-            pcall(function() c:FindFirstChildOfClass("Humanoid"):EquipTool(t) end)
+    if not c or not c:FindFirstChildOfClass("Humanoid") then
+        self.LastResult = "noChar"
+        return false
+    end
+    -- Đang cầm melee → không equip lại
+    for _, n in ipairs(MeleeList) do
+        if c:FindFirstChild(n) then
+            self.LastResult = "holding"
             return true
         end
     end
+    -- Cooldown retry → không spam EquipTool mỗi frame
+    local now = os.time()
+    if now - self.LastEquip < _G.Settings.EquipCooldown then
+        self.LastResult = "cooldown"
+        return false
+    end
+    self.LastEquip = now
+    for _, n in ipairs(MeleeList) do
+        local t = LP.Backpack:FindFirstChild(n)
+        if t then
+            pcall(function()
+                c:FindFirstChildOfClass("Humanoid"):EquipTool(t)
+            end)
+            -- Verify: tool phải nằm trên character sau khi equip
+            task.delay(0.5, function()
+                if Char() and Char():FindFirstChild(n) then
+                    DLog("EQUIP", "Melee verified: " .. n)
+                end
+            end)
+            self.LastResult = "equipped"
+            DLog("EQUIP", "Equipped: " .. n)
+            return true
+        end
+    end
+    self.LastResult = "noMelee"
+    DLog("EQUIP", "No melee in backpack")
     return false
+end
+
+
+function EquipmentController:GetLastResult()
+    return self.LastResult
+end
+
+
+-- Wrapper giữ nguyên API cũ cho ItemProgression (Saber/Sea2/Sea3)
+local function EquipMelee()
+    return EquipmentController:EquipMelee()
 end
 
 
@@ -631,15 +721,143 @@ end
 local function GetFarmPosition(mobPos)
     if not mobPos then return nil end
     if typeof(mobPos) == "Instance" then
-        local ok, p = pcall(function() return mobPos.Position end)
+        local ok, p = pcall(function()
+            if mobPos:IsA("BasePart") then
+                return mobPos.Position
+            end
+            return mobPos:GetPivot().Position
+        end)
         if not ok then return nil end
         mobPos = p
     end
+    if not IsValidPos(mobPos) then return nil end
     return Vector3.new(
         mobPos.X + _G.Settings.FarmOffsetX,
         math.max(mobPos.Y + _G.Settings.FarmHeight, _G.Settings.MinY),
         mobPos.Z
     )
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--   [A-1] TEAM CONTROLLER — AutoSelectTeam()
+--   CHECK TEAM → TEAM NIL? → SELECT TEAM → WAIT → VERIFY TEAM
+--   Check Player.Team, chưa có → chọn Pirates, verify lại sau 3s,
+--   retry giới hạn (MaxRetries), cooldown TeamCooldown(5s) giữa các
+--   lần gửi → KHÔNG spam remote. Chạy được ở mọi Sea.
+-- ══════════════════════════════════════════════════════════════════
+local TeamController = {}
+TeamController.LastCheck = 0
+TeamController.Retries = 0
+TeamController.MaxRetries = 6
+
+
+-- Trả về true khi player ĐÃ có team. Chưa có → gửi lệnh chọn (có
+-- cooldown), chưa verify xong → false (main loop gọi lại, không chặn farm).
+function TeamController:AutoSelectTeam()
+    if LP.Team and LP.Team.Name ~= "" then
+        self.Retries = 0
+        return true
+    end
+    local now = os.time()
+    if now - self.LastCheck < _G.Settings.TeamCooldown then return false end
+    if self.Retries >= self.MaxRetries then return false end
+    self.LastCheck = now
+    self.Retries = self.Retries + 1
+    DLog("TEAM", "Chưa có team → chọn Pirates (retry " .. self.Retries .. ")")
+    pcall(function()
+        CommF_:InvokeServer("SetTeam", "Pirates")
+    end)
+    task.wait(0.5)
+    pcall(function()
+        CommF_:InvokeServer("ChooseTeam", "Pirates")
+    end)
+    -- VERIFY TEAM (chỉ kiểm tra, không gửi thêm remote)
+    task.delay(3, function()
+        if LP.Team then
+            DLog("TEAM", "Verified team: " .. LP.Team.Name)
+        end
+    end)
+    return false
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--   [A-3] MOVEMENT MANAGER — Single Movement Owner API
+--   Chỉ MỘT owner điều khiển movement tại một thời điểm:
+--   TRAVEL | FARM | RECOVERY
+--   Travel Request → Acquire(owner); Stop/arrival → Release(owner).
+--   Farm không override khi TRAVEL đang giữ; travel xong → Farm tiếp.
+-- ══════════════════════════════════════════════════════════════════
+local MovementManager = {}
+
+
+function MovementManager:Acquire(owner)
+    if _G.State.MovementOwner and _G.State.MovementOwner ~= owner then
+        return false
+    end
+    _G.State.MovementOwner = owner
+    return true
+end
+
+
+function MovementManager:Release(owner)
+    if not owner or _G.State.MovementOwner == owner then
+        _G.State.MovementOwner = nil
+    end
+end
+
+
+function MovementManager:IsOwner(owner)
+    return _G.State.MovementOwner == owner
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--   [A-4] FARM POSITION CONTROLLER
+--   Farm position: X/Z gần tâm mob, Y phía TRÊN mob (FarmHeight,
+--   adaptive theo size mob — mob to thì cao hơn). Không xuyên vào mob,
+--   không bay quá cao, clamp MinY (không xuống dưới map).
+--   Gom mob: mob quest trong MobGatherRadius quanh điểm farm được
+--   attack (aggro) để kéo về cluster — client không teleport mob,
+--   dùng aggro tự nhiên của game để gom.
+-- ══════════════════════════════════════════════════════════════════
+local FarmPositionController = {}
+
+
+function FarmPositionController:GetFarmPos(mob)
+    if not mob then return nil end
+    local root = mob:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local ok, pos = pcall(function() return root.Position end)
+    if not ok or not IsValidPos(pos) then return nil end
+    local extra = 0
+    local sizeY = root.Size and root.Size.Y or 0
+    if sizeY > 6 then extra = math.min(sizeY - 6, 10) end
+    return Vector3.new(
+        pos.X + _G.Settings.FarmOffsetX,
+        math.max(pos.Y + _G.Settings.FarmHeight + extra, _G.Settings.MinY),
+        pos.Z
+    )
+end
+
+
+-- Gom mob: trả về true nếu có mob quest khác trong MobGatherRadius
+-- quanh điểm farm (tín hiệu để attack kéo cluster về một khu vực)
+function FarmPositionController:HasNearbyMobs(mobName, center)
+    local folder = workspace:FindFirstChild("Enemies")
+    if not folder or not center then return false end
+    for _, v in ipairs(folder:GetChildren()) do
+        if v.Name == mobName and v:FindFirstChild("Humanoid")
+            and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
+            local p = v.HumanoidRootPart.Position
+            if p.Y >= _G.Settings.MinY - 10
+                and (p - center).Magnitude <= _G.Settings.MobGatherRadius then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 
@@ -723,9 +941,11 @@ end
 
 function TravelManager:Stop(reason)
     self.CurrentToken = self.CurrentToken + 1
+    self.ActiveThread = nil
     self.TargetRef = nil
     _G.State.IsTraveling = false
-    _G.State.MovementOwner = nil
+    -- [A-3] Release movement owner qua MovementManager API
+    MovementManager:Release()
     self:CleanupPhysics(Char())
     self:DisableNoclip()
 end
@@ -743,20 +963,35 @@ function TravelManager:Request(targetCF, owner, options)
 
     -- [FIX-5] Validate instance target tại Request(): mob chết/destroy/
     -- dưới biển → reject ngay, không khởi tạo travel tới target rác
-    if typeof(targetCF) == "Instance" then
+    local targetType = typeof(targetCF)
+    if targetType ~= "Instance" and targetType ~= "CFrame" and targetType ~= "Vector3" then
+        return false, "InvalidTarget"
+    end
+
+    if targetType == "Instance" then
         if not targetCF.Parent then return false, "InvalidTarget" end
-        local hum = targetCF.Parent:FindFirstChild("Humanoid")
+        local model = targetCF:IsA("Model") and targetCF
+            or targetCF:FindFirstAncestorOfClass("Model")
+        local hum = model and model:FindFirstChildOfClass("Humanoid")
         if hum and hum.Health <= 0 then return false, "InvalidTarget" end
-        if targetCF:IsA("BasePart") then
-            local okY, posY = pcall(function() return targetCF.Position.Y end)
-            if okY and posY < _G.Settings.MinY - 10 then return false, "InvalidTarget" end
-        end
-    elseif typeof(targetCF) == "CFrame" or typeof(targetCF) == "Vector3" then
+        local okPos, pos = pcall(function()
+            if targetCF:IsA("BasePart") then return targetCF.Position end
+            if targetCF:IsA("Model") then return targetCF:GetPivot().Position end
+            return nil
+        end)
+        if not okPos or (pos and not IsValidPos(pos)) then return false, "InvalidTarget" end
+        if pos and pos.Y < _G.Settings.MinY - 10 then return false, "InvalidTarget" end
+    elseif targetType == "CFrame" or targetType == "Vector3" then
         -- [FIX-P11] Reject NaN/invalid position ngay tại Request()
         local pos = typeof(targetCF) == "CFrame" and targetCF.Position or targetCF
         if not IsValidPos(pos) then return false, "InvalidTarget" end
     end
 
+
+    -- A different owner must never invalidate the active travel token.
+    if _G.State.IsTraveling and _G.State.MovementOwner ~= owner then
+        return false, "MovementBusy"
+    end
 
     -- Same owner already traveling: update ref only, NO restart
     if _G.State.IsTraveling and _G.State.MovementOwner == owner and self.ActiveThread then
@@ -770,11 +1005,11 @@ function TravelManager:Request(targetCF, owner, options)
     local startDist = nil
     if startPos and IsValidPos(startPos) then
         local tpos
-        if typeof(targetCF) == "CFrame" then
+        if targetType == "CFrame" then
             tpos = targetCF.Position
-        elseif typeof(targetCF) == "Vector3" then
+        elseif targetType == "Vector3" then
             tpos = targetCF
-        elseif typeof(targetCF) == "Instance" and targetCF:IsA("BasePart") then
+        elseif targetType == "Instance" and targetCF:IsA("BasePart") then
             local ok, p = pcall(function() return targetCF.Position end)
             tpos = ok and p or nil
         end
@@ -783,6 +1018,12 @@ function TravelManager:Request(targetCF, owner, options)
         end
     end
 
+
+    -- Acquire before invalidating any token. This prevents a failed request
+    -- from killing the currently active owner and leaving State stuck.
+    if not MovementManager:Acquire(owner) then
+        return false, "MovementBusy"
+    end
 
     -- New travel: invalidate old via token
     self.CurrentToken = self.CurrentToken + 1
@@ -793,11 +1034,12 @@ function TravelManager:Request(targetCF, owner, options)
     self:DisableNoclip()
 
 
-    _G.State.MovementOwner = owner
     _G.State.IsTraveling = true
     _G.State.LastMoveTime = os.time()
     _G.State.LastPosition = HRP() and HRP().Position or nil
     self.TargetRef = targetCF
+    DLog("TRAVEL", "Request by " .. owner .. ", dist="
+        .. (startDist and string.format("%.0f", startDist) or "?"))
 
 
     self.ActiveThread = task.spawn(function()
@@ -838,6 +1080,7 @@ function TravelManager:Request(targetCF, owner, options)
 
         -- [FIX-P1] Long-distance/cruise mode + timeout động theo khoảng cách
         local longTravel = startDist ~= nil and startDist > _G.Settings.CruiseThreshold
+        local cruiseLogged = false
         local travelTimeout = _G.Settings.TravelTimeout
         if longTravel and startDist then
             travelTimeout = math.max(_G.Settings.TravelTimeout,
@@ -873,6 +1116,7 @@ function TravelManager:Request(targetCF, owner, options)
                     continue
                 end
                 warn("[Travel] Timeout by " .. owner)
+                DLog("TRAVEL", "Timeout by " .. owner)
                 _G.State.IsRecovering = true
                 break
             end
@@ -926,7 +1170,11 @@ function TravelManager:Request(targetCF, owner, options)
                 end
                 targetLostTimer = 0
                 if isFarmHover then
-                    targetPos = GetFarmPosition(p)
+                    -- [A-9] Vị trí farm phía TRÊN đầu mob (adaptive theo size)
+                    targetPos = FarmPositionController:GetFarmPos(self.TargetRef.Parent)
+                    if not targetPos then
+                        targetPos = GetFarmPosition(p)
+                    end
                     if not targetPos then
                         if HandleFarmInvalid("Không lấy được vị trí") then
                             continue
@@ -973,6 +1221,10 @@ function TravelManager:Request(targetCF, owner, options)
             -- [FIX-P1] CRUISE MODE: bay xa qua biển → giữ độ cao an toàn,
             -- chỉ approach target Y thật khi đã gần đảo
             if longTravel and dist > _G.Settings.ApproachThreshold then
+                if not cruiseLogged then
+                    cruiseLogged = true
+                    DLog("TRAVEL", "Cruise mode active → " .. tostring(targetPos))
+                end
                 local cruiseY = math.max(targetPos.Y, _G.Settings.CruiseAltitude)
                 if currentPos.Y < cruiseY - 1 then
                     -- còn thấp → lên độ cao cruise
@@ -1037,6 +1289,7 @@ function TravelManager:Request(targetCF, owner, options)
                 if stuckTimer >= stuckLimit then
                     _G.State.IsRecovering = true
                     warn("[Travel] Stuck by " .. owner)
+                    DLog("TRAVEL", "Stuck by " .. owner)
                     break
                 end
             else
@@ -1113,18 +1366,36 @@ local function TravelAndWait(owner, token, cf, opts)
     opts = opts or {}
     if not _G.State:IsActionValid(token) then return false end
     if not IsAlive() then return false end
-    local ok = TravelManager:Request(cf, owner)
+    local ok = TravelManager:Request(cf, owner, opts)
     if not ok then return false end
+    local function ResolvePosition(target)
+        local targetType = typeof(target)
+        if targetType == "CFrame" then return target.Position end
+        if targetType == "Vector3" then return target end
+        if targetType == "Instance" then
+            local success, position = pcall(function()
+                if target:IsA("BasePart") then return target.Position end
+                if target:IsA("Model") then return target:GetPivot().Position end
+            end)
+            if success then return position end
+        end
+        return nil
+    end
+    local destination = ResolvePosition(cf)
+    if not IsValidPos(destination) then return false end
     local hrp = HRP()
     local thresh = opts.arrivalThreshold or _G.Settings.CloseThreshold
     local timeout = os.time() + (opts.timeout or 60)
+    local arrived = false
     while _G.State:IsActionValid(token) and IsAlive() and os.time() < timeout do
         hrp = HRP()
-        if hrp and (hrp.Position - cf.Position).Magnitude <= thresh then
+        if hrp and (hrp.Position - destination).Magnitude <= thresh then
+            arrived = true
             break
         end
         task.wait(0.5)
     end
+    if not arrived then return false end
     task.wait(opts.settle or 1)
     return _G.State:IsActionValid(token) and IsAlive()
 end
@@ -1164,6 +1435,7 @@ function RecoveryManager:Handle(reason)
     if _G.State.Mode == "Recovering" then return end
     _G.State:SetMode("Recovering")
     _G.BobonStatus = "Recovery: " .. reason
+    DLog("RECOVERY", "Handle: " .. reason)
 
 
     -- STEP 1: Stop all movement immediately
@@ -1233,16 +1505,48 @@ function RecoveryManager:Handle(reason)
 end
 
 
--- Auto-trigger recovery khi TravelManager set IsRecovering
--- [FIX-12] Không trigger khi Dead/Respawning (respawn tự xử lý)
+-- [A-7] FARMWATCHDOG — watchdog DUY NHẤT cho recovery + farm
+-- Light fix TRƯỚC (travel không tiến → Stop + để main loop retry,
+-- đếm lightFails), chỉ Recovery nặng khi light fix không giải quyết
+-- được sau ≥3 lần. Không trigger khi Dead/Respawning (respawn tự xử lý).
 task.spawn(function()
-    while task.wait(0.5) do
-        if _G.State.IsRecovering
-            and _G.State.Mode ~= "Recovering"
-            and _G.State.Mode ~= "Dead"
-            and _G.State.Mode ~= "Respawning" then
-            RecoveryManager:Handle("StuckOrTimeout")
-        end
+    local lightFails = 0
+    while task.wait(5) do
+        pcall(function()
+            -- Trigger recovery nặng từ TravelManager (stuck/timeout/crash)
+            if _G.State.IsRecovering
+                and _G.State.Mode ~= "Recovering"
+                and _G.State.Mode ~= "Dead"
+                and _G.State.Mode ~= "Respawning" then
+                RecoveryManager:Handle("StuckOrTimeout")
+                return
+            end
+            -- Chỉ watchdog light khi đang Farm + còn sống
+            if _G.State.Mode ~= "Farming" then return end
+            if not IsAlive() then return end
+            -- LIGHT 1: travel đang chạy nhưng không tiến → Stop, để main
+            -- loop request lại (không recovery nặng ngay)
+            if _G.State.IsTraveling and _G.State.MovementOwner then
+                if os.time() - _G.State.LastMoveTime > _G.Settings.WatchdogStuckThreshold then
+                    lightFails = lightFails + 1
+                    DLog("RECOVERY", "Travel không tiến (" .. lightFails .. " lần) → Stop + retry")
+                    _G.BobonStatus = "Watchdog: Travel không tiến, retry"
+                    TravelManager:Stop("WatchdogStuck")
+                    if lightFails >= 3 then
+                        lightFails = 0
+                        RecoveryManager:Handle("WatchdogStuck")
+                    end
+                end
+            end
+            -- LIGHT 2: melee mất → re-equip (EquipmentController có cooldown,
+            -- không spam)
+            local eq = EquipmentController:EquipMelee()
+            if eq and EquipmentController:GetLastResult() == "equipped" then
+                DLog("RECOVERY", "Light fix: re-equip melee")
+            end
+            -- LIGHT 3: target chết/mất → main loop tự clear + chọn mới
+            -- (không cần làm gì thêm ở đây, tránh duplicate logic)
+        end)
     end
 end)
 
@@ -1570,7 +1874,7 @@ end
 
 
 -- ══════════════════════════════════════════════════════════════════
---    MAIN CONTROLLER v16.1 FIXED — SINGLE LOOP
+--    MAIN CONTROLLER v16.2 FIXED — SINGLE LOOP
 --
 --   Priority: Recovery > Sea > Items > Boss > Quest+Farm
 --   CHỈ gọi TravelManager:Request(), KHÔNG tự ghi MovementOwner
@@ -1580,7 +1884,9 @@ end
 --   [FIX-10] Chưa có quest → không farm, đi nhận quest trước
 --   [FIX-3] Attack dùng khoảng cách XZ (hover trên đầu mob)
 --   [FIX-6] FarmTarget invalid/qua xa/dưới biển → clear + về q.MC
+--   [A-5] Farm state machine FState chạy trong loop DUY NHẤT này
 -- ══════════════════════════════════════════════════════════════════
+local lastAttackLog = 0
 task.spawn(function()
     while task.wait(0.15) do
         -- Skip nếu subsystem đang giữ ActionToken
@@ -1659,6 +1965,7 @@ task.spawn(function()
                 -- [FIX-10] Chưa có quest hoặc [FIX-9] quest sai mob:
                 -- CHỈ đi lấy/đổi quest, KHÔNG farm
                 _G.State:SetMode("GettingQuest")
+                DLog("QUEST", "Chưa có quest / sai mob → đi giver " .. q.M)
                 local hrp = HRP()
                 local atGiver = hrp and (hrp.Position - q.QC.Position).Magnitude <= _G.Settings.CloseThreshold
                 if HandleQuestAtGiver(q, atGiver) then
@@ -1671,13 +1978,28 @@ task.spawn(function()
             end
 
 
-            -- ═══ FARM CONTROLLER ═══
+            -- ═══ FARM CONTROLLER — state machine (1 loop duy nhất) [A-5] ═══
+            -- FState: IDLE→CHECK_CHARACTER→CHECK_SEA→SELECT_TARGET→
+            -- MOVE_TO_TARGET→ATTACK→VERIFY_TARGET→NEXT_TARGET
             _G.State:SetMode("Farming")
 
+            -- CHECK_CHARACTER
+            _G.State.FState = "CHECK_CHARACTER"
+            DLog("FARM", "State = CHECK_CHARACTER")
+            if not IsAlive() then return end
 
-            -- Validate FarmTarget, clear NGAY nếu invalid
+            -- CHECK_SEA + TEAM (cooldown, không spam, không chặn farm lâu)
+            _G.State.FState = "CHECK_SEA"
+            DLog("FARM", "State = CHECK_SEA")
+            _G.State.Sea = GetSea()
+            TeamController:AutoSelectTeam()
+
+            -- VERIFY_TARGET: clear NGAY nếu invalid → NEXT_TARGET
+            _G.State.FState = "VERIFY_TARGET"
             if not _G.State:IsTargetValid(_G.State.FarmTarget) then
                 _G.State:ClearTargets()
+                _G.State.FState = "NEXT_TARGET"
+                DLog("TARGET", "Target cũ invalid → chọn mới")
             end
 
 
@@ -1690,11 +2012,16 @@ task.spawn(function()
                     local targetPos = targetHRP.Position
                     local dist = (hrp.Position - targetPos).Magnitude
 
+                    -- MOVE_TO_TARGET
+                    _G.State.FState = "MOVE_TO_TARGET"
+
                     -- [FIX-6] Target quá xa hoặc dưới biển → clear, về khu farm
                     if dist > _G.Settings.MaxFarmDistance + 50
                         or targetPos.Y < _G.Settings.MinY - 10 then
                         _G.State:ClearTargets()
+                        _G.State.FState = "NEXT_TARGET"
                         _G.BobonStatus = "Farm: Target lỗi, về khu farm"
+                        DLog("TARGET", "Target lỗi (xa/dưới biển) → về khu farm")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(q.MC, "Farm")
                         end
@@ -1717,20 +2044,42 @@ task.spawn(function()
                         end
                     end
 
-                    -- [FIX-3] Attack theo khoảng cách XZ (hover phía trên đầu mob)
-                    -- [FIX-P5] Chỉ attack khi đã equip melee + target còn sống
+                    -- ATTACK [A-6]: chỉ khi target sống + melee đã equip + trong
+                    -- AttackRange (XZ) + Farm đang giữ movement (owner Farm
+                    -- hoặc không travel — travel xong trả về Farm)
                     if _G.State:IsTargetValid(_G.State.FarmTarget) then
                         local flatDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
                             - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
-                        if flatDist <= _G.Settings.AttackRange then
+                        local farmHolds = not _G.State.IsTraveling
+                            or _G.State.MovementOwner == "Farm"
+                        if flatDist <= _G.Settings.AttackRange and farmHolds then
+                            _G.State.FState = "ATTACK"
                             if EquipMelee() then
                                 Attack()
+                                if os.time() - lastAttackLog >= 5 then
+                                    lastAttackLog = os.time()
+                                    DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
+                                end
                             end
+                        end
+                    end
+
+                    -- GOM MOB [A-4]: attack mob quest khác quanh điểm farm
+                    -- để kéo aggro về cluster (client không teleport mob,
+                    -- dùng aggro tự nhiên; Attack() có cooldown, không spam)
+                    local farmPos = FarmPositionController:GetFarmPos(_G.State.FarmTarget)
+                    if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
+                        and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
+                        if EquipMelee() then
+                            Attack()
                         end
                     end
                 end
             else
-                -- Không có target → tìm mob mới
+                -- SELECT_TARGET [A-5]: mob theo quest/level/sea hiện tại,
+                -- chọn mob GẦN player nhất (không chọn ngẫu nhiên cả map)
+                _G.State.FState = "SELECT_TARGET"
+                DLog("FARM", "State = SELECT_TARGET")
                 local mob, dist = FindNearestMob(q.M)
 
 
@@ -1739,13 +2088,16 @@ task.spawn(function()
                         -- Mob quá xa → về khu farm, KHÔNG giữ target xa
                         _G.State:ClearTargets()
                         _G.BobonStatus = "Farm: " .. q.M .. " xa, về khu farm"
+                        DLog("TARGET", q.M .. " quá xa (" .. string.format("%.0f", dist) .. ") → về khu farm")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(q.MC, "Farm")
                         end
                     else
                         _G.State.FarmTarget = mob
                         _G.State.CurrentTarget = mob
+                        _G.State.FState = "MOVE_TO_TARGET"
                         _G.BobonStatus = "Farm: " .. q.M
+                        DLog("TARGET", "Found: " .. q.M .. " @" .. string.format("%.0f", dist) .. " studs")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(mob.HumanoidRootPart, "Farm", {
                                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
@@ -1755,6 +2107,7 @@ task.spawn(function()
                     end
                 else
                     _G.BobonStatus = "Farm: Chờ spawn " .. q.M
+                    DLog("TARGET", "Chờ spawn " .. q.M)
                     if _G.State:CanRequestTravel() then
                         TravelManager:Request(q.MC, "Farm")
                     end
@@ -1767,18 +2120,18 @@ task.spawn(function()
     end
 end)
 -- ══════════════════════════════════════════════════════════════════
---              TEAM + HAKI INIT (Fix #14)
+--              TEAM + HAKI INIT (Fix #14 / [A-1] TeamController)
 -- ══════════════════════════════════════════════════════════════════
 task.spawn(function()
     task.wait(3)
-    for _ = 1, 6 do
-        if LP.Team and LP.Team.Name == "Pirates" then break end
-        pcall(function() CommF_:InvokeServer("SetTeam", "Pirates") end)
-        task.wait(1.5)
-        pcall(function() CommF_:InvokeServer("ChooseTeam", "Pirates") end)
-        task.wait(1.5)
+    for _ = 1, 8 do
+        if TeamController:AutoSelectTeam() then break end
+        task.wait(2)
     end
-    _G.BobonStatus = "Team: Pirates ✓"
+    if LP.Team then
+        _G.BobonStatus = "Team: " .. LP.Team.Name .. " ✓"
+        DLog("TEAM", "Verified team: " .. LP.Team.Name)
+    end
     task.wait(0.5)
     pcall(function() CommF_:InvokeServer("Ken", true) end)
     pcall(function() CommF_:InvokeServer("Buso", true) end)
@@ -1892,9 +2245,10 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.1 FIXED] Full Script Loaded Successfully!")
-print("[BobonHub v16.1 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.1 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.1 FIXED] Modules: QuestFarm(P2/P3) | BossManager | ItemProgression(P8/P9) | AutoStats")
-print("[BobonHub v16.1 FIXED] Audit: 15-Point Fix (Cruise mode, dynamic timeout, quest verify)")
-print("[BobonHub v16.1 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.2 FIXED] Full Script Loaded Successfully!")
+print("[BobonHub v16.2 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.2 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.2 FIXED] Modules: QuestFarm(P2/P3) | TeamController(A1) | EquipmentController(A2)")
+print("[BobonHub v16.2 FIXED] Modules: MovementManager(A3) | FarmPositionController(A4) | FarmWatchdog(A7)")
+print("[BobonHub v16.2 FIXED] Audit: 10-Point (Team/Equip/Movement/FarmPos/StateMachine/Watchdog/DEBUG)")
+print("[BobonHub v16.2 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
