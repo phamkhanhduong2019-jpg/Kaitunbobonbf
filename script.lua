@@ -190,6 +190,10 @@ _G.Settings = {
     FruitEnabled        = true,
     AutoStats           = true,
     AutoItems           = true,
+    AutoRedeemCodes     = true,
+    RedeemCodeDelay     = 0.45,
+    -- Local-only bring-mob for nearby quest enemies; no extra movement loop.
+    GatherMobs          = true,
     ServerHopCooldown   = 120,
     MaxFarmDistance     = 300,
     StatBatchLimit      = 100,
@@ -517,12 +521,46 @@ local function HasQuest()
             and LP.PlayerGui:FindFirstChild("Main")
         local quest = main and main:FindFirstChild("Quest")
         if not quest then return false end
-        if quest.Visible then return true end
-        -- Một số UI update giữ Visible=false ở wrapper nhưng bật label con.
-        for _, node in ipairs(quest:GetDescendants()) do
-            if node:IsA("TextLabel") and node.Visible and node.Text ~= "" then
+        local function IsDynamicQuestLabel(node)
+            if not node:IsA("TextLabel") or not node.Visible then return false end
+            local text = tostring(node.Text or "")
+            local lower = string.lower(text)
+            if text == "" or lower == "quest" or lower == "quest details"
+                or lower == "objectives" or lower == "objective" then
+                return false
+            end
+            local nodeName = string.lower(node.Name)
+            -- Current UI uses QuestTitle.Title.  Older builds may expose a
+            -- label named Task/Objective instead, so accept those explicitly.
+            if nodeName:find("title", 1, true)
+                or nodeName:find("task", 1, true)
+                or nodeName:find("objective", 1, true) then
                 return true
             end
+            -- Last fallback: quest objectives normally contain a counter or
+            -- an action verb; static panel labels do not.
+            return lower:find("defeat", 1, true) ~= nil
+                or lower:find("kill", 1, true) ~= nil
+                or lower:find("collect", 1, true) ~= nil
+                or lower:find("bounty", 1, true) ~= nil
+                or lower:match("%d+%s*/%s*%d+") ~= nil
+        end
+        -- The wrapper can stay Visible after a quest is completed.  The
+        -- actual state is Quest.Container.QuestTitle.Title.Text; only treat
+        -- it as active when that title contains real quest text.
+        local container = quest:FindFirstChild("Container") or quest
+        local title = container:FindFirstChild("QuestTitle", true)
+        local titleText = title and title:FindFirstChild("Title", true)
+        if titleText and titleText:IsA("TextLabel") then
+            local text = tostring(titleText.Text or "")
+            local lower = string.lower(text)
+            if text ~= "" and lower ~= "quest" and lower ~= "quest details" then
+                return true
+            end
+        end
+        -- Fallback for builds that omit QuestTitle but expose visible labels.
+        for _, node in ipairs(container:GetDescendants()) do
+            if IsDynamicQuestLabel(node) then return true end
         end
         return false
     end)
@@ -604,7 +642,7 @@ end
 -- Trả về true = "đã xử lý (đừng farm)", false = "chưa tới giver".
 local function HandleQuestAtGiver(q, atGiver)
     if not atGiver then return false end
-    local now = os.time()
+    local now = tick()
     if now - _G.State.LastQuestRequest < _G.Settings.QuestDelay then
         _G.BobonStatus = "Quest: Chờ xác nhận " .. q.M
         return true
@@ -624,10 +662,18 @@ local function HandleQuestAtGiver(q, atGiver)
     -- giữ quest cũ và controller tưởng rằng StartQuest bị lỗi.
     if HasQuest() then
         local currentMatch = QuestMatches(q.M)
-        if currentMatch ~= true then
+        if currentMatch == false then
             pcall(function() CommF_:InvokeServer("AbandonQuest") end)
             task.wait(0.15)
         end
+    end
+    local function VerifyQuestTitle()
+        local deadline = tick() + 3
+        repeat
+            if QuestMatches(q.M) == true then return true end
+            task.wait(0.2)
+        until tick() >= deadline
+        return false
     end
     -- Remote chuẩn của Blox Fruits là StartQuest. RequestQuest chỉ còn là
     -- fallback cho các server/private build cũ.
@@ -635,14 +681,13 @@ local function HandleQuestAtGiver(q, atGiver)
         CommF_:InvokeServer("StartQuest", q.Q, q.QL)
     end)
     task.wait(0.35)
-    local accepted = HasQuest()
+    local accepted = VerifyQuestTitle()
     if not accepted then
         local okFallback = pcall(function()
             CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
         end)
         okRQ = okRQ or okFallback
-        task.wait(0.25)
-        accepted = HasQuest()
+        accepted = VerifyQuestTitle()
     end
     if okRQ and accepted then
         _G.BobonStatus = "Quest: Đã gửi " .. q.M
@@ -654,6 +699,51 @@ local function HandleQuestAtGiver(q, atGiver)
     end
     return true
 end
+
+-- Redeem the current XP-boost starter codes once per execution.  Codes are
+-- intentionally isolated from the farm/action token: an expired/rotated code
+-- must never pause quest farming, and the server itself decides validity.
+local CodeManager = {
+    Redeemed = {},
+    Codes = {
+        "EASTEREXP", "StrawHatMaine", "TantaiGaming", "Bluxxy",
+        "SUB2GAMERROBOT_EXP1", "StarcodeHEO", "LIGHTNINGABUSE",
+        "Sub2CaptainMaui", "Sub2Fer999", "Enyu_is_Pro", "MagicBUS",
+        "JCWK", "Axiore", "KittGaming", "Sub2Daigrock",
+        "Sub2NoobMaster123", "Sub2OfficialNoobie", "TheGreatAce",
+        -- Utility/reset starter codes are harmless to try alongside XP codes.
+        "fudd10", "fudd10_V2", "Chandler", "BIGNEWS", "KITT_RESET",
+        "Sub2UncleKizaru", "SUB2GAMERROBOT_RESET1",
+    },
+}
+
+function CodeManager:Redeem(code)
+    if self.Redeemed[code] or not code then return false end
+    local ok, result = false, nil
+    local redeem = Remotes and Remotes:FindFirstChild("Redeem")
+    if redeem and redeem:IsA("RemoteFunction") then
+        ok, result = pcall(function() return redeem:InvokeServer(code) end)
+    else
+        -- Compatibility fallback used by older/private builds.
+        ok, result = pcall(function() return CommF_:InvokeServer("Redeem", code) end)
+    end
+    self.Redeemed[code] = true
+    DLog("CODE", code .. " -> " .. tostring(result))
+    return ok
+end
+
+function CodeManager:RedeemAll()
+    if not _G.Settings.AutoRedeemCodes then return end
+    for _, code in ipairs(self.Codes) do
+        self:Redeem(code)
+        task.wait(_G.Settings.RedeemCodeDelay or 0.45)
+    end
+end
+
+task.spawn(function()
+    task.wait(2)
+    pcall(function() CodeManager:RedeemAll() end)
+end)
 
 
 local function FastRegisterHit(preferred)
@@ -1158,8 +1248,7 @@ end
 --   adaptive theo size mob — mob to thì cao hơn). Không xuyên vào mob,
 --   không bay quá cao, clamp MinY (không xuống dưới map).
 --   Gom mob: mob quest trong MobGatherRadius quanh điểm farm được
---   attack (aggro) để kéo về cluster — client không teleport mob,
---   dùng aggro tự nhiên của game để gom.
+--   đưa về một cluster cục bộ quanh target; mob ở xa không bị chạm tới.
 -- ══════════════════════════════════════════════════════════════════
 local FarmPositionController = {}
 
@@ -1235,6 +1324,45 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
         end
     end
     return false
+end
+
+-- Soft local bring-mob: keep only quest mobs already near the selected target
+-- in a small cluster.  It does not touch distant enemies or the server map;
+-- the existing FastAttack hit list then damages the whole visible group.
+function FarmPositionController:GatherMobCluster(mobName, primary)
+    if not primary or not mobName then return 0 end
+    local primaryRoot = primary:FindFirstChild("HumanoidRootPart")
+    local folder = workspace:FindFirstChild("Enemies")
+    if not primaryRoot or not folder then return 0 end
+    local okOrigin, origin = pcall(function() return primaryRoot.Position end)
+    if not okOrigin or not IsValidPos(origin) then return 0 end
+    local moved, slot = 0, 0
+    for _, mob in ipairs(folder:GetChildren()) do
+        local hum = mob:FindFirstChildOfClass("Humanoid")
+        local root = mob:FindFirstChild("HumanoidRootPart")
+        if mob ~= primary and IsEnemyNamed(mob, mobName) and hum and hum.Health > 0 and root then
+            local okPos, mobPos = pcall(function() return root.Position end)
+            local offset = okPos and (mobPos - origin) or nil
+            if okPos and IsValidPos(mobPos) and IsAllowedWorldY(mobPos.Y)
+                and offset.Magnitude <= _G.Settings.MobGatherRadius then
+                slot = slot + 1
+                local angle = slot * 2.4
+                local destination = origin + Vector3.new(math.cos(angle) * 6, 0, math.sin(angle) * 6)
+                pcall(function()
+                    -- Do not rewrite an already clustered mob every frame;
+                    -- this avoids physics jitter while still pulling strays.
+                    if offset.Magnitude > 8 then
+                        root.CFrame = CFrame.new(destination, origin)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        moved = moved + 1
+                    end
+                    root.CanCollide = false
+                end)
+            end
+        end
+    end
+    return moved
 end
 
 
@@ -2049,6 +2177,7 @@ local QDB = {
     {Min=1975,Max=1999,Q="HauntedQuest1",M="Reborn Skeleton",QL=1,QC=CFrame.new(-9479.22,141.22,5566.09),MC=CFrame.new(-8763.72,165.72,6159.86)},
     {Min=2000,Max=2024,Q="HauntedQuest1",M="Living Zombie",QL=2,QC=CFrame.new(-9479.22,141.22,5566.09),MC=CFrame.new(-10144.13,138.63,5838.09)},
     {Min=2025,Max=2049,Q="HauntedQuest2",M="Demonic Soul",QL=1,QC=CFrame.new(-9516.99,172.02,6078.47),MC=CFrame.new(-9505.87,172.10,6158.99)},
+    -- The in-game typo is intentionally `Posessed Mummy` (one s).
     {Min=2050,Max=2074,Q="HauntedQuest2",M="Posessed Mummy",QL=2,QC=CFrame.new(-9516.99,172.02,6078.47),MC=CFrame.new(-9582.02,6.25,6205.48)},
     {Min=2075,Max=2099,Q="NutsIslandQuest",M="Peanut Scout",QL=1,QC=CFrame.new(-2104.39,38.10,-10194.22),MC=CFrame.new(-2143.24,47.72,-10029.99)},
     {Min=2100,Max=2124,Q="NutsIslandQuest",M="Peanut President",QL=2,QC=CFrame.new(-2104.39,38.10,-10194.22),MC=CFrame.new(-1859.35,38.10,-10422.43)},
@@ -2586,7 +2715,7 @@ task.spawn(function()
                 -- Quest hợp lệ (true) hoặc nil = UI không đọc được nhưng vừa
                 -- request gần đây → cho farm trong khoảng grace ngắn
                 if questOk == nil then
-                    local gNow = os.time()
+                    local gNow = tick()
                     if gNow - _G.State.LastQuestRequest >= _G.Settings.QuestDelay then
                         -- Không đọc được UI lâu → về giver verify lại, KHÔNG farm
                         _G.State:SetMode("GettingQuest")
@@ -2708,9 +2837,13 @@ task.spawn(function()
                         end
                     end
 
-                    -- GOM MOB [A-4]: attack mob quest khác quanh điểm farm
-                    -- để kéo aggro về cluster (client không teleport mob,
-                    -- dùng aggro tự nhiên; Attack() có cooldown, không spam)
+                    -- GOM MOB [A-4]: gom mềm các mob quest ở gần vào cluster
+                    -- cục bộ rồi để FastAttack xử lý cả nhóm; không tạo loop
+                    -- movement riêng và không đụng mob ở xa.
+                    if _G.Settings.GatherMobs
+                        and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
+                        FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
+                    end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
                     if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
@@ -2787,12 +2920,21 @@ task.spawn(function()
 end)
 
 
+-- Haki watchdog: re-assert both observation and Busoshoku after every
+-- respawn/server state reset, while keeping a conservative remote cooldown.
+local HakiController = {LastEnsure = 0}
+function HakiController:Ensure()
+    if not IsAlive() then return end
+    local now = tick()
+    if now - self.LastEnsure < 4 then return end
+    self.LastEnsure = now
+    pcall(function() CommF_:InvokeServer("Ken", true) end)
+    pcall(function() CommF_:InvokeServer("Buso", true) end)
+end
+
 task.spawn(function()
-    while task.wait(20) do
-        pcall(function()
-            CommF_:InvokeServer("Ken", true)
-            CommF_:InvokeServer("Buso", true)
-        end)
+    while task.wait(1) do
+        pcall(function() HakiController:Ensure() end)
     end
 end)
 
