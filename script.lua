@@ -2345,12 +2345,19 @@ function ItemProgression:CheckThirdSea()
 end
 
 
-function ItemProgression:RunChecks()
-    if not _G.State:CanAct() then return false end
-    if self:CheckSaber() then return true end
-    if self:CheckPoleV1() then return true end
+-- Progression is deliberately a *farm-window* operation.  A valid quest is
+-- never interrupted by an optional item or boss; Sea 2/3 and item checks run
+-- only after the current quest is finished (or before the first quest).
+-- `allowSea` also accepts a wrong quest so the level-700/1500 sea gate cannot
+-- accidentally send the player to a next-sea quest before unlocking it.
+function ItemProgression:RunChecks(allowSea, allowOptional)
+    if not allowSea or not _G.State:CanAct() then return false end
+    -- Sea changes are mandatory gates, so they run before optional items.
     if self:CheckSecondSea() then return true end
     if self:CheckThirdSea() then return true end
+    if not allowOptional then return false end
+    if self:CheckSaber() then return true end
+    if self:CheckPoleV1() then return true end
     return false
 end
 -- ══════════════════════════════════════════════════════════════════
@@ -2490,7 +2497,7 @@ end
 -- ══════════════════════════════════════════════════════════════════
 --    MAIN CONTROLLER v16.2 FIXED — SINGLE LOOP
 --
---   Priority: Recovery > Sea > Items > Boss > Quest+Farm
+--   Priority: Recovery > Team > Valid Quest+Farm > Sea gate > Items > Boss
 --   CHỈ gọi TravelManager:Request(), KHÔNG tự ghi MovementOwner
 --   [FIX-2] Mỗi subsystem wrap pcall riêng + warn Module Error,
 --           lỗi 1 module không chặn Quest/Farm
@@ -2523,29 +2530,9 @@ task.spawn(function()
             end
 
 
-            -- PRIORITY 1: Sea Progression + Important Items
-            local okMod, modResult = pcall(function()
-                return ItemProgression:RunChecks()
-            end)
-            if not okMod then
-                warn("[BobonHub] Module Error: ItemProgression: " .. tostring(modResult))
-            elseif modResult then
-                return
-            end
-
-
-            -- PRIORITY 2: Boss
-            local okBoss, bossResult = pcall(function()
-                return BossManager:TryFightBoss()
-            end)
-            if not okBoss then
-                warn("[BobonHub] Module Error: BossManager: " .. tostring(bossResult))
-            elseif bossResult then
-                return
-            end
-
-
-            -- PRIORITY 3: Quest + Farm
+            -- FARM-FIRST GATE: inspect the current level/quest before any
+            -- optional progression.  A valid quest always wins, so item and
+            -- boss routines cannot pull the player away mid-farm.
             local lv = Level()
             local q = GetQ()
 
@@ -2564,6 +2551,36 @@ task.spawn(function()
             -- QuestMatches: true = đúng mob | false = sai mob | nil = không đọc được UI.
             -- Lưu ý: dùng `and` (không `or nil`) để giữ giá trị `false` khi quest sai mob.
             local questOk = hasQuest and QuestMatches(q.M)
+
+            -- No quest means a safe window: finish mandatory Sea progression,
+            -- then claim level-appropriate items before requesting the next
+            -- farming quest.  Wrong/unknown quest stays on quest repair first.
+            local seaWindow = (not hasQuest) or questOk == false
+            local itemWindow = not hasQuest
+            local okMod, modResult = pcall(function()
+                return ItemProgression:RunChecks(seaWindow, itemWindow)
+            end)
+            if not okMod then
+                warn("[BobonHub] Module Error: ItemProgression: " .. tostring(modResult))
+            elseif modResult then
+                return
+            end
+
+            -- Boss drops are optional Kaitun work; only scan/fight while no
+            -- quest is active, never during normal level farming.
+            if itemWindow then
+                local okBoss, bossResult = pcall(function()
+                    return BossManager:TryFightBoss()
+                end)
+                if not okBoss then
+                    warn("[BobonHub] Module Error: BossManager: " .. tostring(bossResult))
+                elseif bossResult then
+                    return
+                end
+            end
+
+
+            -- QUEST + FARM (primary progression from level 1 to max)
 
             if hasQuest and questOk ~= false then
                 -- Quest hợp lệ (true) hoặc nil = UI không đọc được nhưng vừa
