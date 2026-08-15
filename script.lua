@@ -1,7 +1,7 @@
 -- =================================================================
---         BOBON HUB v16.2 FIXED | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.3 DATA | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.2 FIXED
+--         Base: v15.0 | Version: v16.3 DATA
 --
 --  AUDIT FIXES v16.0-FIXED:
 --  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
@@ -73,9 +73,8 @@
 --           trigger khi chi mob chet/target mat/lag ngan.
 --  [FIX-P11] Travel target validation: NaN/invalid position reject ca
 --           Instance va CFrame/Vector3, clamp Y an toan.
---  [FIX-P12] QDB: Lv2425-2474 = Chocolate Bar Battler dung (Lv2453
---           dung quest). Kaitun > Lv2800 chua co du lieu toa do chinh
---           xac -> GIU NGUYEN QDB (khong bi' a toa do). Ghi ro.
+--  [FIX-P12] QDB: cap nhat ten mob + quest + toa do dung cho Sea 1/2/3,
+--           bao phu level 1-2800; khong dung lai bang QDB cu bi lech map.
 --  [FIX-P13] Main Controller: giu priority Recovery > Sea > Items >
 --           Boss > Quest > Farm. Khong tao loop movement khac.
 --  [FIX-P14] Error isolation: moi subsystem pcall/xpcall rieng, loi
@@ -122,7 +121,7 @@ repeat task.wait() until game.Players.LocalPlayer.Character:FindFirstChild("Huma
 repeat task.wait() until game.Players.LocalPlayer:FindFirstChild("Data")
 
 
-print("[BobonHub v16.2 FIXED] Loading...")
+print("[BobonHub v16.3 DATA] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -140,7 +139,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.2 FIXED] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.3 DATA] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -154,6 +153,8 @@ _G.Settings = {
     HitboxSize          = 50,
     FlySpeed            = 180,
     MinY                = 10,
+    -- Submerged Island (Sea 3) dùng tọa độ âm dưới mặt biển.
+    UnderwaterMinY      = -2300,
     CloseThreshold      = 35,
     FarmArrivalThreshold= 15,
     -- [A-4] Farm position / gom mob config (điều chỉnh theo game physics)
@@ -161,7 +162,7 @@ _G.Settings = {
     TargetRefreshInterval = 0.2,
     PositionRefreshInterval = 0.1,
     -- [A-2] Cooldown retry equip melee (giây)
-    EquipCooldown       = 3,
+    EquipCooldown       = 0.5,
     -- [A-1] Cooldown giữa các lần chọn team (giây)
     TeamCooldown        = 5,
     -- [A-7] Watchdog: travel không tiến quá N giây → light fix
@@ -199,6 +200,17 @@ _G.Settings = {
 --   Centralized target/action management
 -- ══════════════════════════════════════════════════════════════════
 _G.BobonStatus = "Initializing..."
+
+local function IsUnderwaterY(y)
+    return game.PlaceId == 7449423635
+        and type(y) == "number" and y <= -100
+        and y >= (_G.Settings.UnderwaterMinY or -2300)
+end
+
+local function IsAllowedWorldY(y)
+    return type(y) == "number"
+        and (y >= _G.Settings.MinY - 10 or IsUnderwaterY(y))
+end
 
 
 _G.State = {
@@ -298,7 +310,7 @@ function _G.State:IsTargetValid(target)
     if not root then return false end
     -- [FIX-7] Reject target o duoi bien / vi tri bat thuong
     local ok, posY = pcall(function() return root.Position.Y end)
-    if not ok or posY < _G.Settings.MinY - 10 then return false end
+    if not ok or not IsAllowedWorldY(posY) then return false end
     return true
 end
 
@@ -425,7 +437,7 @@ task.spawn(function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.2 FIXED] UI Ready!")
+    print("[BobonHub v16.3 DATA] UI Ready!")
 end)
 
 
@@ -511,6 +523,15 @@ local function IsValidPos(p)
         and p.X == p.X and p.Y == p.Y and p.Z == p.Z
 end
 
+-- Enemy models thường có hậu tố "[Lv. n]"; chuẩn hoá để FindNearestMob
+-- vẫn tìm được mob ở mọi sea và không bị phụ thuộc tên hiển thị của server.
+local function IsEnemyNamed(enemy, wanted)
+    if not enemy or not wanted then return false end
+    if enemy.Name == wanted then return true end
+    local base = enemy.Name:gsub("%s*%[%s*Lv%.%s*%d+%s*%]$", "")
+    return base == wanted
+end
+
 
 -- [A-8] DEBUG log: chỉ in khi _G.Settings.DEBUG = true, không spam console
 local function DLog(tag, msg)
@@ -577,7 +598,9 @@ local function HandleQuestAtGiver(q, atGiver)
     local okRQ = pcall(function()
         CommF_:InvokeServer("RequestQuest", q.Q, q.QL)
     end)
-    if okRQ then
+    task.wait(0.2)
+    local accepted = HasQuest()
+    if okRQ and accepted then
         _G.BobonStatus = "Quest: Đã gửi " .. q.M
         DLog("QUEST", "Đã gửi: " .. q.M)
     else
@@ -594,14 +617,25 @@ local function Attack()
     local now = tick()
     if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return end
     _G.State.LastAttackTime = now
-    pcall(function() VU:CaptureController(); VU:ClickButton1(Vector2.new()) end)
+    pcall(function()
+        local c = Char()
+        local tool = c and c:FindFirstChildOfClass("Tool")
+        if tool then
+            tool:Activate()
+        end
+        VU:CaptureController()
+        VU:Button1Down(Vector2.new(0, 0))
+        VU:Button1Up(Vector2.new(0, 0))
+        VU:ClickButton1(Vector2.new(0, 0))
+    end)
 end
 
 
 local MeleeList = {
     "Godhuman","Superhuman","Death Step","Electric Claw",
     "Dragon Talon","Sharkman Karate","Dragon Claw",
-    "Fishman Karate","Black Leg","Electro","Combat","Sanguine Art"
+    "Fishman Karate","Water Kung Fu","Dark Step","Black Leg",
+    "Electro","Combat","Sanguine Art"
 }
 
 
@@ -610,43 +644,55 @@ local MeleeList = {
 local EquipmentController = {}
 EquipmentController.LastEquip = 0
 EquipmentController.LastResult = "none"
+EquipmentController.PendingName = nil
+
+local function IsMeleeTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    for _, name in ipairs(MeleeList) do
+        if tool.Name == name then return true end
+    end
+    local ok, tip = pcall(function() return tool.ToolTip end)
+    return ok and type(tip) == "string" and string.find(string.lower(tip), "melee", 1, true) ~= nil
+end
 
 
 function EquipmentController:EquipMelee()
     local c = Char()
-    if not c or not c:FindFirstChildOfClass("Humanoid") then
+    local hum = c and c:FindFirstChildOfClass("Humanoid")
+    if not c or not hum then
         self.LastResult = "noChar"
         return false
     end
-    -- Đang cầm melee → không equip lại
-    for _, n in ipairs(MeleeList) do
-        if c:FindFirstChild(n) then
+
+    -- Verify pending equip trước khi thử equip lần tiếp theo.
+    for _, tool in ipairs(c:GetChildren()) do
+        if IsMeleeTool(tool) then
+            self.PendingName = tool.Name
             self.LastResult = "holding"
             return true
         end
     end
-    -- Cooldown retry → không spam EquipTool mỗi frame
-    local now = os.time()
+
+    -- Cooldown chỉ chặn lệnh EquipTool mới; không chặn việc verify tool.
+    local now = tick()
     if now - self.LastEquip < _G.Settings.EquipCooldown then
         self.LastResult = "cooldown"
         return false
     end
     self.LastEquip = now
-    for _, n in ipairs(MeleeList) do
-        local t = LP.Backpack:FindFirstChild(n)
-        if t then
-            pcall(function()
-                c:FindFirstChildOfClass("Humanoid"):EquipTool(t)
-            end)
-            -- Verify: tool phải nằm trên character sau khi equip
-            task.delay(0.5, function()
-                if Char() and Char():FindFirstChild(n) then
-                    DLog("EQUIP", "Melee verified: " .. n)
-                end
-            end)
-            self.LastResult = "equipped"
-            DLog("EQUIP", "Equipped: " .. n)
-            return true
+
+    local backpack = LP:FindFirstChildOfClass("Backpack") or LP:FindFirstChild("Backpack")
+    if not backpack then
+        self.LastResult = "noBackpack"
+        return false
+    end
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if IsMeleeTool(tool) then
+            self.PendingName = tool.Name
+            local ok = pcall(function() hum:EquipTool(tool) end)
+            self.LastResult = ok and "equipping" or "equipError"
+            DLog("EQUIP", "Equip request: " .. tool.Name)
+            return false
         end
     end
     self.LastResult = "noMelee"
@@ -665,6 +711,97 @@ local function EquipMelee()
     return EquipmentController:EquipMelee()
 end
 
+-- Weapon fallback: Kaitun luôn ưu tiên melee, sau đó sword rồi gun.
+-- Một số style trong Backpack không có ToolTip ổn định, vì vậy dùng cả
+-- danh sách tên và nhóm ToolType/ToolTip để nhận diện mà không phụ thuộc UI.
+local SwordList = {
+    "Cutlass","Katana","Dual Katana","Triple Katana","Iron Mace",
+    "Shark Saw","Soul Cane","Bisento","Saber","Pole (1st Form)",
+    "Rengoku","Midnight Blade","Yama","Tushita","Buddy Sword",
+    "Canvander","Twin Hooks","Spikey Trident","Cursed Dual Katana",
+    "Dark Dagger","Hallow Scythe","Shark Anchor","Dragonheart",
+}
+local GunList = {
+    "Slingshot","Musket","Flintlock","Refined Flintlock","Cannon",
+    "Kabucha","Venom Bow","Acidum Rifle","Bizarre Rifle","Soul Guitar",
+}
+
+local function ToolNameIn(list, tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    for _, name in ipairs(list) do
+        if tool.Name == name then return true end
+    end
+    return false
+end
+
+local function IsSwordTool(tool)
+    if ToolNameIn(SwordList, tool) then return true end
+    local ok, tip = pcall(function() return tool and tool.ToolTip end)
+    tip = ok and type(tip) == "string" and string.lower(tip) or ""
+    return string.find(tip, "sword", 1, true) ~= nil
+        or string.find(tip, "blade", 1, true) ~= nil
+end
+
+local function IsGunTool(tool)
+    if ToolNameIn(GunList, tool) then return true end
+    local ok, tip = pcall(function() return tool and tool.ToolTip end)
+    tip = ok and type(tip) == "string" and string.lower(tip) or ""
+    return string.find(tip, "gun", 1, true) ~= nil
+        or string.find(tip, "rifle", 1, true) ~= nil
+        or string.find(tip, "bow", 1, true) ~= nil
+end
+
+local WeaponController = {
+    LastEquip = 0,
+    LastResult = "none",
+}
+
+function WeaponController:IsCombatTool(tool)
+    return IsMeleeTool(tool) or IsSwordTool(tool) or IsGunTool(tool)
+end
+
+function WeaponController:EquipPreferred()
+    local c = Char()
+    local hum = c and c:FindFirstChildOfClass("Humanoid")
+    if not c or not hum then self.LastResult = "noChar"; return false end
+    local held = c:FindFirstChildOfClass("Tool")
+    if held and self:IsCombatTool(held) then
+        self.LastResult = "holding:" .. held.Name
+        return true
+    end
+    local now = tick()
+    if now - self.LastEquip < 0.35 then
+        self.LastResult = "cooldown"
+        return false
+    end
+    local backpack = LP:FindFirstChildOfClass("Backpack") or LP:FindFirstChild("Backpack")
+    if not backpack then self.LastResult = "noBackpack"; return false end
+    local candidate
+    -- melee trước để damage/knockback ổn định; nếu không có thì sword/gun.
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if IsMeleeTool(tool) then candidate = tool; break end
+    end
+    if not candidate then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if IsSwordTool(tool) then candidate = tool; break end
+        end
+    end
+    if not candidate then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if IsGunTool(tool) then candidate = tool; break end
+        end
+    end
+    if not candidate then self.LastResult = "noWeapon"; return false end
+    self.LastEquip = now
+    local ok = pcall(function() hum:EquipTool(candidate) end)
+    self.LastResult = ok and "equipping:" .. candidate.Name or "equipError"
+    return false
+end
+
+local function EquipCombatTool()
+    return WeaponController:EquipPreferred()
+end
+
 
 local function FindMob(name)
     local folder = workspace:FindFirstChild("Enemies")
@@ -672,7 +809,7 @@ local function FindMob(name)
     local best,bd = nil,math.huge
     local hrp = HRP()
     for _,v in ipairs(folder:GetChildren()) do
-        if v.Name==name and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
+        if IsEnemyNamed(v, name) and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
             and v:FindFirstChild("HumanoidRootPart") then
             if hrp then
                 local d=(v.HumanoidRootPart.Position-hrp.Position).Magnitude
@@ -688,7 +825,7 @@ local function FindBoss(name)
     local folder = workspace:FindFirstChild("Enemies")
     if not folder then return nil end
     for _,v in ipairs(folder:GetChildren()) do
-        if v.Name==name and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
+        if IsEnemyNamed(v, name) and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
             and v:FindFirstChild("HumanoidRootPart") then return v end
     end
     return nil
@@ -702,13 +839,13 @@ local function FindNearestMob(mobName)
     local hrp = HRP()
     if not hrp then return nil, math.huge end
     for _,v in ipairs(folder:GetChildren()) do
-        if v.Name==mobName and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
+        if IsEnemyNamed(v, mobName) and v:FindFirstChild("Humanoid") and v.Humanoid.Health>0
             and v:FindFirstChild("HumanoidRootPart") then
             local root = v.HumanoidRootPart
             local ok, pos = pcall(function() return root.Position end)
             if not ok then continue end
             -- [FIX-7] Bo qua mob o duoi bien / vi tri bat thuong
-            if pos.Y < _G.Settings.MinY - 10 then continue end
+            if not IsAllowedWorldY(pos.Y) then continue end
             local d = (pos - hrp.Position).Magnitude
             if d < bd then best,bd=v,d end
         end
@@ -733,7 +870,8 @@ local function GetFarmPosition(mobPos)
     if not IsValidPos(mobPos) then return nil end
     return Vector3.new(
         mobPos.X + _G.Settings.FarmOffsetX,
-        math.max(mobPos.Y + _G.Settings.FarmHeight, _G.Settings.MinY),
+        math.max(mobPos.Y + _G.Settings.FarmHeight,
+            IsUnderwaterY(mobPos.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         mobPos.Z
     )
 end
@@ -750,35 +888,53 @@ local TeamController = {}
 TeamController.LastCheck = 0
 TeamController.Retries = 0
 TeamController.MaxRetries = 6
+TeamController.RetryWindow = 30
+
+local function ClickPiratesChoice()
+    local gui = LP:FindFirstChild("PlayerGui")
+    local choose = gui and gui:FindFirstChild("ChooseTeam", true)
+    local pirates = choose and choose:FindFirstChild("Pirates", true)
+    if not pirates then return false end
+    local button = pirates:IsA("GuiButton") and pirates or pirates:FindFirstChildWhichIsA("GuiButton", true)
+    if not button then return false end
+    return pcall(function() button:Activate() end)
+end
 
 
 -- Trả về true khi player ĐÃ có team. Chưa có → gửi lệnh chọn (có
 -- cooldown), chưa verify xong → false (main loop gọi lại, không chặn farm).
 function TeamController:AutoSelectTeam()
-    if LP.Team and LP.Team.Name ~= "" then
+    if LP.Team and LP.Team.Name == "Pirates" then
         self.Retries = 0
         return true
     end
-    local now = os.time()
+    local now = tick()
     if now - self.LastCheck < _G.Settings.TeamCooldown then return false end
-    if self.Retries >= self.MaxRetries then return false end
+    if now - self.LastCheck > self.RetryWindow then self.Retries = 0 end
+    if self.Retries >= self.MaxRetries then
+        self.LastCheck = now
+        return false
+    end
     self.LastCheck = now
     self.Retries = self.Retries + 1
     DLog("TEAM", "Chưa có team → chọn Pirates (retry " .. self.Retries .. ")")
-    pcall(function()
-        CommF_:InvokeServer("SetTeam", "Pirates")
+    local ok, result = pcall(function()
+        return CommF_:InvokeServer("SetTeam", "Pirates")
     end)
-    task.wait(0.5)
-    pcall(function()
-        CommF_:InvokeServer("ChooseTeam", "Pirates")
-    end)
-    -- VERIFY TEAM (chỉ kiểm tra, không gửi thêm remote)
-    task.delay(3, function()
+    if not ok then
+        warn("[BobonHub] SetTeam error: " .. tostring(result))
+    end
+    if not LP.Team then
+        ClickPiratesChoice()
+    end
+    -- VERIFY TEAM, không spam thêm remote.
+    task.delay(0.75, function()
         if LP.Team then
+            self.Retries = 0
             DLog("TEAM", "Verified team: " .. LP.Team.Name)
         end
     end)
-    return false
+    return LP.Team ~= nil
 end
 
 
@@ -836,8 +992,46 @@ function FarmPositionController:GetFarmPos(mob)
     if sizeY > 6 then extra = math.min(sizeY - 6, 10) end
     return Vector3.new(
         pos.X + _G.Settings.FarmOffsetX,
-        math.max(pos.Y + _G.Settings.FarmHeight + extra, _G.Settings.MinY),
+        math.max(pos.Y + _G.Settings.FarmHeight + extra,
+            IsUnderwaterY(pos.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         pos.Z
+    )
+end
+
+-- Tâm cụm mob: giữ vị trí ở giữa nhóm thay vì bám một mob đơn lẻ.
+-- Cách này hoạt động giống nhau ở cả ba sea và không teleport mob.
+function FarmPositionController:GetClusterFarmPos(primary)
+    if not primary then return nil end
+    local root = primary:FindFirstChild("HumanoidRootPart")
+    if not root then return self:GetFarmPos(primary) end
+    local ok, origin = pcall(function() return root.Position end)
+    if not ok or not IsValidPos(origin) then return self:GetFarmPos(primary) end
+
+    local folder = workspace:FindFirstChild("Enemies")
+    if not folder then return self:GetFarmPos(primary) end
+    local center = Vector3.zero
+    local count = 0
+    local wantedName = primary.Name:gsub("%s*%[%s*Lv%.%s*%d+%s*%]$", "")
+    for _, mob in ipairs(folder:GetChildren()) do
+        local hum = mob:FindFirstChild("Humanoid")
+        local mobRoot = mob:FindFirstChild("HumanoidRootPart")
+        if IsEnemyNamed(mob, wantedName) and hum and hum.Health > 0 and mobRoot then
+            local valid, pos = pcall(function() return mobRoot.Position end)
+            if valid and IsValidPos(pos)
+                and IsAllowedWorldY(pos.Y)
+                and (pos - origin).Magnitude <= _G.Settings.MobGatherRadius then
+                center = center + pos
+                count = count + 1
+            end
+        end
+    end
+    if count == 0 then return self:GetFarmPos(primary) end
+    local avg = center / count
+    return Vector3.new(
+        avg.X + _G.Settings.FarmOffsetX,
+        math.max(avg.Y + _G.Settings.FarmHeight,
+            IsUnderwaterY(avg.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
+        avg.Z
     )
 end
 
@@ -848,10 +1042,10 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
     local folder = workspace:FindFirstChild("Enemies")
     if not folder or not center then return false end
     for _, v in ipairs(folder:GetChildren()) do
-        if v.Name == mobName and v:FindFirstChild("Humanoid")
+        if IsEnemyNamed(v, mobName) and v:FindFirstChild("Humanoid")
             and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
             local p = v.HumanoidRootPart.Position
-            if p.Y >= _G.Settings.MinY - 10
+            if IsAllowedWorldY(p.Y)
                 and (p - center).Magnitude <= _G.Settings.MobGatherRadius then
                 return true
             end
@@ -881,6 +1075,48 @@ TravelManager.NoclipConn = nil
 TravelManager.PhysicsBV = nil
 TravelManager.PhysicsBG = nil
 TravelManager.OriginalCollision = {}
+TravelManager.LastEntranceRequest = 0
+
+-- Dùng entrance remote cho các đảo cách nhau quá xa; nếu không, BodyVelocity
+-- phải bay xuyên toàn map và dễ lệch/đứng giữa biển ở các điểm chuyển sea.
+function TravelManager:MaybeRequestEntrance(targetPos)
+    if not IsValidPos(targetPos) then return end
+    local now = tick()
+    if now - self.LastEntranceRequest < 5 then return end
+    local entrance
+    if targetPos.Y < -1000 and targetPos.X > 8000 and targetPos.Z > 8000 then
+        -- Update 27 Submerged Island: use the live Net remote when present.
+        -- If the island is not unlocked, the call safely fails and normal
+        -- validation prevents a blind teleport to an invalid fallback.
+        local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
+        local speak = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
+        local ok = false
+        if speak then
+            ok = pcall(function() speak:InvokeServer("TravelToSubmergedIsland") end)
+        end
+        self.LastEntranceRequest = now
+        if not ok then DLog("TRAVEL", "Submerged entrance unavailable") end
+        return
+    elseif targetPos.X > 50000 then
+        entrance = Vector3.new(61163.85, 11.68, 1819.78) -- Upper Sky/Fishman
+    elseif targetPos.Z > 30000 then
+        entrance = Vector3.new(923.21, 126.98, 32852.83) -- Cursed Ship
+    elseif targetPos.Y > 5000 and targetPos.X < -7000 then
+        entrance = Vector3.new(-7894.62, 5547.14, -380.29) -- Skylands
+    elseif targetPos.Y > 700 and targetPos.X < -4000 and targetPos.Z < -1500 then
+        entrance = Vector3.new(-4607.82, 872.54, -1667.56) -- Upper Sky
+    elseif targetPos.X > 5000 and targetPos.Z < -5000 then
+        entrance = Vector3.new(-6508.56, 5000.03, -132.84) -- Ice Castle
+    end
+    if not entrance then return end
+    local ok, err = pcall(function()
+        CommF_:InvokeServer("requestEntrance", entrance)
+    end)
+    self.LastEntranceRequest = now
+    if not ok then
+        DLog("TRAVEL", "requestEntrance failed: " .. tostring(err))
+    end
+end
 
 
 function TravelManager:CleanupPhysics(char)
@@ -980,7 +1216,7 @@ function TravelManager:Request(targetCF, owner, options)
             return nil
         end)
         if not okPos or (pos and not IsValidPos(pos)) then return false, "InvalidTarget" end
-        if pos and pos.Y < _G.Settings.MinY - 10 then return false, "InvalidTarget" end
+        if pos and not IsAllowedWorldY(pos.Y) then return false, "InvalidTarget" end
     elseif targetType == "CFrame" or targetType == "Vector3" then
         -- [FIX-P11] Reject NaN/invalid position ngay tại Request()
         local pos = typeof(targetCF) == "CFrame" and targetCF.Position or targetCF
@@ -1015,6 +1251,14 @@ function TravelManager:Request(targetCF, owner, options)
         end
         if tpos and IsValidPos(tpos) then
             startDist = (startPos - tpos).Magnitude
+            if owner == "Farm" and startDist > 10000 then
+                self:MaybeRequestEntrance(tpos)
+                local refreshed = HRP()
+                if refreshed and IsValidPos(refreshed.Position) then
+                    startPos = refreshed.Position
+                    startDist = (startPos - tpos).Magnitude
+                end
+            end
         end
     end
 
@@ -1171,7 +1415,7 @@ function TravelManager:Request(targetCF, owner, options)
                 targetLostTimer = 0
                 if isFarmHover then
                     -- [A-9] Vị trí farm phía TRÊN đầu mob (adaptive theo size)
-                    targetPos = FarmPositionController:GetFarmPos(self.TargetRef.Parent)
+                    targetPos = FarmPositionController:GetClusterFarmPos(self.TargetRef.Parent)
                     if not targetPos then
                         targetPos = GetFarmPosition(p)
                     end
@@ -1185,7 +1429,7 @@ function TravelManager:Request(targetCF, owner, options)
                     targetPos = p
                 end
                 -- Reject target dưới biển
-                if targetPos.Y < _G.Settings.MinY - 10 then
+                if not IsAllowedWorldY(targetPos.Y) then
                     warn("[Travel] Reject target dưới biển (Y=" .. string.format("%.1f", targetPos.Y) .. ")")
                     if isFarmHover then
                         if HandleFarmInvalid("Target dưới biển") then
@@ -1208,7 +1452,7 @@ function TravelManager:Request(targetCF, owner, options)
 
 
             -- Anti-fall clamp target Y (chỉ cho target cố định CFrame/Vector3)
-            if targetPos.Y < _G.Settings.MinY then
+            if targetPos.Y < _G.Settings.MinY and not IsUnderwaterY(targetPos.Y) then
                 targetPos = Vector3.new(targetPos.X, _G.Settings.MinY, targetPos.Z)
             end
 
@@ -1242,7 +1486,7 @@ function TravelManager:Request(targetCF, owner, options)
 
             -- [FIX-P1] Anti-fall trong travel: VỪA nâng lên VỪA bay ngang về
             -- target (không kẹt vòng lặp "chỉ đi lên")
-            if currentPos.Y < _G.Settings.MinY then
+            if currentPos.Y < _G.Settings.MinY and not IsUnderwaterY(targetPos.Y) then
                 local liftOffset = targetPos - currentPos
                 local liftDir = liftOffset.Magnitude > 0.1 and liftOffset.Unit or Vector3.new(0, 0, 0)
                 bv.Velocity = Vector3.new(liftDir.X * flySpeed, 60, liftDir.Z * flySpeed)
@@ -1552,61 +1796,103 @@ end)
 
 
 -- ══════════════════════════════════════════════════════════════════
---          QUEST DATABASE v16.1 AUDITED (GIỮ NGUYÊN)
+--          QUEST DATABASE v16.3 (SEA 1/2/3 COORDINATES)
 -- ══════════════════════════════════════════════════════════════════
 local QDB = {
-    {Min=1,Max=14,Q="BanditQuest1",M="Bandit",QL=1,QC=CFrame.new(1059,17,1550),MC=CFrame.new(1145,17,1634)},
-    {Min=15,Max=29,Q="JungleQuest",M="Monkey",QL=1,QC=CFrame.new(-1598,37,153),MC=CFrame.new(-1448,50,24)},
-    {Min=30,Max=59,Q="BuggyQuest1",M="Brute",QL=1,QC=CFrame.new(-1141,5,3831),MC=CFrame.new(-1145,15,4350)},
-    {Min=60,Max=74,Q="DesertQuest",M="Desert Bandit",QL=1,QC=CFrame.new(894,7,4391),MC=CFrame.new(932,7,4484)},
-    {Min=75,Max=89,Q="DesertQuest",M="Desert Officer",QL=2,QC=CFrame.new(894,7,4391),MC=CFrame.new(1580,11,4373)},
-    {Min=90,Max=99,Q="SnowQuest",M="Snow Bandit",QL=1,QC=CFrame.new(1389,88,-1298),MC=CFrame.new(1376,87,-1396)},
-    {Min=100,Max=119,Q="SnowQuest",M="Snowman",QL=2,QC=CFrame.new(1389,88,-1298),MC=CFrame.new(1201,472,-1401)},
-    {Min=120,Max=149,Q="MarineQuest2",M="Chief Petty Officer",QL=1,QC=CFrame.new(-5039,29,4324),MC=CFrame.new(-4882,23,4255)},
-    {Min=150,Max=174,Q="SkyQuest",M="Sky Bandit",QL=1,QC=CFrame.new(-4850,718,-2620),MC=CFrame.new(-4953,295,-2899)},
-    {Min=175,Max=209,Q="PrisonerQuest",M="Prisoner",QL=1,QC=CFrame.new(5308,2,474),MC=CFrame.new(5411,96,690)},
-    {Min=210,Max=249,Q="PrisonerQuest",M="Dangerous Prisoner",QL=2,QC=CFrame.new(5308,2,474),MC=CFrame.new(5654,15,866)},
-    {Min=250,Max=299,Q="ColosseumQuest",M="Gladiator",QL=1,QC=CFrame.new(-1580,7,296),MC=CFrame.new(-1521,86,405)},
-    {Min=300,Max=374,Q="MagmaQuest",M="Military Spy",QL=1,QC=CFrame.new(-5316,12,8515),MC=CFrame.new(-5787,76,8349)},
-    {Min=375,Max=449,Q="FishmanQuest",M="Fishman Warrior",QL=1,QC=CFrame.new(61123,19,1569),MC=CFrame.new(60879,19,1549)},
-    {Min=450,Max=524,Q="FishmanQuest",M="Fishman Commando",QL=2,QC=CFrame.new(61123,19,1569),MC=CFrame.new(61738,65,1584)},
-    {Min=525,Max=624,Q="SkyExp1Quest",M="God's Guard",QL=1,QC=CFrame.new(-4722,845,-1954),MC=CFrame.new(-4698,845,-1912)},
-    {Min=625,Max=699,Q="SkyExp2Quest",M="Royal Squad",QL=1,QC=CFrame.new(-7906,5636,-1412),MC=CFrame.new(-7555,5637,-1420)},
-    {Min=700,Max=774,Q="Area1Quest",M="Raider",QL=1,QC=CFrame.new(-427,73,1837),MC=CFrame.new(-746,39,2507)},
-    {Min=775,Max=849,Q="Area1Quest",M="Mercenary",QL=2,QC=CFrame.new(-427,73,1837),MC=CFrame.new(-874,141,1312)},
-    {Min=850,Max=899,Q="Area2Quest",M="Swan Pirate",QL=1,QC=CFrame.new(634,73,918),MC=CFrame.new(878,122,1235)},
-    {Min=900,Max=949,Q="Area2Quest",M="Marine Lieutenant",QL=2,QC=CFrame.new(634,73,918),MC=CFrame.new(-845,77,2016)},
-    {Min=950,Max=999,Q="MarineQuest3",M="Marine Captain",QL=1,QC=CFrame.new(-2441,73,1891),MC=CFrame.new(-2035,73,2050)},
-    {Min=1000,Max=1049,Q="ZombieQuest",M="Zombie",QL=1,QC=CFrame.new(-5494,49,-795),MC=CFrame.new(-5736,126,-653)},
-    {Min=1050,Max=1099,Q="ZombieQuest",M="Vampire",QL=2,QC=CFrame.new(-5494,49,-795),MC=CFrame.new(-6033,7,-1317)},
-    {Min=1100,Max=1174,Q="NinjaQuest",M="Ninja Assassin",QL=1,QC=CFrame.new(-5377,39,-4826),MC=CFrame.new(-5238,84,-4634)},
-    {Min=1175,Max=1249,Q="IceSideQuest",M="Snow Trooper",QL=1,QC=CFrame.new(-6061,16,-4903),MC=CFrame.new(-5693,16,-4898)},
-    {Min=1250,Max=1299,Q="ShipQuest1",M="Lab Subordinate",QL=1,QC=CFrame.new(-9505,38,4088),MC=CFrame.new(-9230,45,4294)},
-    {Min=1300,Max=1349,Q="ShipQuest2",M="Horned Warrior",QL=1,QC=CFrame.new(-9481,72,6059),MC=CFrame.new(-6779,83,5928)},
-    {Min=1350,Max=1399,Q="FrostQuest",M="Lava Pirate",QL=1,QC=CFrame.new(-5249,38,-4445),MC=CFrame.new(-5270,42,-4800)},
-    {Min=1400,Max=1449,Q="ForgottenQuest",M="Ship Engineer",QL=1,QC=CFrame.new(-3053,237,-10145),MC=CFrame.new(-9300,30,-9940)},
-    {Min=1450,Max=1524,Q="IceCastleQuest",M="Arctic Warrior",QL=2,QC=CFrame.new(-5539,314,-2972),MC=CFrame.new(-5990,340,-2800)},
-    {Min=1525,Max=1599,Q="PiratePortQuest",M="Pirate Millionaire",QL=1,QC=CFrame.new(-290,44,5580),MC=CFrame.new(-435,191,5610)},
-    {Min=1600,Max=1649,Q="AmazonQuest",M="Dragon Crew Warrior",QL=1,QC=CFrame.new(5832,52,-1105),MC=CFrame.new(6339,52,-1213)},
-    {Min=1650,Max=1724,Q="AmazonQuest2",M="Female Islander",QL=1,QC=CFrame.new(5448,602,751),MC=CFrame.new(5792,820,863)},
-    {Min=1725,Max=1799,Q="MarineTreeIsland",M="Marine Commodore",QL=1,QC=CFrame.new(2180,29,-6737),MC=CFrame.new(2490,73,-7070)},
-    {Min=1800,Max=1874,Q="DeepForestIsland",M="Fishman Raider",QL=1,QC=CFrame.new(-13234,333,-7625),MC=CFrame.new(-10560,332,-8754)},
-    {Min=1875,Max=1924,Q="DeepForestIsland",M="Fishman Captain",QL=2,QC=CFrame.new(-13234,333,-7625),MC=CFrame.new(-11465,332,-8770)},
-    {Min=1925,Max=1974,Q="DeepForestIsland2",M="Forest Pirate",QL=1,QC=CFrame.new(-12684,391,-9902),MC=CFrame.new(-13225,425,-7755)},
-    {Min=1975,Max=2024,Q="PeanutIsland",M="Peanut Scout",QL=1,QC=CFrame.new(-2104,38,-10192),MC=CFrame.new(-2124,123,-10435)},
-    {Min=2025,Max=2074,Q="PeanutIsland",M="Peanut President",QL=2,QC=CFrame.new(-2104,38,-10192),MC=CFrame.new(-1876,38,-10946)},
-    {Min=2075,Max=2124,Q="IceCreamIsland",M="Ice Cream Chef",QL=1,QC=CFrame.new(-820,66,-10965),MC=CFrame.new(-821,44,-11253)},
-    {Min=2125,Max=2174,Q="IceCreamIsland",M="Ice Cream Commander",QL=2,QC=CFrame.new(-820,66,-10965),MC=CFrame.new(-610,127,-11034)},
-    {Min=2175,Max=2224,Q="CakeQuest1",M="Cookie Crafter",QL=1,QC=CFrame.new(-2022,38,-12030),MC=CFrame.new(-2365,38,-12099)},
-    {Min=2225,Max=2274,Q="CakeQuest1",M="Cake Guard",QL=2,QC=CFrame.new(-2022,38,-12030),MC=CFrame.new(-1651,38,-12293)},
-    {Min=2275,Max=2324,Q="CakeQuest2",M="Baking Staff",QL=1,QC=CFrame.new(-1927,38,-12843),MC=CFrame.new(-1980,38,-12763)},
-    {Min=2325,Max=2374,Q="CakeQuest2",M="Head Baker",QL=2,QC=CFrame.new(-1927,38,-12843),MC=CFrame.new(-2235,53,-12858)},
-    {Min=2375,Max=2424,Q="ChocQuest1",M="Cocoa Warrior",QL=1,QC=CFrame.new(233,25,-12201),MC=CFrame.new(167,26,-12238)},
-    {Min=2425,Max=2474,Q="ChocQuest1",M="Chocolate Bar Battler",QL=2,QC=CFrame.new(233,25,-12201),MC=CFrame.new(583,77,-12463)},
-    {Min=2475,Max=2524,Q="ChocQuest2",M="Sweet Thief",QL=1,QC=CFrame.new(151,25,-12774),MC=CFrame.new(165,76,-12601)},
-    {Min=2525,Max=2574,Q="ChocQuest2",M="Candy Rebel",QL=2,QC=CFrame.new(151,25,-12774),MC=CFrame.new(134,77,-12882)},
-    {Min=2575,Max=2649,Q="CandyQuest1",M="Candy Pirate",QL=1,QC=CFrame.new(-1149,14,-14453),MC=CFrame.new(-1380,14,-14453)},
-    {Min=2650,Max=2800,Q="CandyQuest1",M="Snow Demon",QL=2,QC=CFrame.new(-1149,14,-14453),MC=CFrame.new(-907,14,-14453)},
+    {Min=1,Max=9,Q="BanditQuest1",M="Bandit",QL=1,QC=CFrame.new(1059.37,15.45,1550.42),MC=CFrame.new(1045.96,27.00,1560.82)},
+    {Min=10,Max=14,Q="JungleQuest",M="Monkey",QL=1,QC=CFrame.new(-1598.09,35.55,153.38),MC=CFrame.new(-1448.52,67.85,11.47)},
+    {Min=15,Max=29,Q="JungleQuest",M="Gorilla",QL=2,QC=CFrame.new(-1598.09,35.55,153.38),MC=CFrame.new(-1129.88,40.46,-525.42)},
+    {Min=30,Max=39,Q="BuggyQuest1",M="Pirate",QL=1,QC=CFrame.new(-1141.07,4.10,3831.55),MC=CFrame.new(-1103.51,13.75,3896.09)},
+    {Min=40,Max=59,Q="BuggyQuest1",M="Brute",QL=2,QC=CFrame.new(-1141.07,4.10,3831.55),MC=CFrame.new(-1140.08,14.81,4322.92)},
+    {Min=60,Max=74,Q="DesertQuest",M="Desert Bandit",QL=1,QC=CFrame.new(894.49,5.14,4392.43),MC=CFrame.new(924.80,6.45,4481.59)},
+    {Min=75,Max=89,Q="DesertQuest",M="Desert Officer",QL=2,QC=CFrame.new(894.49,5.14,4392.43),MC=CFrame.new(1608.28,8.61,4371.01)},
+    {Min=90,Max=99,Q="SnowQuest",M="Snow Bandit",QL=1,QC=CFrame.new(1389.74,88.15,-1298.91),MC=CFrame.new(1354.35,87.27,-1393.95)},
+    {Min=100,Max=119,Q="SnowQuest",M="Snowman",QL=2,QC=CFrame.new(1389.74,88.15,-1298.91),MC=CFrame.new(1201.64,144.58,-1550.07)},
+    {Min=120,Max=149,Q="MarineQuest2",M="Chief Petty Officer",QL=1,QC=CFrame.new(-5039.59,27.35,4324.68),MC=CFrame.new(-4881.23,22.65,4273.75)},
+    {Min=150,Max=174,Q="SkyQuest",M="Sky Bandit",QL=1,QC=CFrame.new(-4839.53,716.37,-2619.44),MC=CFrame.new(-4953.21,295.74,-2899.23)},
+    {Min=175,Max=189,Q="SkyQuest",M="Dark Master",QL=2,QC=CFrame.new(-4839.53,716.37,-2619.44),MC=CFrame.new(-5259.84,391.40,-2229.04)},
+    {Min=190,Max=209,Q="PrisonerQuest",M="Prisoner",QL=1,QC=CFrame.new(5308.93,1.66,475.12),MC=CFrame.new(5098.97,-0.32,474.24)},
+    {Min=210,Max=249,Q="PrisonerQuest",M="Dangerous Prisoner",QL=2,QC=CFrame.new(5308.93,1.66,475.12),MC=CFrame.new(5654.56,15.63,866.30)},
+    {Min=250,Max=274,Q="ColosseumQuest",M="Toga Warrior",QL=1,QC=CFrame.new(-1580.05,6.35,-2986.48),MC=CFrame.new(-1820.21,51.68,-2740.67)},
+    {Min=275,Max=299,Q="ColosseumQuest",M="Gladiator",QL=2,QC=CFrame.new(-1580.05,6.35,-2986.48),MC=CFrame.new(-1292.84,56.38,-3339.03)},
+    {Min=300,Max=324,Q="MagmaQuest",M="Military Soldier",QL=1,QC=CFrame.new(-5313.37,10.95,8515.29),MC=CFrame.new(-5411.16,11.08,8454.29)},
+    {Min=325,Max=374,Q="MagmaQuest",M="Military Spy",QL=2,QC=CFrame.new(-5313.37,10.95,8515.29),MC=CFrame.new(-5802.87,86.26,8828.86)},
+    {Min=375,Max=399,Q="FishmanQuest",M="Fishman Warrior",QL=1,QC=CFrame.new(61122.65,18.50,1569.40),MC=CFrame.new(60878.30,18.48,1543.76)},
+    {Min=400,Max=449,Q="FishmanQuest",M="Fishman Commando",QL=2,QC=CFrame.new(61122.65,18.50,1569.40),MC=CFrame.new(61922.63,18.48,1493.93)},
+    {Min=450,Max=474,Q="SkyExp1Quest",M="God's Guard",QL=1,QC=CFrame.new(-4721.89,843.87,-1949.97),MC=CFrame.new(-4710.04,845.28,-1927.31)},
+    {Min=475,Max=524,Q="SkyExp1Quest",M="Shanda",QL=2,QC=CFrame.new(-7859.10,5544.19,-381.48),MC=CFrame.new(-7678.49,5566.40,-497.22)},
+    {Min=525,Max=549,Q="SkyExp2Quest",M="Royal Squad",QL=1,QC=CFrame.new(-7906.82,5634.66,-1411.99),MC=CFrame.new(-7624.25,5658.13,-1467.35)},
+    {Min=550,Max=624,Q="SkyExp2Quest",M="Royal Soldier",QL=2,QC=CFrame.new(-7906.82,5634.66,-1411.99),MC=CFrame.new(-7836.75,5645.66,-1790.62)},
+    {Min=625,Max=649,Q="FountainQuest",M="Galley Pirate",QL=1,QC=CFrame.new(5259.82,37.35,4050.03),MC=CFrame.new(5551.02,78.90,3930.41)},
+    {Min=650,Max=699,Q="FountainQuest",M="Galley Captain",QL=2,QC=CFrame.new(5259.82,37.35,4050.03),MC=CFrame.new(5441.95,42.50,4950.09)},
+
+    {Min=700,Max=724,Q="Area1Quest",M="Raider",QL=1,QC=CFrame.new(-429.54,71.77,1836.18),MC=CFrame.new(-728.33,52.78,2345.77)},
+    {Min=725,Max=774,Q="Area1Quest",M="Mercenary",QL=2,QC=CFrame.new(-429.54,71.77,1836.18),MC=CFrame.new(-1004.32,80.16,1424.62)},
+    {Min=775,Max=799,Q="Area2Quest",M="Swan Pirate",QL=1,QC=CFrame.new(638.44,71.77,918.28),MC=CFrame.new(1068.66,137.61,1322.11)},
+    {Min=800,Max=874,Q="Area2Quest",M="Factory Staff",QL=2,QC=CFrame.new(632.70,73.11,918.67),MC=CFrame.new(73.08,81.86,-27.47)},
+    {Min=875,Max=899,Q="MarineQuest3",M="Marine Lieutenant",QL=1,QC=CFrame.new(-2440.80,71.71,-3216.07),MC=CFrame.new(-2821.37,75.90,-3070.09)},
+    {Min=900,Max=949,Q="MarineQuest3",M="Marine Captain",QL=2,QC=CFrame.new(-2440.80,71.71,-3216.07),MC=CFrame.new(-1861.23,80.18,-3254.70)},
+    {Min=950,Max=974,Q="ZombieQuest",M="Zombie",QL=1,QC=CFrame.new(-5497.06,47.59,-795.24),MC=CFrame.new(-5657.78,78.97,-928.69)},
+    {Min=975,Max=999,Q="ZombieQuest",M="Vampire",QL=2,QC=CFrame.new(-5497.06,47.59,-795.24),MC=CFrame.new(-6037.67,32.18,-1340.66)},
+    {Min=1000,Max=1049,Q="SnowMountainQuest",M="Snow Trooper",QL=1,QC=CFrame.new(609.86,400.12,-5372.26),MC=CFrame.new(549.15,427.39,-5563.70)},
+    {Min=1050,Max=1099,Q="SnowMountainQuest",M="Winter Warrior",QL=2,QC=CFrame.new(609.86,400.12,-5372.26),MC=CFrame.new(1142.75,475.64,-5199.42)},
+    {Min=1100,Max=1124,Q="IceSideQuest",M="Lab Subordinate",QL=1,QC=CFrame.new(-6064.07,15.24,-4902.98),MC=CFrame.new(-5707.47,15.95,-4513.39)},
+    {Min=1125,Max=1174,Q="IceSideQuest",M="Horned Warrior",QL=2,QC=CFrame.new(-6064.07,15.24,-4902.98),MC=CFrame.new(-6341.37,15.95,-5723.16)},
+    {Min=1175,Max=1199,Q="FireSideQuest",M="Magma Ninja",QL=1,QC=CFrame.new(-5428.03,15.06,-5299.43),MC=CFrame.new(-5449.67,76.66,-5808.20)},
+    {Min=1200,Max=1249,Q="FireSideQuest",M="Lava Pirate",QL=2,QC=CFrame.new(-5428.03,15.06,-5299.43),MC=CFrame.new(-5213.33,49.74,-4701.45)},
+    {Min=1250,Max=1274,Q="ShipQuest1",M="Ship Deckhand",QL=1,QC=CFrame.new(1037.80,125.09,32911.60),MC=CFrame.new(1212.01,150.79,33059.25)},
+    {Min=1275,Max=1299,Q="ShipQuest1",M="Ship Engineer",QL=2,QC=CFrame.new(1037.80,125.09,32911.60),MC=CFrame.new(919.48,43.54,32779.97)},
+    {Min=1300,Max=1324,Q="ShipQuest2",M="Ship Steward",QL=1,QC=CFrame.new(968.81,125.09,33244.13),MC=CFrame.new(919.44,129.56,33436.04)},
+    {Min=1325,Max=1349,Q="ShipQuest2",M="Ship Officer",QL=2,QC=CFrame.new(968.81,125.09,33244.13),MC=CFrame.new(1036.02,181.44,33315.73)},
+    {Min=1350,Max=1374,Q="FrostQuest",M="Arctic Warrior",QL=1,QC=CFrame.new(5667.66,26.80,-6486.09),MC=CFrame.new(5966.25,62.97,-6179.38)},
+    {Min=1375,Max=1424,Q="FrostQuest",M="Snow Lurker",QL=2,QC=CFrame.new(5667.66,26.80,-6486.09),MC=CFrame.new(5407.07,69.19,-6880.88)},
+    {Min=1425,Max=1449,Q="ForgottenQuest",M="Sea Soldier",QL=1,QC=CFrame.new(-3054.44,235.54,-10142.82),MC=CFrame.new(-3028.22,64.67,-9775.43)},
+    {Min=1450,Max=1499,Q="ForgottenQuest",M="Water Fighter",QL=2,QC=CFrame.new(-3054.44,235.54,-10142.82),MC=CFrame.new(-3352.90,285.02,-10534.84)},
+
+    {Min=1500,Max=1524,Q="PiratePortQuest",M="Pirate Millionaire",QL=1,QC=CFrame.new(-450.10,107.68,5950.73),MC=CFrame.new(-246.00,47.31,5584.10)},
+    {Min=1525,Max=1574,Q="PiratePortQuest",M="Pistol Billionaire",QL=2,QC=CFrame.new(-450.10,107.68,5950.73),MC=CFrame.new(-54.81,83.77,5947.84)},
+    {Min=1575,Max=1599,Q="DragonCrewQuest",M="Dragon Crew Warrior",QL=1,QC=CFrame.new(6750.49,127.45,-711.03),MC=CFrame.new(6709.76,52.34,-1139.03)},
+    {Min=1600,Max=1624,Q="DragonCrewQuest",M="Dragon Crew Archer",QL=2,QC=CFrame.new(6750.49,127.45,-711.03),MC=CFrame.new(6668.76,481.38,329.12)},
+    {Min=1625,Max=1649,Q="VenomCrewQuest",M="Hydra Enforcer",QL=1,QC=CFrame.new(5206.40,1004.10,748.35),MC=CFrame.new(4547.12,1003.10,334.19)},
+    {Min=1650,Max=1699,Q="VenomCrewQuest",M="Venomous Assailant",QL=2,QC=CFrame.new(5206.40,1004.10,748.35),MC=CFrame.new(4674.93,1134.83,996.31)},
+    {Min=1700,Max=1724,Q="MarineTreeIsland",M="Marine Commodore",QL=1,QC=CFrame.new(2481.09,74.27,-6779.64),MC=CFrame.new(2577.25,75.61,-7739.87)},
+    {Min=1725,Max=1774,Q="MarineTreeIsland",M="Marine Rear Admiral",QL=2,QC=CFrame.new(2481.09,74.27,-6779.64),MC=CFrame.new(3761.81,123.91,-6823.52)},
+    {Min=1775,Max=1799,Q="DeepForestIsland3",M="Fishman Raider",QL=1,QC=CFrame.new(-10581.66,330.87,-8761.19),MC=CFrame.new(-10407.53,331.76,-8368.52)},
+    {Min=1800,Max=1824,Q="DeepForestIsland3",M="Fishman Captain",QL=2,QC=CFrame.new(-10581.66,330.87,-8761.19),MC=CFrame.new(-10994.70,352.38,-9002.11)},
+    {Min=1825,Max=1849,Q="DeepForestIsland",M="Forest Pirate",QL=1,QC=CFrame.new(-13234.04,331.49,-7625.40),MC=CFrame.new(-13274.48,332.38,-7769.58)},
+    {Min=1850,Max=1899,Q="DeepForestIsland",M="Mythological Pirate",QL=2,QC=CFrame.new(-13234.04,331.49,-7625.40),MC=CFrame.new(-13680.61,501.08,-6991.19)},
+    {Min=1900,Max=1924,Q="DeepForestIsland2",M="Jungle Pirate",QL=1,QC=CFrame.new(-12680.38,389.97,-9902.02),MC=CFrame.new(-12256.16,331.74,-10485.84)},
+    {Min=1925,Max=1974,Q="DeepForestIsland2",M="Musketeer Pirate",QL=2,QC=CFrame.new(-12680.38,389.97,-9902.02),MC=CFrame.new(-13457.90,391.55,-9859.18)},
+    {Min=1975,Max=1999,Q="HauntedQuest1",M="Reborn Skeleton",QL=1,QC=CFrame.new(-9479.22,141.22,5566.09),MC=CFrame.new(-8763.72,165.72,6159.86)},
+    {Min=2000,Max=2024,Q="HauntedQuest1",M="Living Zombie",QL=2,QC=CFrame.new(-9479.22,141.22,5566.09),MC=CFrame.new(-10144.13,138.63,5838.09)},
+    {Min=2025,Max=2049,Q="HauntedQuest2",M="Demonic Soul",QL=1,QC=CFrame.new(-9516.99,172.02,6078.47),MC=CFrame.new(-9505.87,172.10,6158.99)},
+    {Min=2050,Max=2074,Q="HauntedQuest2",M="Posessed Mummy",QL=2,QC=CFrame.new(-9516.99,172.02,6078.47),MC=CFrame.new(-9582.02,6.25,6205.48)},
+    {Min=2075,Max=2099,Q="NutsIslandQuest",M="Peanut Scout",QL=1,QC=CFrame.new(-2104.39,38.10,-10194.22),MC=CFrame.new(-2143.24,47.72,-10029.99)},
+    {Min=2100,Max=2124,Q="NutsIslandQuest",M="Peanut President",QL=2,QC=CFrame.new(-2104.39,38.10,-10194.22),MC=CFrame.new(-1859.35,38.10,-10422.43)},
+    {Min=2125,Max=2149,Q="IceCreamIslandQuest",M="Ice Cream Chef",QL=1,QC=CFrame.new(-820.65,65.82,-10965.80),MC=CFrame.new(-872.25,65.82,-10919.96)},
+    {Min=2150,Max=2199,Q="IceCreamIslandQuest",M="Ice Cream Commander",QL=2,QC=CFrame.new(-820.65,65.82,-10965.80),MC=CFrame.new(-558.06,112.05,-11290.77)},
+    {Min=2200,Max=2224,Q="CakeQuest1",M="Cookie Crafter",QL=1,QC=CFrame.new(-2021.32,37.80,-12028.73),MC=CFrame.new(-2374.14,37.80,-12125.31)},
+    {Min=2225,Max=2249,Q="CakeQuest1",M="Cake Guard",QL=2,QC=CFrame.new(-2021.32,37.80,-12028.73),MC=CFrame.new(-1598.31,43.77,-12244.58)},
+    {Min=2250,Max=2274,Q="CakeQuest2",M="Baking Staff",QL=1,QC=CFrame.new(-1927.92,37.80,-12842.54),MC=CFrame.new(-1887.81,77.62,-12998.35)},
+    {Min=2275,Max=2299,Q="CakeQuest2",M="Head Baker",QL=2,QC=CFrame.new(-1927.92,37.80,-12842.54),MC=CFrame.new(-2216.19,82.88,-12869.29)},
+    {Min=2300,Max=2324,Q="ChocQuest1",M="Cocoa Warrior",QL=1,QC=CFrame.new(233.23,29.88,-12201.23),MC=CFrame.new(-21.55,80.57,-12352.39)},
+    {Min=2325,Max=2349,Q="ChocQuest1",M="Chocolate Bar Battler",QL=2,QC=CFrame.new(233.23,29.88,-12201.23),MC=CFrame.new(582.59,77.19,-12463.16)},
+    {Min=2350,Max=2374,Q="ChocQuest2",M="Sweet Thief",QL=1,QC=CFrame.new(150.51,30.69,-12774.50),MC=CFrame.new(165.19,76.06,-12600.84)},
+    {Min=2375,Max=2399,Q="ChocQuest2",M="Candy Rebel",QL=2,QC=CFrame.new(150.51,30.69,-12774.50),MC=CFrame.new(134.87,77.25,-12876.55)},
+    {Min=2400,Max=2424,Q="CandyQuest1",M="Candy Pirate",QL=1,QC=CFrame.new(-1150.04,20.38,-14446.33),MC=CFrame.new(-1310.50,26.02,-14562.40)},
+    {Min=2425,Max=2449,Q="CandyQuest1",M="Snow Demon",QL=2,QC=CFrame.new(-1150.04,20.38,-14446.33),MC=CFrame.new(-880.20,71.25,-14538.61)},
+    {Min=2450,Max=2474,Q="TikiQuest1",M="Isle Outlaw",QL=1,QC=CFrame.new(-16547.75,61.14,-173.41),MC=CFrame.new(-16442.81,116.14,-264.46)},
+    {Min=2475,Max=2524,Q="TikiQuest1",M="Island Boy",QL=2,QC=CFrame.new(-16547.75,61.14,-173.41),MC=CFrame.new(-16901.26,84.07,-192.89)},
+    {Min=2525,Max=2549,Q="TikiQuest2",M="Isle Champion",QL=2,QC=CFrame.new(-16539.08,55.69,1051.57),MC=CFrame.new(-16641.68,235.78,1031.28)},
+    {Min=2550,Max=2574,Q="TikiQuest3",M="Serpent Hunter",QL=1,QC=CFrame.new(-16665.19,104.60,1579.69),MC=CFrame.new(-16521.06,106.09,1488.78)},
+    {Min=2575,Max=2599,Q="TikiQuest3",M="Skull Slayer",QL=2,QC=CFrame.new(-16665.19,104.60,1579.69),MC=CFrame.new(-16855.04,122.46,1478.15)},
+    -- Update 27.0+ Submerged Island (tọa độ âm là chủ ý, không clamp lên mặt biển).
+    {Min=2600,Max=2624,Q="SubmergedQuest1",M="Reef Bandit",QL=1,QC=CFrame.new(10778.875,-2087.724,9265.184),MC=CFrame.new(11019.132,-2146.068,9342.392)},
+    {Min=2625,Max=2649,Q="SubmergedQuest1",M="Coral Pirate",QL=2,QC=CFrame.new(10778.875,-2087.724,9265.184),MC=CFrame.new(10808.601,-2030.361,9364.233)},
+    {Min=2650,Max=2674,Q="SubmergedQuest2",M="Sea Chanter",QL=1,QC=CFrame.new(10880.686,-2086.200,10032.624),MC=CFrame.new(10671.272,-2057.592,10047.258)},
+    {Min=2675,Max=2699,Q="SubmergedQuest2",M="Ocean Prophet",QL=2,QC=CFrame.new(10880.686,-2086.200,10032.624),MC=CFrame.new(11008.520,-2007.728,10223.079)},
+    {Min=2700,Max=2724,Q="SubmergedQuest3",M="High Disciple",QL=1,QC=CFrame.new(9640.088,-1992.445,9613.652),MC=CFrame.new(9750.416,-1966.939,9753.360)},
+    {Min=2725,Max=2800,Q="SubmergedQuest3",M="Grand Devotee",QL=2,QC=CFrame.new(9640.088,-1992.445,9613.652),MC=CFrame.new(9611.705,-1993.471,9882.688)},
 }
 
 
@@ -1625,6 +1911,35 @@ end
 --   Death/Recovery invalidate token → subsystem tự dừng
 -- ══════════════════════════════════════════════════════════════════
 local ItemProgression = {}
+
+-- Catalog item progression. Những mục có puzzle/điều kiện server phức tạp
+-- được đánh dấu Manual để controller không gọi remote đoán mò làm mất tài nguyên.
+-- BossDrop sẽ tự được BossManager săn khi boss xuất hiện trong Enemies.
+local ItemCatalog = {
+    {Name="Saber",Sea=1,MinLevel=200,Method="Puzzle+Boss",Auto="CheckSaber"},
+    {Name="Pole (1st Form)",Sea=1,MinLevel=150,Method="Thunder God drop/purchase",Auto="CheckPoleV1"},
+    {Name="Rengoku",Sea=2,MinLevel=1100,Method="Hidden Key + Awakened Ice Admiral",Auto="BossDrop"},
+    {Name="Midnight Blade",Sea=2,MinLevel=1000,Method="Cursed Ship dealer",Auto="Manual"},
+    {Name="Buddy Sword",Sea=3,MinLevel=2000,Method="Cake Queen drop",Auto="BossDrop"},
+    {Name="Yama",Sea=3,MinLevel=1500,Method="Elite Hunter bounty quest",Auto="Manual"},
+    {Name="Tushita",Sea=3,MinLevel=1500,Method="rip_indra puzzle + boss",Auto="Manual"},
+    {Name="Cursed Dual Katana",Sea=3,MinLevel=2200,Method="Scroll quests",Auto="Manual"},
+    {Name="Kabucha",Sea=2,MinLevel=700,Method="Sick Scientist + fragments",Auto="Manual"},
+    {Name="Acidum Rifle",Sea=2,MinLevel=700,Method="Factory materials",Auto="Manual"},
+    {Name="Soul Guitar",Sea=3,MinLevel=2300,Method="Soul Guitar puzzle",Auto="Manual"},
+    {Name="Godhuman",Sea=3,MinLevel=1500,Method="mastery + materials",Auto="Manual"},
+    {Name="Sanguine Art",Sea=3,MinLevel=2400,Method="Sanguine teacher + materials",Auto="Manual"},
+}
+
+function ItemProgression:GetMissingCatalog()
+    local missing = {}
+    for _, item in ipairs(ItemCatalog) do
+        if Level() >= item.MinLevel and not HasItem(item.Name) then
+            missing[#missing + 1] = item
+        end
+    end
+    return missing
+end
 
 
 function ItemProgression:CheckSaber()
@@ -1853,23 +2168,135 @@ function ItemProgression:RunChecks()
     return false
 end
 -- ══════════════════════════════════════════════════════════════════
---              BOSSMANAGER [FIX-1] — SAFE STUB
---   Source hiện tại chưa có boss logic hoàn chỉnh.
---   TryFightBoss() LUÔN return false (boolean) để Main Controller
---   tiếp tục Quest/Farm bình thường.
---   Không bao giờ để nil-index crash Main Controller.
+--              BOSSMANAGER v16.3 — DATA-DRIVEN
+--   Boss không dùng tọa độ cứng để tránh bay ra biển khi map thay đổi.
+--   Bộ điều khiển chỉ nhận boss đang thật sự tồn tại trong workspace.Enemies,
+--   lọc theo Sea/level, rồi dùng cùng TravelManager + ActionToken với Farm.
+--   Vì vậy boss chết/despawn giữa đường sẽ tự nhả movement và quay lại farm.
 -- ══════════════════════════════════════════════════════════════════
-local BossManager = {}
-BossManager._BossWarned = false
+local BossManager = {
+    Active = false,
+    ActiveName = nil,
+    LastKill = 0,
+    LastScan = 0,
+}
 
+-- Tên được chuẩn hoá bởi IsEnemyNamed() nên vẫn khớp hậu tố [Lv. ...].
+-- MinLevel chỉ là ngưỡng an toàn; việc boss có spawn hay không luôn kiểm tra
+-- bằng instance sống trong Enemies trước khi di chuyển.
+local BossDatabase = {
+    -- Sea 1
+    {N="Gorilla King",Sea=1,MinLevel=20}, {N="Bobby",Sea=1,MinLevel=55},
+    {N="The Saw",Sea=1,MinLevel=100}, {N="Mob Leader",Sea=1,MinLevel=120},
+    {N="Vice Admiral",Sea=1,MinLevel=130}, {N="Saber Expert",Sea=1,MinLevel=200},
+    {N="Warden",Sea=1,MinLevel=220}, {N="Chief Warden",Sea=1,MinLevel=230},
+    {N="Magma Admiral",Sea=1,MinLevel=350}, {N="Fishman Lord",Sea=1,MinLevel=425},
+    {N="Wysper",Sea=1,MinLevel=500}, {N="Thunder God",Sea=1,MinLevel=575},
+    {N="Cyborg",Sea=1,MinLevel=675}, {N="Ice Admiral",Sea=1,MinLevel=700},
+    {N="Greybeard",Sea=1,MinLevel=750},
+    -- Sea 2
+    {N="Diamond",Sea=2,MinLevel=750}, {N="Jeremy",Sea=2,MinLevel=850},
+    {N="Fajita",Sea=2,MinLevel=925}, {N="Don Swan",Sea=2,MinLevel=1000},
+    {N="Smoke Admiral",Sea=2,MinLevel=1150},
+    {N="Awakened Ice Admiral",Sea=2,MinLevel=1400},
+    {N="Tide Keeper",Sea=2,MinLevel=1475}, {N="Darkbeard",Sea=2,MinLevel=1000},
+    {N="Order",Sea=2,MinLevel=1250}, {N="Cursed Captain",Sea=2,MinLevel=1325},
+    -- Sea 3
+    {N="Stone",Sea=3,MinLevel=1550}, {N="Island Empress",Sea=3,MinLevel=1675},
+    {N="Kilo Admiral",Sea=3,MinLevel=1750}, {N="Captain Elephant",Sea=3,MinLevel=1875},
+    {N="Beautiful Pirate",Sea=3,MinLevel=1950}, {N="Longma",Sea=3,MinLevel=2000},
+    {N="Cursed Skeleton Boss",Sea=3,MinLevel=2050}, {N="Cake Queen",Sea=3,MinLevel=2175},
+    {N="Soul Reaper",Sea=3,MinLevel=2000}, {N="Cake Prince",Sea=3,MinLevel=2200},
+    {N="Dough King",Sea=3,MinLevel=2300},
+    {N="Tyrant of the Skies",Sea=3,MinLevel=2600},
+    {N="rip_indra",Sea=3,MinLevel=1500}, {N="Beautiful Pirate",Sea=3,MinLevel=1950},
+}
+
+function BossManager:FindLiveBoss()
+    local folder = workspace:FindFirstChild("Enemies")
+    local root = HRP()
+    if not folder or not root then return nil end
+    local sea, level = GetSea(), Level()
+    local best, bestDist, bestEntry = nil, math.huge, nil
+    for _, mob in ipairs(folder:GetChildren()) do
+        local hum = mob:FindFirstChildOfClass("Humanoid")
+        local mobRoot = mob:FindFirstChild("HumanoidRootPart")
+        if hum and hum.Health > 0 and mobRoot then
+            for _, entry in ipairs(BossDatabase) do
+                if entry.Sea == sea and level >= entry.MinLevel
+                    and IsEnemyNamed(mob, entry.N) then
+                    local p = mobRoot.Position
+                    if IsValidPos(p) and IsAllowedWorldY(p.Y) then
+                        local d = (p - root.Position).Magnitude
+                        if d < bestDist then
+                            best, bestDist, bestEntry = mob, d, entry
+                        end
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return best, bestEntry
+end
+
+function BossManager:_Finish(token, reason)
+    if TravelManager and _G.State.IsTraveling and _G.State.MovementOwner == "Boss" then
+        TravelManager:Stop("Boss:" .. tostring(reason))
+    end
+    _G.State:ReleaseAction(token)
+    self.Active = false
+    self.ActiveName = nil
+    if _G.State.Mode == "Bossing" then _G.State:SetMode("Idle") end
+end
+
+function BossManager:_RunBoss(boss, entry, token)
+    local ok, err = xpcall(function()
+        self.ActiveName = entry.N
+        _G.State:SetMode("Bossing")
+        _G.BobonStatus = "Boss: " .. entry.N
+        local deadline = tick() + 180
+        while _G.State:IsActionValid(token) and IsAlive() and tick() < deadline do
+            local hum = boss and boss:FindFirstChildOfClass("Humanoid")
+            local targetRoot = boss and boss:FindFirstChild("HumanoidRootPart")
+            if not boss or not boss.Parent or not hum or hum.Health <= 0 or not targetRoot then
+                self.LastKill = tick()
+                break
+            end
+            if not IsValidPos(targetRoot.Position) or not IsAllowedWorldY(targetRoot.Position.Y) then
+                break
+            end
+            TravelManager:Request(targetRoot, "Boss", {
+                arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                fallback = nil,
+            })
+            local me = HRP()
+            if me then
+                local a = Vector3.new(me.Position.X, 0, me.Position.Z)
+                local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
+                if (a - b).Magnitude <= _G.Settings.AttackRange then
+                    if EquipCombatTool() then Attack() end
+                end
+            end
+            task.wait(0.12)
+        end
+    end, debug.traceback)
+    if not ok then warn("[BobonHub] Module Error: Boss " .. tostring(err)) end
+    self:_Finish(token, ok and "complete" or "error")
+end
 
 function BossManager:TryFightBoss()
-    if not _G.Settings.BossEnabled then return false end
-    if not BossManager._BossWarned then
-        BossManager._BossWarned = true
-        warn("[BobonHub] Module Info: BossManager chưa có boss logic, return false")
+    if not _G.Settings.BossEnabled or self.Active or not _G.State:CanAct() then return false end
+    local boss, entry = self:FindLiveBoss()
+    if not boss or not entry then return false end
+    local token = _G.State:ClaimAction("Boss")
+    if token == 0 then return false end
+    if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
+        TravelManager:Stop("BossPriority")
     end
-    return false
+    self.Active = true
+    task.spawn(function() self:_RunBoss(boss, entry, token) end)
+    return true
 end
 
 
@@ -1900,6 +2327,13 @@ task.spawn(function()
 
         local okMain, mainErr = pcall(function()
             _G.State.Sea = GetSea()
+
+            -- Team phải được xác nhận trước mọi remote/item/boss; nếu chưa có
+            -- team thì không được bắt đầu một travel dang dở.
+            if not TeamController:AutoSelectTeam() then
+                _G.BobonStatus = "Team: Đang xác nhận Pirates"
+                return
+            end
 
 
             -- PRIORITY 1: Sea Progression + Important Items
@@ -1992,7 +2426,10 @@ task.spawn(function()
             _G.State.FState = "CHECK_SEA"
             DLog("FARM", "State = CHECK_SEA")
             _G.State.Sea = GetSea()
-            TeamController:AutoSelectTeam()
+            if not TeamController:AutoSelectTeam() then
+                _G.BobonStatus = "Team: Đang chọn Pirates"
+                return
+            end
 
             -- VERIFY_TARGET: clear NGAY nếu invalid → NEXT_TARGET
             _G.State.FState = "VERIFY_TARGET"
@@ -2017,7 +2454,7 @@ task.spawn(function()
 
                     -- [FIX-6] Target quá xa hoặc dưới biển → clear, về khu farm
                     if dist > _G.Settings.MaxFarmDistance + 50
-                        or targetPos.Y < _G.Settings.MinY - 10 then
+                        or not IsAllowedWorldY(targetPos.Y) then
                         _G.State:ClearTargets()
                         _G.State.FState = "NEXT_TARGET"
                         _G.BobonStatus = "Farm: Target lỗi, về khu farm"
@@ -2054,7 +2491,7 @@ task.spawn(function()
                             or _G.State.MovementOwner == "Farm"
                         if flatDist <= _G.Settings.AttackRange and farmHolds then
                             _G.State.FState = "ATTACK"
-                            if EquipMelee() then
+                            if EquipCombatTool() then
                                 Attack()
                                 if os.time() - lastAttackLog >= 5 then
                                     lastAttackLog = os.time()
@@ -2067,10 +2504,10 @@ task.spawn(function()
                     -- GOM MOB [A-4]: attack mob quest khác quanh điểm farm
                     -- để kéo aggro về cluster (client không teleport mob,
                     -- dùng aggro tự nhiên; Attack() có cooldown, không spam)
-                    local farmPos = FarmPositionController:GetFarmPos(_G.State.FarmTarget)
+                    local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
                     if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
-                        if EquipMelee() then
+                        if EquipCombatTool() then
                             Attack()
                         end
                     end
@@ -2245,10 +2682,10 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.2 FIXED] Full Script Loaded Successfully!")
-print("[BobonHub v16.2 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.2 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.2 FIXED] Modules: QuestFarm(P2/P3) | TeamController(A1) | EquipmentController(A2)")
-print("[BobonHub v16.2 FIXED] Modules: MovementManager(A3) | FarmPositionController(A4) | FarmWatchdog(A7)")
-print("[BobonHub v16.2 FIXED] Audit: 10-Point (Team/Equip/Movement/FarmPos/StateMachine/Watchdog/DEBUG)")
-print("[BobonHub v16.2 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.3 DATA] Full Script Loaded Successfully!")
+print("[BobonHub v16.3 DATA] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.3 DATA] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.3 DATA] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
+print("[BobonHub v16.3 DATA] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
+print("[BobonHub v16.3 DATA] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
+print("[BobonHub v16.3 DATA] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
