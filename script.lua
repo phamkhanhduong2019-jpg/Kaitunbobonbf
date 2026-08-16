@@ -1,7 +1,17 @@
 -- =================================================================
---         BOBON HUB v16.4 FIXED | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.5 GLASS | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.4 FIXED
+--         Base: v15.0 | Version: v16.5 GLASS
+--
+--  AUDIT FIXES v16.5-GLASS (G-1..G-3):
+--  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
+--         0.45) + BlurEffect kính mờ (MenuBlur) thay cho [D-2] nền đen
+--         100%. Right Ctrl ẩn/hiện toàn bộ overlay + blur.
+--  [G-2]  CARD GLASS: gradient sáng hơn, viền rõ, accent shimmer chạy
+--         vô hạn; tự dọn blur cũ khi re-execute; blur tự gắn lại khi
+--         CurrentCamera bị thay đổi (respawn/teleport).
+--  [G-3]  RecoveryManager: Velocity/RotVelocity (deprecated) →
+--         AssemblyLinearVelocity/AssemblyAngularVelocity.
 --
 --  AUDIT FIXES v16.4-FIXED (D-1..D-5):
 --  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
@@ -9,8 +19,8 @@
 --         về phía player) → dịch ngang 1 phát né, có cooldown chống
 --         spam, không né khi bay xa (giver/island), không phá Single
 --         Movement Owner (chỉ CFrame offset 1 lần, hover kéo về sau).
---  [D-2]  NỀN TỐI MỜ XUNG QUANH: Dim phủ kín màn hình, mờ 60%
---         (BackgroundTransparency = 0.6) thay vì đen thui 100%.
+--  [D-2]  NỀN ĐEN FULL MÀN HÌNH: Dim phủ kín màn hình, đục hoàn toàn
+--         (BackgroundTransparency = 0, đen 100%) thay vì mờ 86%.
 --  [D-3]  (gộp vào D-4) Skip level không hiệu quả → quay về farm quest.
 --  [D-4]  SKIP KHÔNG HIỆU QUẢ → FARM QUEST: SkipRouteController theo
 --         dõi level đầu route; cùng route quá SkipRouteFallbackTimeout
@@ -139,7 +149,7 @@ repeat task.wait() until game.Players.LocalPlayer
 -- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
 
 
-print("[BobonHub v16.4 FIXED] Loading...")
+print("[BobonHub v16.5 GLASS] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -157,7 +167,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.4 FIXED] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.5 GLASS] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -391,40 +401,81 @@ end)
 -- ══════════════════════════════════════════════════════════════════
 if CoreGui:FindFirstChild("BobonHubUI") then CoreGui.BobonHubUI:Destroy() end
 
+local UIS = game:GetService("UserInputService")
+
+-- [G-2] Dọn blur còn sót từ lần execute trước (CoreGui / Camera / Lighting)
+for _, scope in ipairs({ CoreGui, workspace.CurrentCamera, game:GetService("Lighting") }) do
+    pcall(function()
+        local old = scope and scope:FindFirstChild("BobonHubBlur")
+        if old then old:Destroy() end
+    end)
+end
 
 local SG = Instance.new("ScreenGui")
 SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
+-- [G-1] Cấu hình hiệu ứng kính mờ (định nghĩa lại được trong _G.Settings)
+_G.Settings.MenuDim         = _G.Settings.MenuDim or 0.45    -- 0 = đục hết, 1 = trong suốt
+_G.Settings.MenuCardOpacity = _G.Settings.MenuCardOpacity or 0.72
+_G.Settings.MenuBlur        = _G.Settings.MenuBlur or 12     -- 0 = tắt hẳn blur
 
--- [D-2] NỀN TỐI MỜ XUNG QUANH: phủ kín toàn màn hình nhưng mờ 60%
--- (BackgroundTransparency = 0.6, nhìn xuyên game rõ ràng) để overlay
--- hiển thị rõ mà không đen thui cả màn hình.
+-- [G-1] BLUR: kính mờ thật phủ lên cảnh phía sau overlay
+local Blur = Instance.new("BlurEffect")
+Blur.Name = "BobonHubBlur"; Blur.Size = 0; Blur.Enabled = true
+Blur.Parent = workspace.CurrentCamera
+-- [G-2] Camera có thể bị thay sau respawn/teleport → tự gắn lại blur
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    pcall(function()
+        if Blur and Blur.Parent then Blur.Parent = workspace.CurrentCamera end
+    end)
+end)
+
+-- [G-1] NỀN KÍNH MỜ: phủ mờ xuyên cảnh thay cho [D-2] nền đen 100%.
+-- Dim fade-in từ trong suốt rồi tween về MenuDim ở block phía dưới.
 local Dim = Instance.new("Frame", SG)
-Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(0,0,0)
-Dim.BackgroundTransparency = 0.6; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(8,14,26)
+Dim.BackgroundTransparency = 1
+Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+local DimGrad = Instance.new("UIGradient", Dim)
+DimGrad.Rotation = 90
+DimGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(12,22,42)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(3,7,16)),
+})
 
 
 -- Center card inspired by the reference image: one clear brand mark, then
--- status and economy values in a compact hierarchy.
+-- status and economy values in a compact hierarchy. [G-2] glass variant.
 local Con = Instance.new("Frame", SG)
 Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.new(0.5,0,0.47,0)
 Con.Size = UDim2.new(0,640,0,350); Con.BackgroundColor3 = Color3.fromRGB(6,16,32)
-Con.BackgroundTransparency = 0.18; Con.BorderSizePixel = 0; Con.ZIndex = 2
+Con.BackgroundTransparency = 1  -- fade-in ở block phía dưới
+Con.BorderSizePixel = 0; Con.ZIndex = 2
 Instance.new("UICorner", Con).CornerRadius = UDim.new(0,18)
 local ConStroke = Instance.new("UIStroke", Con)
-ConStroke.Color = Color3.fromRGB(88,196,255); ConStroke.Transparency = 0.52; ConStroke.Thickness = 1.5
+ConStroke.Color = Color3.fromRGB(88,196,255); ConStroke.Transparency = 0.35; ConStroke.Thickness = 1.5
 local ConGradient = Instance.new("UIGradient", Con)
 ConGradient.Rotation = 90
 ConGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(9,28,53)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(4,10,22)),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(16,42,74)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(6,14,30)),
 })
 
 local Accent = Instance.new("Frame", Con)
 Accent.Position = UDim2.new(0.08,0,0,0); Accent.Size = UDim2.new(0.84,0,0,3)
 Accent.BackgroundColor3 = Color3.fromRGB(88,214,255); Accent.BorderSizePixel = 0; Accent.ZIndex = 3
 Instance.new("UICorner", Accent).CornerRadius = UDim.new(0,3)
+-- [G-2] Shimmer chạy vô hạn trên thanh accent
+local AccentGrad = Instance.new("UIGradient", Accent)
+AccentGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(88,214,255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(190,120,255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(88,214,255)),
+})
+TS:Create(AccentGrad,
+    TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
+    {Offset = Vector2.new(1, 0)}):Play()
 
 local function MkLabel(txt,sz,col,bold,pos,height,align)
     local lb = Instance.new("TextLabel", Con)
@@ -483,18 +534,46 @@ MkDivider(204)
 local CurrRow, BeliL, SepL, FragL = MkCurrRow()
 local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,126,126),false,UDim2.new(0,24,0,260),22)
 local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDim2.new(0,24,0,286),22)
+local HintL  = MkLabel("〔Right Ctrl〕 Ẩn / Hiện overlay",11,Color3.fromRGB(140,165,195),false,UDim2.new(0,24,0,312),18)
 
 
+-- [G-1] Fade-in: nền + card + blur hiện dần, chữ cascade như bản gốc
 task.spawn(function()
-    task.wait(0.3)
-    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL}) do
-        task.delay((i-1)*0.08,function()
+    task.wait(0.15)
+    TS:Create(Dim, TweenInfo.new(0.6, Enum.EasingStyle.Quad),
+        {BackgroundTransparency = _G.Settings.MenuDim}):Play()
+    TS:Create(Con, TweenInfo.new(0.6, Enum.EasingStyle.Quad),
+        {BackgroundTransparency = 1 - _G.Settings.MenuCardOpacity}):Play()
+    TS:Create(Blur, TweenInfo.new(0.8, Enum.EasingStyle.Quad),
+        {Size = _G.Settings.MenuBlur}):Play()
+    task.wait(0.15)
+    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL,HintL}) do
+        task.delay((i-1)*0.07,function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.4 FIXED] UI Ready!")
+    print("[BobonHub v16.5 GLASS] UI Ready!")
 end)
 
+-- [G-1] Right Ctrl: ẩn/hiện overlay + blur cùng một trạng thái
+pcall(function()
+    UIS.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.RightControl then
+            SG.Enabled = not SG.Enabled
+            pcall(function()
+                if Blur and Blur.Parent then Blur.Enabled = SG.Enabled end
+            end)
+        end
+    end)
+end)
+
+-- [G-2] Dọn blur khi UI bị destroy (re-execute / unload)
+SG.Destroying:Connect(function()
+    pcall(function()
+        if Blur and Blur.Parent then Blur:Destroy() end
+    end)
+end)
 
 local function Fmt(n)
     local s = tostring(math.floor(n or 0))
@@ -2305,11 +2384,12 @@ function RecoveryManager:Handle(reason)
 
 
             -- STEP 5: Reset HRP velocity chống residual momentum
+            -- [G-3] Dùng Assembly* thay Velocity/RotVelocity đã deprecated.
             pcall(function()
                 local hrp = HRP()
                 if hrp then
-                    hrp.Velocity = Vector3.zero
-                    hrp.RotVelocity = Vector3.zero
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
                 end
             end)
             return false
@@ -3523,11 +3603,11 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.4 FIXED] Full Script Loaded Successfully!")
-print("[BobonHub v16.4 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.4 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.4 FIXED] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
-print("[BobonHub v16.4 FIXED] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
-print("[BobonHub v16.4 FIXED] Modules: DodgeController(D1) | SkipRouteController(D4/D5) | Dim Full Black(D2)")
-print("[BobonHub v16.4 FIXED] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
-print("[BobonHub v16.4 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.5 GLASS] Full Script Loaded Successfully!")
+print("[BobonHub v16.5 GLASS] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.5 GLASS] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.5 GLASS] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
+print("[BobonHub v16.5 GLASS] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
+print("[BobonHub v16.5 GLASS] Modules: DodgeController(D1) | SkipRouteController(D4/D5) | Glass Overlay(G1)")
+print("[BobonHub v16.5 GLASS] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
+print("[BobonHub v16.5 GLASS] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
