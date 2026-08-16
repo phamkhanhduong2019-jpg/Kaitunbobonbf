@@ -1,7 +1,25 @@
 -- =================================================================
---         BOBON HUB v16.3 DATA | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.4 FIXED | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.3 DATA
+--         Base: v15.0 | Version: v16.4 FIXED
+--
+--  AUDIT FIXES v16.4-FIXED (D-1..D-5):
+--  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
+--         gần player đang tung chiêu (animation tấn công / lao nhanh
+--         về phía player) → dịch ngang 1 phát né, có cooldown chống
+--         spam, không né khi bay xa (giver/island), không phá Single
+--         Movement Owner (chỉ CFrame offset 1 lần, hover kéo về sau).
+--  [D-2]  NỀN ĐEN FULL MÀN HÌNH: Dim phủ kín màn hình, đục hoàn toàn
+--         (BackgroundTransparency = 0, đen 100%) thay vì mờ 86%.
+--  [D-3]  (gộp vào D-4) Skip level không hiệu quả → quay về farm quest.
+--  [D-4]  SKIP KHÔNG HIỆU QUẢ → FARM QUEST: SkipRouteController theo
+--         dõi level đầu route; cùng route quá SkipRouteFallbackTimeout
+--         (90s) mà level không tăng → tắt hẳn skip route, main
+--         controller chạy farm quest bình thường.
+--  [D-5]  KHÔNG CHỜ BOSS: route boss (Bobby/Yeti/Vice Admiral/...) mà
+--         boss không có mặt NGAY → return false, quay về farm quest
+--         tức thời. Chỉ route mob giữ fallback chờ spawn (mob respawn
+--         nhanh). BossManager vẫn săn boss khi boss xuất hiện.
 --
 --  AUDIT FIXES v16.0-FIXED:
 --  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
@@ -121,7 +139,7 @@ repeat task.wait() until game.Players.LocalPlayer
 -- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
 
 
-print("[BobonHub v16.3 DATA] Loading...")
+print("[BobonHub v16.4 FIXED] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -139,7 +157,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.3 DATA] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.4 FIXED] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -208,6 +226,16 @@ _G.Settings = {
     ServerHopCooldown   = 120,
     MaxFarmDistance     = 300,
     StatBatchLimit      = 100,
+    -- [D-1] NÉ CHIÊU: phát hiện quái gần player tung chiêu (animation
+    -- tấn công / lao nhanh về phía player) → dịch ngang né nhanh.
+    DodgeAttacks        = true,
+    DodgeCooldown       = 1.5,
+    DodgeDistance       = 12,
+    DodgeHeight         = 4,
+    DodgeRadius         = 15,
+    -- [D-4] Skip level không hiệu quả: cùng route quá N giây mà level
+    -- không tăng → tắt skip route, quay về farm quest bình thường.
+    SkipRouteFallbackTimeout = 90,
 }
 
 
@@ -369,10 +397,11 @@ SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
 
--- A soft dimmer keeps the overlay readable without hiding the game world.
+-- [D-2] NỀN ĐEN FULL MÀN HÌNH: phủ kín toàn màn hình, đục hoàn toàn
+-- (đen 100%, không nhìn xuyên game) để overlay hiển thị rõ nhất.
 local Dim = Instance.new("Frame", SG)
-Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(1,5,15)
-Dim.BackgroundTransparency = 0.86; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(0,0,0)
+Dim.BackgroundTransparency = 0; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
 
 
 -- Center card inspired by the reference image: one clear brand mark, then
@@ -457,14 +486,12 @@ local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDi
 
 task.spawn(function()
     task.wait(0.3)
-    TS:Create(Dim,TweenInfo.new(0.9,Enum.EasingStyle.Quad),{BackgroundTransparency=0.78}):Play()
-    task.wait(0.5)
     for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL}) do
         task.delay((i-1)*0.08,function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.3 DATA] UI Ready!")
+    print("[BobonHub v16.4 FIXED] UI Ready!")
 end)
 
 
@@ -2112,6 +2139,122 @@ task.spawn(function()
     end
 end)
 -- ══════════════════════════════════════════════════════════════════
+--         [D-1] DODGE CONTROLLER — NÉ CHIÊU KHI QUÁI TẤN CÔNG
+--   Một monitor loop DUY NHẤT, chỉ DÒ chiêu (không điều khiển movement
+--   liên tục nên không phá Single Movement Owner). Khi phát hiện quái
+--   gần player đang tung chiêu (animation tấn công đang phát / tốc độ
+--   lao nhanh về phía player) → dịch ngang 1 phát (CFrame offset) né,
+--   rồi để TravelManager hover kéo về điểm farm như thường.
+--   Có cooldown chống spam; không hoạt động khi bay xa (giver/island)
+--   hay khi recovery/dead/respawn.
+-- ══════════════════════════════════════════════════════════════════
+local DodgeController = {
+    LastDodge = 0,
+}
+
+local DODGE_ATTACK_KEYWORDS = {
+    "attack","combo","kick","punch","slash","swing","hit",
+    "strike","beat","smash","bite","claw","fist","spin","haki",
+}
+
+local function DodgeAnimIsAttack(track)
+    local ok, name = pcall(function() return track.Name end)
+    if not ok or type(name) ~= "string" then return false end
+    local lower = string.lower(name)
+    for _, kw in ipairs(DODGE_ATTACK_KEYWORDS) do
+        if string.find(lower, kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function DodgeEnemyIsAttacking(enemy, me)
+    local hum = enemy:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    local okTracks, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+    if okTracks and tracks then
+        for _, track in ipairs(tracks) do
+            if track.IsPlaying and DodgeAnimIsAttack(track) then
+                return true
+            end
+        end
+    end
+    local root = enemy:FindFirstChild("HumanoidRootPart")
+    if root and me then
+        local okVel, vel = pcall(function() return root.AssemblyLinearVelocity end)
+        if okVel and type(vel) == "Vector3" then
+            local toMe = me.Position - root.Position
+            local dist = toMe.Magnitude
+            if dist > 0.5 and dist <= (_G.Settings.DodgeRadius or 15) then
+                local closing = toMe.Unit:Dot(vel)
+                if closing > 35 then return true end
+            end
+        end
+    end
+    return false
+end
+
+function DodgeController:TryDodge()
+    if not _G.Settings.DodgeAttacks then return false end
+    if not IsAlive() then return false end
+    if _G.State.Mode == "Recovering" or _G.State.Mode == "Dead"
+        or _G.State.Mode == "Respawning" or _G.State.Mode == "ServerHop" then
+        return false
+    end
+    local now = tick()
+    if now - self.LastDodge < (_G.Settings.DodgeCooldown or 1.5) then return false end
+    -- Không né khi đang bay xa tới giver/island (target là CFrame xa):
+    -- dodge chỉ dành cho lúc đứng farm gần mob (target Instance/CFrame gần).
+    if _G.State.IsTraveling then
+        local ref = TravelManager.TargetRef
+        if typeof(ref) == "CFrame" or typeof(ref) == "Vector3" then
+            local me = HRP()
+            local targetPos = typeof(ref) == "CFrame" and ref.Position or ref
+            if not me or (me.Position - targetPos).Magnitude > 60 then
+                return false
+            end
+        end
+    end
+    local me = HRP()
+    if not me then return false end
+    local folder = workspace:FindFirstChild("Enemies")
+    if not folder then return false end
+    local danger = nil
+    local dangerRoot = nil
+    for _, enemy in ipairs(folder:GetChildren()) do
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+        local p = root.Position
+        if IsValidPos(p) and (p - me.Position).Magnitude <= (_G.Settings.DodgeRadius or 15)
+            and DodgeEnemyIsAttacking(enemy, me) then
+            danger, dangerRoot = enemy, root
+            break
+        end
+    end
+    if not danger or not dangerRoot then return false end
+    -- Né: dịch ngang vuông góc với hướng quái → player + nhấc nhẹ lên,
+    -- giữ rotation; hover của TravelManager sẽ kéo về điểm farm sau đó.
+    local dir = (dangerRoot.Position - me.Position).Unit
+    local side = Vector3.new(-dir.Z, 0, dir.X)
+    local newPos = me.Position + side * (_G.Settings.DodgeDistance or 12)
+        + Vector3.new(0, _G.Settings.DodgeHeight or 4, 0)
+    pcall(function()
+        me.CFrame = CFrame.new(newPos) * me.CFrame.Rotation
+        me.AssemblyLinearVelocity = Vector3.zero
+    end)
+    self.LastDodge = now
+    DLog("DODGE", "Né chiêu " .. tostring(danger.Name))
+    _G.BobonStatus = "Farm: Né chiêu"
+    return true
+end
+
+-- [D-1] Monitor loop duy nhất cho dodge (0.1s — phản xạ nhanh hơn farm
+-- tick). Chỉ dò + dịch 1 phát, không điều khiển movement liên tục.
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(function() DodgeController:TryDodge() end)
+    end
+end)
+-- ══════════════════════════════════════════════════════════════════
 --         RECOVERY MANAGER v7 (Fix #2,#6)
 --   State machine: STOP → CLEANUP → RESET → WAIT → CHECK → IDLE
 --   KHÔNG tạo movement coroutine trong recovery
@@ -2242,7 +2385,7 @@ end)
 
 
 -- ══════════════════════════════════════════════════════════════════
---          QUEST DATABASE v16.3 (SEA 1/2/3 COORDINATES)
+--          QUEST DATABASE v16.4 (SEA 1/2/3 COORDINATES)
 -- ══════════════════════════════════════════════════════════════════
 local QDB = {
     {Min=1,Max=9,Q="BanditQuest1",M="Bandit",QL=1,QC=CFrame.new(1059.37,15.45,1550.42),MC=CFrame.new(1045.96,27.00,1560.82)},
@@ -2361,6 +2504,11 @@ end
 local SkipRouteController = {
     Enabled = true,
     CurrentKey = nil,
+    -- [D-4] Theo dõi hiệu quả của route: level tại lúc chọn route + thời
+    -- điểm bắt đầu. Level không tăng trong SkipRouteFallbackTimeout giây
+    -- → coi skip không hiệu quả → tắt hẳn, farm quest bình thường.
+    RouteStartTime = nil,
+    RouteStartLevel = nil,
 }
 
 local SkipRouteDB = {
@@ -2421,7 +2569,24 @@ function SkipRouteController:Run()
     if self.CurrentKey ~= route.Key then
         self:Reset("level transition")
         self.CurrentKey = route.Key
+        self.RouteStartTime = os.time()
+        self.RouteStartLevel = Level()
         DLog("SKIP", "Route selected: " .. route.Key)
+    end
+
+    -- [D-4] SKIP KHÔNG HIỆU QUẢ → FARM QUEST BÌNH THƯỜNG:
+    -- Cùng route quá SkipRouteFallbackTimeout giây mà level không tăng
+    -- (boss không spawn, mob không giết được, quái quá khỏe...) → tắt
+    -- hẳn skip route; main controller đi xuống quest gate và farm quest
+    -- như thường (không bao giờ kẹt "Waiting for boss" vô hạn).
+    if self.RouteStartTime and self.RouteStartLevel
+        and os.time() - self.RouteStartTime > (_G.Settings.SkipRouteFallbackTimeout or 90)
+        and Level() <= self.RouteStartLevel then
+        self.Enabled = false
+        _G.Settings.SkipLevelRoute = false
+        self:Reset("skip not effective, back to normal quest farm")
+        DLog("SKIP", "Skip không hiệu quả (" .. route.Key .. ") → tắt, farm quest bình thường")
+        return false
     end
 
     _G.State:SetMode("Farming")
@@ -2465,6 +2630,16 @@ function SkipRouteController:Run()
         end
     else
         _G.State:ClearTargets()
+        -- [D-5] KHÔNG CHỜ BOSS XUẤT HIỆN: route boss (Bobby/Yeti/Vice
+        -- Admiral/Warden/Magma Admiral/Fishman Lord/Wysper...) mà boss
+        -- không có mặt NGAY bây giờ → return false tức thời, main
+        -- controller chạy farm quest như bình thường. BossManager vẫn
+        -- tự săn boss khi boss thực sự xuất hiện trong Enemies.
+        if route.Kind == "Boss" then
+            self:Reset("boss not present, back to quest farm")
+            DLog("SKIP", route.Display .. " chưa spawn → farm quest bình thường")
+            return false
+        end
         _G.BobonStatus = "Skip Farm: Waiting for " .. route.Display
         if _G.State:CanRequestTravel() then
             TravelManager:Request(route.Fallback, "Farm")
@@ -2764,7 +2939,7 @@ function ItemProgression:RunChecks(allowSea, allowOptional)
     return false
 end
 -- ══════════════════════════════════════════════════════════════════
---              BOSSMANAGER v16.3 — DATA-DRIVEN
+--              BOSSMANAGER v16.4 — DATA-DRIVEN
 --   Boss không dùng tọa độ cứng để tránh bay ra biển khi map thay đổi.
 --   Bộ điều khiển chỉ nhận boss đang thật sự tồn tại trong workspace.Enemies,
 --   lọc theo Sea/level, rồi dùng cùng TravelManager + ActionToken với Farm.
@@ -3347,10 +3522,11 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.3 DATA] Full Script Loaded Successfully!")
-print("[BobonHub v16.3 DATA] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.3 DATA] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.3 DATA] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
-print("[BobonHub v16.3 DATA] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
-print("[BobonHub v16.3 DATA] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
-print("[BobonHub v16.3 DATA] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.4 FIXED] Full Script Loaded Successfully!")
+print("[BobonHub v16.4 FIXED] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.4 FIXED] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.4 FIXED] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
+print("[BobonHub v16.4 FIXED] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
+print("[BobonHub v16.4 FIXED] Modules: DodgeController(D1) | SkipRouteController(D4/D5) | Dim Full Black(D2)")
+print("[BobonHub v16.4 FIXED] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
+print("[BobonHub v16.4 FIXED] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
