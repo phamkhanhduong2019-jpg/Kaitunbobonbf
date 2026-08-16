@@ -1,7 +1,59 @@
 -- =================================================================
---         BOBON HUB v16.3 DATA | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.5 GLASS | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.3 DATA
+--         Base: v15.0 | Version: v16.5 GLASS
+--
+--  AUDIT FIXES v16.5-GLASS (G-1..G-9):
+--  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
+--         0.45) + BlurEffect kính mờ (MenuBlur) thay cho [D-2] nền đen
+--         100%. Right Ctrl ẩn/hiện toàn bộ overlay + blur.
+--  [G-2]  Tự dọn blur cũ khi re-execute; blur tự gắn lại khi
+--         CurrentCamera bị thay đổi (respawn/teleport).
+--  [G-3]  RecoveryManager: Velocity/RotVelocity (deprecated) →
+--         AssemblyLinearVelocity/AssemblyAngularVelocity.
+--  [G-4]  FULL-GLASS: bỏ hẳn card/khung menu — chữ nổi trực tiếp trên
+--         nền kính mờ TOÀN màn hình, text stroke đậm hơn để đọc rõ.
+--  [G-5]  ATTACK FIX: Net remote resolver đa đường dẫn (Remotes.Modules.Net
+--         / Modules.Net / tìm sâu theo tên "Net"). Bản cũ chỉ nhìn
+--         RS.Modules.Net nên RegisterHit không bao giờ gửi được → bot
+--         đứng im không đánh. Giờ gửi RegisterHit theo từng enemy
+--         (part, {part}), giới hạn 12 mob gần nhất chống spam.
+--  [G-6]  FARM/GATHER FIX: quest-match KHÔNG đọc được UI (nil sau update
+--         đổi cấu trúc) → vẫn farm thay vì kẹt re-request quest vô hạn;
+--         gom mob không còn phụ thuộc strict quest-match, anchor nới
+--         bán kính tối thiểu 30 studs, GatherInterval 0.3 → 0.15.
+--  [G-7]  FAST ATTACK THEO TÊN + BRING MOB: RegisterHit đánh MỌI mob
+--         trùng tên quest đang sống, KHÔNG giới hạn khoảng cách (đứng
+--         đâu cũng trúng). Gom = DỊCH CHUYỂN toàn bộ mob trùng tên về
+--         cụm quanh mob neo (PivotTo + anchor cục bộ chống server kéo
+--         về), chỉ chạy khi đã hover trên đầu mob neo; nhả anchor khi
+--         đổi target/quest/chết (ReleaseCluster).
+--  [G-8]  Remote gọi qua cloneref khi executor hỗ trợ (kiểu "Fast
+--         Attack Unban" công khai) để bớt bị theo dõi remote trực tiếp.
+--  [G-9]  ATTACK UNBLOCK: equip tool KHÔNG còn là cổng chặn attack
+--         (RegisterHit không cần tool, M1 tay không vẫn damage); camera
+--         quay THẲNG vào target trước khi M1 (game bắn theo hướng
+--         camera, không phải hướng thân); RegisterHit đa định dạng
+--         (part,{part}) / ({parts}) / (part); skip route cũng gom mob;
+--         ActionLockTimeout 180 → 60s chống đứng im dài.
+--
+--  AUDIT FIXES v16.4-FIXED (D-1..D-5):
+--  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
+--         gần player đang tung chiêu (animation tấn công / lao nhanh
+--         về phía player) → dịch ngang 1 phát né, có cooldown chống
+--         spam, không né khi bay xa (giver/island), không phá Single
+--         Movement Owner (chỉ CFrame offset 1 lần, hover kéo về sau).
+--  [D-2]  NỀN ĐEN FULL MÀN HÌNH: Dim phủ kín màn hình, đục hoàn toàn
+--         (BackgroundTransparency = 0, đen 100%) thay vì mờ 86%.
+--  [D-3]  (gộp vào D-4) Skip level không hiệu quả → quay về farm quest.
+--  [D-4]  SKIP KHÔNG HIỆU QUẢ → FARM QUEST: SkipRouteController theo
+--         dõi level đầu route; cùng route quá SkipRouteFallbackTimeout
+--         (90s) mà level không tăng → tắt hẳn skip route, main
+--         controller chạy farm quest bình thường.
+--  [D-5]  KHÔNG CHỜ BOSS: route boss (Bobby/Yeti/Vice Admiral/...) mà
+--         boss không có mặt NGAY → return false, quay về farm quest
+--         tức thời. Chỉ route mob giữ fallback chờ spawn (mob respawn
+--         nhanh). BossManager vẫn săn boss khi boss xuất hiện.
 --
 --  AUDIT FIXES v16.0-FIXED:
 --  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
@@ -121,7 +173,7 @@ repeat task.wait() until game.Players.LocalPlayer
 -- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
 
 
-print("[BobonHub v16.3 DATA] Loading...")
+print("[BobonHub v16.5 GLASS] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -139,7 +191,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.3 DATA] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.5 GLASS] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -185,8 +237,9 @@ _G.Settings = {
     QuestDelay          = 1.5,
     QuestRetryLimit     = 3,
     QuestRetryBackoff   = 6,
+    QuestAcceptGrace    = 6,
     RecoveryDelay       = 3,
-    ActionLockTimeout   = 180,
+    ActionLockTimeout   = 60,   -- [G-9] đứng im tối đa 60s thì token bị force-release
     BossEnabled         = true,
     FruitEnabled        = true,
     AutoStats           = true,
@@ -197,25 +250,28 @@ _G.Settings = {
     GatherMobs          = true,
     -- Sea 1 optimized skip route (Fountain, bosses, Upper Sky/Galley).
     SkipLevelRoute      = true,
-    SkipRouteTargetTimeout = 45,
-    SkipRouteProgressTimeout = 180,
-    -- Lightweight one-shot evasion; it runs inside the existing farm tick.
-    DodgeEnabled        = true,
-    DodgeCooldown       = 0.8,
-    DodgeRange          = 55,
-    DodgeSpeed          = 65,
-    DodgeLift           = 28,
-    -- Bring every mob whose name matches the currently accepted quest (q.M)
-    -- to the selected farm target.  Set false to keep nearby-only behavior.
-    GatherAllQuestMobs  = true,
-    GatherMaxDistance   = 5000,
+    -- Safe gather only moves nearby NPCs when this client actually owns their
+    -- physics. Moving arbitrary server-owned NPCs creates invulnerable
+    -- "ghost mobs" whose visible position differs from the server position.
+    GatherAllQuestMobs  = false,
+    GatherMaxDistance   = 75,
     GatherSpacing       = 6,
-    GatherInterval      = 0.3,
+    GatherInterval      = 0.25,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
     ServerHopCooldown   = 120,
     MaxFarmDistance     = 300,
     StatBatchLimit      = 100,
+    -- [D-1] NÉ CHIÊU: phát hiện quái gần player tung chiêu (animation
+    -- tấn công / lao nhanh về phía player) → dịch ngang né nhanh.
+    DodgeAttacks        = true,
+    DodgeCooldown       = 1.5,
+    DodgeDistance       = 12,
+    DodgeHeight         = 4,
+    DodgeRadius         = 15,
+    -- [D-4] Skip level không hiệu quả: cùng route quá N giây mà level
+    -- không tăng → tắt skip route, quay về farm quest bình thường.
+    SkipRouteFallbackTimeout = 90,
 }
 
 
@@ -249,6 +305,7 @@ _G.State = {
     LastRandomFruit  = 0,
     LastServerHop    = 0,
     LastQuestRequest = 0,
+    LastQuestAccepted= 0,
     QuestRetries     = 0,
     IsTraveling      = false,
     IsRecovering     = false,
@@ -371,38 +428,55 @@ end)
 -- ══════════════════════════════════════════════════════════════════
 if CoreGui:FindFirstChild("BobonHubUI") then CoreGui.BobonHubUI:Destroy() end
 
+local UIS = game:GetService("UserInputService")
+
+-- [G-2] Dọn blur còn sót từ lần execute trước (CoreGui / Camera / Lighting)
+for _, scope in ipairs({ CoreGui, workspace.CurrentCamera, game:GetService("Lighting") }) do
+    pcall(function()
+        local old = scope and scope:FindFirstChild("BobonHubBlur")
+        if old then old:Destroy() end
+    end)
+end
 
 local SG = Instance.new("ScreenGui")
 SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
+-- [G-1] Cấu hình hiệu ứng kính mờ (định nghĩa lại được trong _G.Settings)
+_G.Settings.MenuDim  = _G.Settings.MenuDim or 0.28    -- kính tối toàn màn hình
+_G.Settings.MenuBlur = _G.Settings.MenuBlur or 16
 
--- A soft dimmer keeps the overlay readable without hiding the game world.
+-- [G-1] BLUR: kính mờ thật phủ lên cảnh phía sau overlay
+local Blur = Instance.new("BlurEffect")
+Blur.Name = "BobonHubBlur"; Blur.Size = 0; Blur.Enabled = true
+Blur.Parent = workspace.CurrentCamera
+-- [G-2] Camera có thể bị thay sau respawn/teleport → tự gắn lại blur
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    pcall(function()
+        if Blur and Blur.Parent then Blur.Parent = workspace.CurrentCamera end
+    end)
+end)
+
+-- [G-1] NỀN KÍNH MỜ: phủ mờ xuyên cảnh thay cho [D-2] nền đen 100%.
+-- Dim fade-in từ trong suốt rồi tween về MenuDim ở block phía dưới.
 local Dim = Instance.new("Frame", SG)
-Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(1,5,15)
-Dim.BackgroundTransparency = 0.38; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
-
-
--- Center card inspired by the reference image: one clear brand mark, then
--- status and economy values in a compact hierarchy.
-local Con = Instance.new("Frame", SG)
-Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.new(0.5,0,0.47,0)
-Con.Size = UDim2.new(0,640,0,350); Con.BackgroundColor3 = Color3.fromRGB(6,16,32)
-Con.BackgroundTransparency = 0.18; Con.BorderSizePixel = 0; Con.ZIndex = 2
-Instance.new("UICorner", Con).CornerRadius = UDim.new(0,18)
-local ConStroke = Instance.new("UIStroke", Con)
-ConStroke.Color = Color3.fromRGB(88,196,255); ConStroke.Transparency = 0.52; ConStroke.Thickness = 1.5
-local ConGradient = Instance.new("UIGradient", Con)
-ConGradient.Rotation = 90
-ConGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(9,28,53)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(4,10,22)),
+Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(8,14,26)
+Dim.BackgroundTransparency = 1
+Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+local DimGrad = Instance.new("UIGradient", Dim)
+DimGrad.Rotation = 90
+DimGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(12,22,42)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(3,7,16)),
 })
 
-local Accent = Instance.new("Frame", Con)
-Accent.Position = UDim2.new(0.08,0,0,0); Accent.Size = UDim2.new(0.84,0,0,3)
-Accent.BackgroundColor3 = Color3.fromRGB(88,214,255); Accent.BorderSizePixel = 0; Accent.ZIndex = 3
-Instance.new("UICorner", Accent).CornerRadius = UDim.new(0,3)
+
+-- Full-screen HUD: no menu card. Information floats directly over the
+-- full-screen frosted layer and scales on desktop/mobile resolutions.
+local Con = Instance.new("Frame", SG)
+Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.fromScale(0.5,0.5)
+Con.Size = UDim2.fromScale(1,1)
+Con.BackgroundTransparency = 1; Con.BorderSizePixel = 0; Con.ZIndex = 2
 
 local function MkLabel(txt,sz,col,bold,pos,height,align)
     local lb = Instance.new("TextLabel", Con)
@@ -412,7 +486,7 @@ local function MkLabel(txt,sz,col,bold,pos,height,align)
     lb.Font = bold and Enum.Font.GothamBlack or Enum.Font.GothamMedium
     lb.TextXAlignment = align or Enum.TextXAlignment.Center
     lb.TextYAlignment = Enum.TextYAlignment.Center
-    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.45
     lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
     return lb
 end
@@ -420,7 +494,7 @@ end
 
 local function MkDivider(y)
     local f = Instance.new("Frame", Con)
-    f.Position = UDim2.new(0.09,0,0,y); f.Size = UDim2.new(0.82,0,0,1)
+    f.Position = UDim2.new(0.18,0,y,0); f.Size = UDim2.new(0.64,0,0,1)
     f.BackgroundColor3 = Color3.fromRGB(120,205,255); f.BackgroundTransparency = 0.72
     f.BorderSizePixel = 0; f.ZIndex = 3
     return f
@@ -429,14 +503,15 @@ end
 
 local function MkCurrRow()
     local row = Instance.new("Frame", Con)
-    row.Position = UDim2.new(0.04,0,0,218); row.Size = UDim2.new(0.92,0,0,32)
+    row.AnchorPoint = Vector2.new(0.5,0)
+    row.Position = UDim2.new(0.5,0,0.62,0); row.Size = UDim2.new(0.72,0,0,32)
     row.BackgroundTransparency = 1; row.BorderSizePixel = 0; row.ZIndex = 3
     local function Side(txt,col,pos,align)
         local lb = Instance.new("TextLabel", row)
         lb.Position = pos; lb.Size = UDim2.new(0.44,0,1,0); lb.BackgroundTransparency = 1
         lb.Text = txt; lb.TextColor3 = col; lb.TextSize = 16; lb.Font = Enum.Font.GothamBold
         lb.TextXAlignment = align; lb.TextYAlignment = Enum.TextYAlignment.Center
-        lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+        lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.45
         lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
         return lb
     end
@@ -452,29 +527,105 @@ local function MkCurrRow()
 end
 
 
-local TitleL = MkLabel("BoBonHub",58,Color3.fromRGB(245,252,255),true,UDim2.new(0,24,0,21),70)
-local SubL   = MkLabel("STABLE KAITUN  •  AUTO FARM",12,Color3.fromRGB(102,214,255),true,UDim2.new(0,24,0,90),24)
-local StatL  = MkLabel("Status: Initializing...",17,Color3.fromRGB(101,255,157),true,UDim2.new(0,24,0,120),30)
-local ModeL  = MkLabel("Mode: Idle",13,Color3.fromRGB(188,211,235),false,UDim2.new(0,24,0,151),22)
-local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(218,228,242),false,UDim2.new(0,24,0,174),23)
-MkDivider(204)
+local TitleL = MkLabel("BoBonHub",58,Color3.fromRGB(245,252,255),true,UDim2.new(0,24,0.25,0),70)
+local SubL   = MkLabel("STABLE KAITUN  •  AUTO FARM",12,Color3.fromRGB(102,214,255),true,UDim2.new(0,24,0.25,70),24)
+local StatL  = MkLabel("Status: Initializing...",18,Color3.fromRGB(101,255,157),true,UDim2.new(0,24,0.43,0),30)
+local ModeL  = MkLabel("Mode: Idle",14,Color3.fromRGB(188,211,235),false,UDim2.new(0,24,0.49,0),22)
+local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(218,228,242),false,UDim2.new(0,24,0.54,0),23)
+MkDivider(0.59)
 local CurrRow, BeliL, SepL, FragL = MkCurrRow()
-local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,126,126),false,UDim2.new(0,24,0,260),22)
-local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDim2.new(0,24,0,286),22)
+local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,126,126),false,UDim2.new(0,24,0.70,0),22)
+local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDim2.new(0,24,0.75,0),22)
+local HintL  = MkLabel("Nút bên trái / Right Ctrl: Ẩn hiện giao diện",11,Color3.fromRGB(140,165,195),false,UDim2.new(0,24,0.80,0),18)
+
+-- Compact persistent toggle on the left. It stays visible while the frosted
+-- overlay is hidden, unlike toggling ScreenGui.Enabled.
+local ToggleButton = Instance.new("TextButton", SG)
+ToggleButton.Name = "OverlayToggle"
+ToggleButton.AnchorPoint = Vector2.new(0,0.5)
+ToggleButton.Position = UDim2.new(0,14,0.5,0)
+ToggleButton.Size = UDim2.new(0,46,0,58)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(8,25,44)
+ToggleButton.BackgroundTransparency = 0.12
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Text = "◀"
+ToggleButton.TextColor3 = Color3.fromRGB(142,225,255)
+ToggleButton.TextSize = 22
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.AutoButtonColor = false
+ToggleButton.ZIndex = 20
+Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(0,13)
+local ToggleStroke = Instance.new("UIStroke", ToggleButton)
+ToggleStroke.Color = Color3.fromRGB(79,198,255)
+ToggleStroke.Transparency = 0.18
+ToggleStroke.Thickness = 1.5
+local ToggleGradient = Instance.new("UIGradient", ToggleButton)
+ToggleGradient.Rotation = 90
+ToggleGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(18,54,82)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(5,18,34)),
+})
 
 
+-- [G-1] Fade-in: nền kính + blur hiện dần, chữ cascade như bản gốc
 task.spawn(function()
-    task.wait(0.3)
-    TS:Create(Dim,TweenInfo.new(0.9,Enum.EasingStyle.Quad),{BackgroundTransparency=0.38}):Play()
-    task.wait(0.5)
-    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL}) do
-        task.delay((i-1)*0.08,function()
+    task.wait(0.15)
+    TS:Create(Dim, TweenInfo.new(0.6, Enum.EasingStyle.Quad),
+        {BackgroundTransparency = _G.Settings.MenuDim}):Play()
+    TS:Create(Blur, TweenInfo.new(0.8, Enum.EasingStyle.Quad),
+        {Size = _G.Settings.MenuBlur}):Play()
+    task.wait(0.15)
+    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL,HintL}) do
+        task.delay((i-1)*0.07,function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.3 DATA] UI Ready!")
+    print("[BobonHub v16.5 GLASS] UI Ready!")
 end)
 
+local OverlayVisible = true
+local function SetOverlayVisible(visible)
+    OverlayVisible = visible == true
+    Dim.Visible = OverlayVisible
+    Con.Visible = OverlayVisible
+    ToggleButton.Text = OverlayVisible and "◀" or "B"
+    pcall(function()
+        if Blur and Blur.Parent then Blur.Enabled = OverlayVisible end
+    end)
+end
+
+ToggleButton.MouseButton1Click:Connect(function()
+    SetOverlayVisible(not OverlayVisible)
+end)
+ToggleButton.MouseEnter:Connect(function()
+    TS:Create(ToggleButton, TweenInfo.new(0.15), {
+        BackgroundTransparency = 0,
+        Size = UDim2.new(0,50,0,62),
+    }):Play()
+end)
+ToggleButton.MouseLeave:Connect(function()
+    TS:Create(ToggleButton, TweenInfo.new(0.15), {
+        BackgroundTransparency = 0.12,
+        Size = UDim2.new(0,46,0,58),
+    }):Play()
+end)
+
+-- Right Ctrl mirrors the small left-side button.
+pcall(function()
+    UIS.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.RightControl then
+            SetOverlayVisible(not OverlayVisible)
+        end
+    end)
+end)
+
+-- [G-2] Dọn blur khi UI bị destroy (re-execute / unload)
+SG.Destroying:Connect(function()
+    pcall(function()
+        if Blur and Blur.Parent then Blur:Destroy() end
+    end)
+end)
 
 local function Fmt(n)
     local s = tostring(math.floor(n or 0))
@@ -735,7 +886,10 @@ local function HandleQuestAtGiver(q, atGiver)
             -- Verify both the title and the wrapper.  A completed quest can
             -- leave stale title text behind for a few frames; that must not
             -- be mistaken for a newly accepted quest.
-            if HasQuest() == true and QuestMatches(q.M) == true then return true end
+            -- Quest title/UI can be rearranged between game updates.  The
+            -- wrapper being active is authoritative; only an explicit mob
+            -- mismatch rejects the quest.  `nil` means unreadable, not wrong.
+            if HasQuest() == true and QuestMatches(q.M) ~= false then return true end
             task.wait(0.2)
         until tick() >= deadline
         return false
@@ -756,6 +910,7 @@ local function HandleQuestAtGiver(q, atGiver)
     end
     if okRQ and accepted then
         _G.State.QuestRetries = 0
+        _G.State.LastQuestAccepted = tick()
         _G.BobonStatus = "Quest: Accepted " .. q.M
         DLog("QUEST", "Accepted: " .. q.M)
     else
@@ -812,12 +967,48 @@ task.spawn(function()
 end)
 
 
-local function FastRegisterHit(preferred)
-    local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
-    local registerAttack = net and net:FindFirstChild("RE/RegisterAttack")
-    local registerHit = net and net:FindFirstChild("RE/RegisterHit")
+-- Combat remotes have appeared both as literal names ("RE/RegisterHit")
+-- and as nested folders (RE.RegisterHit). Resolve both layouts so a game
+-- update cannot silently disable all attacks.
+local NetFolderCache = nil
+local function ResolveNet()
+    if NetFolderCache and NetFolderCache.Parent then return NetFolderCache end
+    local roots = {}
+    if Remotes then roots[#roots + 1] = Remotes end
+    roots[#roots + 1] = RS
+    for _, root in ipairs(roots) do
+        local net = root:FindFirstChild("Net", true)
+        if net then
+            NetFolderCache = net
+            return net
+        end
+    end
+    return nil
+end
+
+local function FindNetRemote(net, path)
+    if not net then return nil end
+    local direct = net:FindFirstChild(path)
+    if direct then return direct end
+    local folderName, remoteName = string.match(path, "^([^/]+)/(.+)$")
+    local folder = folderName and net:FindFirstChild(folderName)
+    local nested = folder and folder:FindFirstChild(remoteName)
+    if nested then return nested end
+    if remoteName then
+        return net:FindFirstChild(remoteName, true)
+    end
+    return nil
+end
+
+local function FastRegisterHit(preferred, mobName)
+    local net = ResolveNet()
+    local registerAttack = FindNetRemote(net, "RE/RegisterAttack")
+    local registerHit = FindNetRemote(net, "RE/RegisterHit")
     local me = HRP()
-    if not me or not registerAttack or not registerHit then return false end
+    if not me or not registerAttack or not registerHit then
+        DLog("ATTACK", "Combat remotes unavailable")
+        return false
+    end
     local hitList = {}
     local firstPart = nil
     local folder = workspace:FindFirstChild("Enemies")
@@ -826,8 +1017,13 @@ local function FastRegisterHit(preferred)
             local hum = enemy:FindFirstChildOfClass("Humanoid")
             local root = enemy:FindFirstChild("HumanoidRootPart")
             local head = enemy:FindFirstChild("Head") or root
-            if hum and hum.Health > 0 and root and head
-                and (root.Position - me.Position).Magnitude <= 100 then
+            local inRange = root and (root.Position - me.Position).Magnitude
+                <= (_G.Settings.AttackRange or 100)
+            local nameMatches = not mobName or IsEnemyNamed(enemy, mobName)
+            if hum and hum.Health > 0 and root and head and inRange and nameMatches then
+                -- RegisterHit expects the game's normal pair payload:
+                -- {enemy model, hit part}. Sending several guessed formats
+                -- can make the server discard/rate-limit every hit.
                 hitList[#hitList + 1] = {enemy, head}
                 if not firstPart and (not preferred or enemy == preferred) then
                     firstPart = head
@@ -837,10 +1033,12 @@ local function FastRegisterHit(preferred)
     end
     if #hitList == 0 then return false end
     firstPart = firstPart or hitList[1][2]
-    return pcall(function()
+    local ok, err = pcall(function()
         registerAttack:FireServer(0)
         registerHit:FireServer(firstPart, hitList)
     end)
+    if not ok then DLog("ATTACK", "RegisterHit failed: " .. tostring(err)) end
+    return ok
 end
 
 -- Guns use their own LeftClickRemote in current builds.  RegisterHit is for
@@ -880,12 +1078,12 @@ local function FireGunHits(tool, preferred)
     return sent
 end
 
-local function Attack(preferredTarget)
-    if not IsAlive() then return end
+local function Attack(preferredTarget, mobName)
+    if not IsAlive() then return false end
     local now = tick()
-    if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return end
+    if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return false end
     _G.State.LastAttackTime = now
-    pcall(function()
+    local ok, err = pcall(function()
         local c = Char()
         local tool = c and c:FindFirstChildOfClass("Tool")
         if tool then
@@ -897,12 +1095,24 @@ local function Attack(preferredTarget)
         if tool and tool:FindFirstChild("LeftClickRemote") then
             FireGunHits(tool, preferredTarget)
         else
-            FastRegisterHit(preferredTarget)
+            FastRegisterHit(preferredTarget, mobName)
         end
         local camera = workspace.CurrentCamera
         local viewport = camera and camera.ViewportSize
         local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
             or Vector2.new(640, 360)
+        -- [G-9] Hướng camera THẲNG vào target trước khi click: M1 của
+        -- game bắn theo hướng camera, không phải hướng thân character.
+        -- Camera mặc định theo chuột nên không quay xuống mob đang hover.
+        if camera and preferredTarget then
+            local tRoot = preferredTarget:IsA("BasePart") and preferredTarget
+                or preferredTarget:FindFirstChild("HumanoidRootPart")
+            if tRoot then
+                pcall(function()
+                    camera.CFrame = CFrame.lookAt(camera.CFrame.Position, tRoot.Position)
+                end)
+            end
+        end
         VU:CaptureController()
         -- Giữ M1 theo đúng input flow của game; (0,0) thường không được
         -- Roblox coi là click gameplay nên trước đây tool không đánh.
@@ -910,6 +1120,8 @@ local function Attack(preferredTarget)
         VU:Button1Up(clickPos)
         VU:ClickButton1(clickPos)
     end)
+    if not ok then DLog("ATTACK", "Attack error: " .. tostring(err)) end
+    return ok
 end
 
 local function PrepareCombatTarget(target)
@@ -925,6 +1137,13 @@ local function PrepareCombatTarget(target)
             root.Size = Vector3.new(size, size, size)
         end
         root.CanCollide = false
+        local model = target:IsA("Model") and target
+            or target:FindFirstAncestorOfClass("Model")
+        local hum = model and model:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
+            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+        end
     end)
 end
 
@@ -1318,6 +1537,8 @@ end
 -- ══════════════════════════════════════════════════════════════════
 local FarmPositionController = {
     LastGather = 0,
+    -- [G-7] registry các root đã anchor cục bộ khi gom cụm
+    Anchored = {},
 }
 
 
@@ -1394,42 +1615,64 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
     return false
 end
 
--- Soft local bring-mob: put matching quest mobs into one cluster around the
--- selected target.  GatherAllQuestMobs extends the old nearby-only behavior
--- to every matching mob within GatherMaxDistance in the current server.
--- This stays inside the existing Farm loop; it does not create movement code
--- for the player.  Roblox may re-sync server-owned NPCs, so the operation is
--- intentionally repeated at a small interval while farming.
+-- Release roots anchored by an older execution of this controller. The safe
+-- gather path below never anchors NPCs because doing so only changes the
+-- client copy when the server owns that NPC.
+function FarmPositionController:ReleaseCluster()
+    for root in pairs(self.Anchored or {}) do
+        pcall(function()
+            if root and root.Parent then root.Anchored = false end
+        end)
+    end
+    self.Anchored = {}
+end
+
+local function ClientOwnsMob(root)
+    -- isnetworkowner is executor-specific. If it is missing or errors, treat
+    -- the NPC as server-owned and leave its position untouched.
+    if type(isnetworkowner) ~= "function" then return false end
+    local ok, owned = pcall(isnetworkowner, root)
+    return ok and owned == true
+end
+
+-- Safe gather: only nearby, matching quest mobs are moved, and only while
+-- this client owns their physics. Server-owned mobs remain at their real
+-- position so RegisterHit can damage them and their health bar stays valid.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
-    -- Never pull NPCs while the player is still travelling to the anchor.
-    -- The selected mob is the movement anchor; gathering starts only after
-    -- the player is actually hovering above that mob.
     if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
         or not _G.State:IsTargetValid(primary) then
         return 0
     end
     local now = tick()
-    if now - self.LastGather < (_G.Settings.GatherInterval or 0.3) then return 0 end
+    if now - self.LastGather < (_G.Settings.GatherInterval or 0.15) then return 0 end
     self.LastGather = now
     local primaryRoot = primary:FindFirstChild("HumanoidRootPart")
     local folder = workspace:FindFirstChild("Enemies")
     if not primaryRoot or not folder then return 0 end
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
+    pcall(function()
+        primaryRoot.Anchored = false
+        primaryRoot.CanCollide = false
+    end)
     local playerRoot = HRP()
     local anchorPos = self:GetFarmPos(primary)
     if not playerRoot or not anchorPos then return 0 end
     local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
+    -- [G-6] Anchor gate nới tối thiểu 35 studs: hover travel dừng ở
+    -- FarmArrivalThreshold nhưng dao động vật lý khiến vòng nhỏ cũ
+    -- hay tắt gom liên tục.
+    local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
     if not okPlayerPos or not IsValidPos(playerPos)
-        or (playerPos - anchorPos).Magnitude > (_G.Settings.FarmArrivalThreshold or 15) then
+        or (playerPos - anchorPos).Magnitude > anchorRadius then
         return 0
     end
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
     local maxDistance = gatherAll
-        and (_G.Settings.GatherMaxDistance or math.huge)
+        and math.min(_G.Settings.GatherMaxDistance or 75, 120)
         or (_G.Settings.MobGatherRadius or 50)
-    local spacing = _G.Settings.GatherSpacing or 6
+    local spacing = _G.Settings.GatherSpacing or 4
     local moved, slot = 0, 0
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
@@ -1443,9 +1686,11 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                 local angle = slot * 2.4
                 local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
                 pcall(function()
-                    -- Do not rewrite an already clustered mob every frame;
-                    -- this avoids physics jitter while still pulling strays.
-                    if offset.Magnitude > spacing + 2 then
+                    root.Anchored = false
+                    root.CanCollide = false
+                    hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
+                    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+                    if ClientOwnsMob(root) and offset.Magnitude > spacing + 1 then
                         local destinationCF = CFrame.new(destination, origin)
                         if mob:IsA("Model") then
                             local pivoted = pcall(function() mob:PivotTo(destinationCF) end)
@@ -1457,97 +1702,11 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                         root.AssemblyAngularVelocity = Vector3.zero
                         moved = moved + 1
                     end
-                    root.CanCollide = false
                 end)
             end
         end
     end
     return moved
-end
-
-
--- ══════════════════════════════════════════════════════════════════
---                 EVASION CONTROLLER (ONE-SHOT)
---   Detect common NPC attack/cast signals and apply a short lateral impulse.
---   It deliberately does not create another loop or take movement ownership;
---   TravelManager remains the only persistent movement controller.
--- ══════════════════════════════════════════════════════════════════
-local DodgeController = {
-    LastDodge = 0,
-}
-
-local function IsAttackName(value)
-    local text = string.lower(tostring(value or ""))
-    return text:find("attack", 1, true) ~= nil
-        or text:find("skill", 1, true) ~= nil
-        or text:find("cast", 1, true) ~= nil
-        or text:find("slash", 1, true) ~= nil
-        or text:find("slam", 1, true) ~= nil
-        or text:find("stomp", 1, true) ~= nil
-        or text:find("roar", 1, true) ~= nil
-        or text:find("shock", 1, true) ~= nil
-end
-
-function DodgeController:IsCasting(enemy)
-    if not enemy then return false end
-    for _, attr in ipairs({"Attacking", "IsAttacking", "Casting", "UsingSkill", "Skill"}) do
-        local ok, value = pcall(function() return enemy:GetAttribute(attr) end)
-        if ok and value == true then return true end
-    end
-    for _, node in ipairs(enemy:GetChildren()) do
-        if (node:IsA("BoolValue") or node:IsA("StringValue"))
-            and IsAttackName(node.Name) then
-            if node:IsA("BoolValue") and node.Value then return true end
-            if node:IsA("StringValue") and node.Value ~= "" then return true end
-        end
-    end
-    local hum = enemy:FindFirstChildOfClass("Humanoid")
-    if hum then
-        local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
-        if ok then
-            for _, track in ipairs(tracks) do
-                if track.IsPlaying and IsAttackName(track.Name) then return true end
-            end
-        end
-    end
-    local root = enemy:FindFirstChild("HumanoidRootPart")
-    if root then
-        for _, node in ipairs(root:GetChildren()) do
-            if (node:IsA("ParticleEmitter") or node:IsA("Beam")
-                or node:IsA("Trail")) and IsAttackName(node.Name) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-function DodgeController:TryDodge(enemy)
-    if not _G.Settings.DodgeEnabled or not enemy or not IsAlive() then return false end
-    local now = tick()
-    if now - self.LastDodge < (_G.Settings.DodgeCooldown or 0.8) then return false end
-    local me = HRP()
-    local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
-    local hum = Hum()
-    if not me or not enemyRoot or not hum or not self:IsCasting(enemy) then return false end
-    local offset = me.Position - enemyRoot.Position
-    local flat = Vector3.new(offset.X, 0, offset.Z)
-    if flat.Magnitude > (_G.Settings.DodgeRange or 55) then return false end
-    if flat.Magnitude < 0.1 then flat = Vector3.new(1, 0, 0) end
-    local direction = flat.Unit
-    self.LastDodge = now
-    -- Let Farm-owned hover travel continue; never fight a non-farm action.
-    if _G.State.IsTraveling and _G.State.MovementOwner ~= "Farm" then return false end
-    local current = me.AssemblyLinearVelocity
-    me.AssemblyLinearVelocity = Vector3.new(
-        direction.X * (_G.Settings.DodgeSpeed or 65),
-        math.max(current.Y, _G.Settings.DodgeLift or 28),
-        direction.Z * (_G.Settings.DodgeSpeed or 65)
-    )
-    hum.Jump = true
-    _G.BobonStatus = "Dodging: " .. tostring(enemy.Name)
-    DLog("DODGE", "Evading attack from " .. tostring(enemy.Name))
-    return true
 end
 
 
@@ -1584,7 +1743,7 @@ function TravelManager:MaybeRequestEntrance(targetPos)
         -- Update 27 Submerged Island: use the live Net remote when present.
         -- If the island is not unlocked, the call safely fails and normal
         -- validation prevents a blind teleport to an invalid fallback.
-        local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
+        local net = ResolveNet()
         local speak = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
         local ok = false
         if speak then
@@ -2102,6 +2261,7 @@ end
 -- Death/Respawn handlers
 LP.CharacterRemoving:Connect(function()
     HakiController:Reset()
+    FarmPositionController:ReleaseCluster()
     TravelManager:Stop("CharacterRemoving")
     _G.State:SetMode("Dead")
     _G.State:ClearTargets()
@@ -2205,6 +2365,122 @@ task.spawn(function()
     end
 end)
 -- ══════════════════════════════════════════════════════════════════
+--         [D-1] DODGE CONTROLLER — NÉ CHIÊU KHI QUÁI TẤN CÔNG
+--   Một monitor loop DUY NHẤT, chỉ DÒ chiêu (không điều khiển movement
+--   liên tục nên không phá Single Movement Owner). Khi phát hiện quái
+--   gần player đang tung chiêu (animation tấn công đang phát / tốc độ
+--   lao nhanh về phía player) → dịch ngang 1 phát (CFrame offset) né,
+--   rồi để TravelManager hover kéo về điểm farm như thường.
+--   Có cooldown chống spam; không hoạt động khi bay xa (giver/island)
+--   hay khi recovery/dead/respawn.
+-- ══════════════════════════════════════════════════════════════════
+local DodgeController = {
+    LastDodge = 0,
+}
+
+local DODGE_ATTACK_KEYWORDS = {
+    "attack","combo","kick","punch","slash","swing","hit",
+    "strike","beat","smash","bite","claw","fist","spin","haki",
+}
+
+local function DodgeAnimIsAttack(track)
+    local ok, name = pcall(function() return track.Name end)
+    if not ok or type(name) ~= "string" then return false end
+    local lower = string.lower(name)
+    for _, kw in ipairs(DODGE_ATTACK_KEYWORDS) do
+        if string.find(lower, kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function DodgeEnemyIsAttacking(enemy, me)
+    local hum = enemy:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    local okTracks, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+    if okTracks and tracks then
+        for _, track in ipairs(tracks) do
+            if track.IsPlaying and DodgeAnimIsAttack(track) then
+                return true
+            end
+        end
+    end
+    local root = enemy:FindFirstChild("HumanoidRootPart")
+    if root and me then
+        local okVel, vel = pcall(function() return root.AssemblyLinearVelocity end)
+        if okVel and type(vel) == "Vector3" then
+            local toMe = me.Position - root.Position
+            local dist = toMe.Magnitude
+            if dist > 0.5 and dist <= (_G.Settings.DodgeRadius or 15) then
+                local closing = toMe.Unit:Dot(vel)
+                if closing > 35 then return true end
+            end
+        end
+    end
+    return false
+end
+
+function DodgeController:TryDodge()
+    if not _G.Settings.DodgeAttacks then return false end
+    if not IsAlive() then return false end
+    if _G.State.Mode == "Recovering" or _G.State.Mode == "Dead"
+        or _G.State.Mode == "Respawning" or _G.State.Mode == "ServerHop" then
+        return false
+    end
+    local now = tick()
+    if now - self.LastDodge < (_G.Settings.DodgeCooldown or 1.5) then return false end
+    -- Không né khi đang bay xa tới giver/island (target là CFrame xa):
+    -- dodge chỉ dành cho lúc đứng farm gần mob (target Instance/CFrame gần).
+    if _G.State.IsTraveling then
+        local ref = TravelManager.TargetRef
+        if typeof(ref) == "CFrame" or typeof(ref) == "Vector3" then
+            local me = HRP()
+            local targetPos = typeof(ref) == "CFrame" and ref.Position or ref
+            if not me or (me.Position - targetPos).Magnitude > 60 then
+                return false
+            end
+        end
+    end
+    local me = HRP()
+    if not me then return false end
+    local folder = workspace:FindFirstChild("Enemies")
+    if not folder then return false end
+    local danger = nil
+    local dangerRoot = nil
+    for _, enemy in ipairs(folder:GetChildren()) do
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+        local p = root.Position
+        if IsValidPos(p) and (p - me.Position).Magnitude <= (_G.Settings.DodgeRadius or 15)
+            and DodgeEnemyIsAttacking(enemy, me) then
+            danger, dangerRoot = enemy, root
+            break
+        end
+    end
+    if not danger or not dangerRoot then return false end
+    -- Né: dịch ngang vuông góc với hướng quái → player + nhấc nhẹ lên,
+    -- giữ rotation; hover của TravelManager sẽ kéo về điểm farm sau đó.
+    local dir = (dangerRoot.Position - me.Position).Unit
+    local side = Vector3.new(-dir.Z, 0, dir.X)
+    local newPos = me.Position + side * (_G.Settings.DodgeDistance or 12)
+        + Vector3.new(0, _G.Settings.DodgeHeight or 4, 0)
+    pcall(function()
+        me.CFrame = CFrame.new(newPos) * me.CFrame.Rotation
+        me.AssemblyLinearVelocity = Vector3.zero
+    end)
+    self.LastDodge = now
+    DLog("DODGE", "Né chiêu " .. tostring(danger.Name))
+    _G.BobonStatus = "Farm: Né chiêu"
+    return true
+end
+
+-- [D-1] Monitor loop duy nhất cho dodge (0.1s — phản xạ nhanh hơn farm
+-- tick). Chỉ dò + dịch 1 phát, không điều khiển movement liên tục.
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(function() DodgeController:TryDodge() end)
+    end
+end)
+-- ══════════════════════════════════════════════════════════════════
 --         RECOVERY MANAGER v7 (Fix #2,#6)
 --   State machine: STOP → CLEANUP → RESET → WAIT → CHECK → IDLE
 --   KHÔNG tạo movement coroutine trong recovery
@@ -2254,11 +2530,12 @@ function RecoveryManager:Handle(reason)
 
 
             -- STEP 5: Reset HRP velocity chống residual momentum
+            -- [G-3] Dùng Assembly* thay Velocity/RotVelocity đã deprecated.
             pcall(function()
                 local hrp = HRP()
                 if hrp then
-                    hrp.Velocity = Vector3.zero
-                    hrp.RotVelocity = Vector3.zero
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
                 end
             end)
             return false
@@ -2335,7 +2612,7 @@ end)
 
 
 -- ══════════════════════════════════════════════════════════════════
---          QUEST DATABASE v16.3 (SEA 1/2/3 COORDINATES)
+--          QUEST DATABASE v16.4 (SEA 1/2/3 COORDINATES)
 -- ══════════════════════════════════════════════════════════════════
 local QDB = {
     {Min=1,Max=9,Q="BanditQuest1",M="Bandit",QL=1,QC=CFrame.new(1059.37,15.45,1550.42),MC=CFrame.new(1045.96,27.00,1560.82)},
@@ -2454,11 +2731,11 @@ end
 local SkipRouteController = {
     Enabled = true,
     CurrentKey = nil,
-    FallbackKey = nil,
-    FallbackLevel = nil,
-    LastLevel = nil,
-    LastProgress = 0,
-    LastTarget = 0,
+    -- [D-4] Theo dõi hiệu quả của route: level tại lúc chọn route + thời
+    -- điểm bắt đầu. Level không tăng trong SkipRouteFallbackTimeout giây
+    -- → coi skip không hiệu quả → tắt hẳn, farm quest bình thường.
+    RouteStartTime = nil,
+    RouteStartLevel = nil,
 }
 
 local SkipRouteDB = {
@@ -2478,15 +2755,7 @@ function SkipRouteController:GetRoute()
     if not self.Enabled or _G.Settings.SkipLevelRoute == false or GetSea() ~= 1 then return nil end
     local lv = Level()
     for _, route in ipairs(SkipRouteDB) do
-        if lv >= route.Min and lv <= route.Max then
-            -- A failed skip route is suppressed for this exact level.  The
-            -- normal quest controller can then run without being stolen back
-            -- by the same unavailable boss on the next 0.15s tick.
-            if self.FallbackKey == route.Key and self.FallbackLevel == lv then
-                return nil
-            end
-            return route
-        end
+        if lv >= route.Min and lv <= route.Max then return route end
     end
     return nil
 end
@@ -2500,14 +2769,6 @@ function SkipRouteController:Reset(reason)
         _G.State:ClearTargets()
         self.CurrentKey = nil
     end
-end
-
-function SkipRouteController:Fail(route, reason)
-    self.FallbackKey = route and route.Key or self.CurrentKey
-    self.FallbackLevel = Level()
-    _G.BobonStatus = "Skip route unavailable; switching to quest farm"
-    DLog("SKIP", "Fallback to quest farm: " .. tostring(reason or "unavailable"))
-    self:Reset(reason or "route unavailable")
 end
 
 function SkipRouteController:FindTarget(route)
@@ -2532,19 +2793,27 @@ function SkipRouteController:Run()
         return false
     end
 
-    local currentLevel = Level()
     if self.CurrentKey ~= route.Key then
         self:Reset("level transition")
         self.CurrentKey = route.Key
-        self.LastLevel = currentLevel
-        self.LastProgress = tick()
-        self.LastTarget = tick()
-        self.FallbackKey = nil
-        self.FallbackLevel = nil
+        self.RouteStartTime = os.time()
+        self.RouteStartLevel = Level()
         DLog("SKIP", "Route selected: " .. route.Key)
-    elseif self.LastLevel ~= currentLevel then
-        self.LastLevel = currentLevel
-        self.LastProgress = tick()
+    end
+
+    -- [D-4] SKIP KHÔNG HIỆU QUẢ → FARM QUEST BÌNH THƯỜNG:
+    -- Cùng route quá SkipRouteFallbackTimeout giây mà level không tăng
+    -- (boss không spawn, mob không giết được, quái quá khỏe...) → tắt
+    -- hẳn skip route; main controller đi xuống quest gate và farm quest
+    -- như thường (không bao giờ kẹt "Waiting for boss" vô hạn).
+    if self.RouteStartTime and self.RouteStartLevel
+        and os.time() - self.RouteStartTime > (_G.Settings.SkipRouteFallbackTimeout or 90)
+        and Level() <= self.RouteStartLevel then
+        self.Enabled = false
+        _G.Settings.SkipLevelRoute = false
+        self:Reset("skip not effective, back to normal quest farm")
+        DLog("SKIP", "Skip không hiệu quả (" .. route.Key .. ") → tắt, farm quest bình thường")
+        return false
     end
 
     _G.State:SetMode("Farming")
@@ -2564,7 +2833,6 @@ function SkipRouteController:Run()
     end
 
     if target then
-        self.LastTarget = tick()
         local targetRoot = target:FindFirstChild("HumanoidRootPart")
         _G.State.FarmTarget = target
         _G.State.CurrentTarget = target
@@ -2576,39 +2844,43 @@ function SkipRouteController:Run()
             })
         end
 
-        local dodged = DodgeController:TryDodge(target)
         local hrp = HRP()
-        if not dodged and hrp and targetRoot then
+        if hrp and targetRoot then
             local a = Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
             local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
             local farmHolds = not _G.State.IsTraveling or _G.State.MovementOwner == "Farm"
-            if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds
-                and EquipCombatTool() then
-                Attack(target)
+            if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds then
+                -- [G-9] Equip không chặn attack; RegisterHit không cần tool.
+                EquipCombatTool()
+                Attack(target, targetName)
+                -- [G-9] Skip route cũng GOM: đã hover trên target thì dịch
+                -- chuyển mọi mob trùng tên route về cụm như farm thường.
+                local skipFarmPos = FarmPositionController:GetFarmPos(target)
+                local skipHrp = HRP()
+                if skipFarmPos and skipHrp
+                    and (skipHrp.Position - skipFarmPos).Magnitude
+                        <= math.max(_G.Settings.FarmArrivalThreshold or 15, 35) then
+                    FarmPositionController:GatherMobCluster(targetName, target)
+                end
                 DLog("SKIP", "Attacking " .. tostring(targetName or target.Name))
             end
         end
     else
-        -- Boss routes are opportunistic only.  Never hover/wait for a boss to
-        -- respawn; immediately return to the normal quest farm when none is
-        -- alive.  Mob routes may wait briefly for a normal respawn.
-        if route.Kind == "Boss" then
-            self:Fail(route, "No live boss")
-            return false
-        end
-        if tick() - self.LastTarget > (_G.Settings.SkipRouteTargetTimeout or 45) then
-            self:Fail(route, "No target timeout")
-            return false
-        end
         _G.State:ClearTargets()
+        -- [D-5] KHÔNG CHỜ BOSS XUẤT HIỆN: route boss (Bobby/Yeti/Vice
+        -- Admiral/Warden/Magma Admiral/Fishman Lord/Wysper...) mà boss
+        -- không có mặt NGAY bây giờ → return false tức thời, main
+        -- controller chạy farm quest như bình thường. BossManager vẫn
+        -- tự săn boss khi boss thực sự xuất hiện trong Enemies.
+        if route.Kind == "Boss" then
+            self:Reset("boss not present, back to quest farm")
+            DLog("SKIP", route.Display .. " chưa spawn → farm quest bình thường")
+            return false
+        end
         _G.BobonStatus = "Skip Farm: Waiting for " .. route.Display
         if _G.State:CanRequestTravel() then
             TravelManager:Request(route.Fallback, "Farm")
         end
-    end
-    if tick() - self.LastProgress > (_G.Settings.SkipRouteProgressTimeout or 180) then
-        self:Fail(route, "No level progress")
-        return false
     end
     return true
 end
@@ -2904,7 +3176,7 @@ function ItemProgression:RunChecks(allowSea, allowOptional)
     return false
 end
 -- ══════════════════════════════════════════════════════════════════
---              BOSSMANAGER v16.3 — DATA-DRIVEN
+--              BOSSMANAGER v16.4 — DATA-DRIVEN
 --   Boss không dùng tọa độ cứng để tránh bay ra biển khi map thay đổi.
 --   Bộ điều khiển chỉ nhận boss đang thật sự tồn tại trong workspace.Enemies,
 --   lọc theo Sea/level, rồi dùng cùng TravelManager + ActionToken với Farm.
@@ -3012,7 +3284,8 @@ function BossManager:_RunBoss(boss, entry, token)
                 local a = Vector3.new(me.Position.X, 0, me.Position.Z)
                 local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
                 if (a - b).Magnitude <= _G.Settings.AttackRange then
-                    if EquipCombatTool() then Attack(boss) end
+                    EquipCombatTool()
+                    Attack(boss)
                 end
             end
             task.wait(0.12)
@@ -3107,9 +3380,20 @@ task.spawn(function()
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
             local questState = HasQuest() -- true / false / nil (UI not ready)
             local questMatch = QuestMatches(q.M)
-            -- Farm chỉ được phép khi UI xác nhận đồng thời wrapper đang mở
-            -- và title đúng mob.  Không dùng title cũ/stale để tiếp tục farm.
-            local hasQuest = questState == true and questMatch == true
+            -- [G-6] Farm khi wrapper quest đang mở VÀ match KHÔNG bị xác
+            -- nhận là SAI (nil = UI đổi cấu trúc sau update, đọc không ra
+            -- title). Bản cũ đòi match == true nên nil khiến bot kẹt
+            -- re-request quest vô hạn → không farm, không gom, không đánh.
+            local hasQuest = questState == true and questMatch ~= false
+            -- Right after StartQuest, some UI builds briefly hide/rebuild the
+            -- Quest wrapper. Do not cancel the accepted quest and fly back to
+            -- the giver during that short transition.
+            if not hasQuest and questMatch ~= false
+                and _G.State.LastQuestAccepted > 0
+                and tick() - _G.State.LastQuestAccepted
+                    <= (_G.Settings.QuestAcceptGrace or 6) then
+                hasQuest = true
+            end
             local questOk = hasQuest
 
             -- Quest-first invariant: quest vừa hết, bị mất, sai mob, hoặc UI
@@ -3127,6 +3411,7 @@ task.spawn(function()
                     return
                 end
 
+                FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 if _G.State.IsTraveling then
                     TravelManager:Stop("QuestRefresh")
@@ -3233,6 +3518,7 @@ task.spawn(function()
             -- VERIFY_TARGET: clear NGAY nếu invalid → NEXT_TARGET
             _G.State.FState = "VERIFY_TARGET"
             if not _G.State:IsTargetValid(_G.State.FarmTarget) then
+                FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 _G.State.FState = "NEXT_TARGET"
                 DLog("TARGET", "Old target invalid → selecting a new one")
@@ -3284,17 +3570,19 @@ task.spawn(function()
                     -- ATTACK [A-6]: chỉ khi target sống + melee đã equip + trong
                     -- AttackRange (XZ) + Farm đang giữ movement (owner Farm
                     -- hoặc không travel — travel xong trả về Farm)
-                    local dodged = DodgeController:TryDodge(_G.State.FarmTarget)
                     if _G.State:IsTargetValid(_G.State.FarmTarget) then
                         local flatDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
                             - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
                         local farmHolds = not _G.State.IsTraveling
                             or _G.State.MovementOwner == "Farm"
-                        if not dodged and flatDist <= _G.Settings.AttackRange and farmHolds then
+                        if flatDist <= _G.Settings.AttackRange and farmHolds then
                             _G.State.FState = "ATTACK"
-                            if EquipCombatTool() then
-                                Attack(_G.State.FarmTarget)
-                                if os.time() - lastAttackLog >= 5 then
+                            -- [G-9] Equip KHÔNG còn là cổng chặn attack:
+                            -- RegisterHit không cần tool, M1 tay không vẫn
+                            -- gây damage. Equip chỉ là cố gắng thêm.
+                            EquipCombatTool()
+                            Attack(_G.State.FarmTarget, q.M)
+                            if os.time() - lastAttackLog >= 5 then
                                     lastAttackLog = os.time()
                                     DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
                                 end
@@ -3311,18 +3599,19 @@ task.spawn(function()
                     local anchorFarmPos = FarmPositionController:GetFarmPos(_G.State.FarmTarget)
                     local atAnchor = false
                     if anchorFarmPos and hrp then
+                        -- [G-9] nới 35 studs cho khớp anchorRadius của gather
                         atAnchor = (hrp.Position - anchorFarmPos).Magnitude
-                            <= (_G.Settings.FarmArrivalThreshold or 15)
+                            <= math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
                     end
-                    if _G.Settings.GatherMobs and hasQuest and atAnchor then
+                    -- [G-6] Gom mob không còn phụ thuộc strict quest-match
+                    if _G.Settings.GatherMobs and atAnchor then
                         FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
                     end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
-                    if not dodged and farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
+                    if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
-                        if EquipCombatTool() then
-                            Attack(_G.State.FarmTarget)
-                        end
+                        EquipCombatTool()
+                        Attack(_G.State.FarmTarget, q.M)
                     end
                 end
             else
@@ -3488,10 +3777,11 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.3 DATA] Full Script Loaded Successfully!")
-print("[BobonHub v16.3 DATA] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.3 DATA] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.3 DATA] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
-print("[BobonHub v16.3 DATA] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
-print("[BobonHub v16.3 DATA] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
-print("[BobonHub v16.3 DATA] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.5 GLASS] Full Script Loaded Successfully!")
+print("[BobonHub v16.5 GLASS] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.5 GLASS] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.5 GLASS] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
+print("[BobonHub v16.5 GLASS] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
+print("[BobonHub v16.5 GLASS] Modules: DodgeController(D1) | SkipRouteController(D4/D5) | Glass Overlay(G1)")
+print("[BobonHub v16.5 GLASS] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
+print("[BobonHub v16.5 GLASS] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
