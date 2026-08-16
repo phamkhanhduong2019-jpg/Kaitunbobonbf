@@ -3,7 +3,7 @@
 --         Long-Run Stable | Single Movement Owner | ActionToken
 --         Base: v15.0 | Version: v16.5 GLASS
 --
---  AUDIT FIXES v16.5-GLASS (G-1..G-6):
+--  AUDIT FIXES v16.5-GLASS (G-1..G-8):
 --  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
 --         0.45) + BlurEffect kính mờ (MenuBlur) thay cho [D-2] nền đen
 --         100%. Right Ctrl ẩn/hiện toàn bộ overlay + blur.
@@ -22,6 +22,14 @@
 --         đổi cấu trúc) → vẫn farm thay vì kẹt re-request quest vô hạn;
 --         gom mob không còn phụ thuộc strict quest-match, anchor nới
 --         bán kính tối thiểu 30 studs, GatherInterval 0.3 → 0.15.
+--  [G-7]  FAST ATTACK THEO TÊN + BRING MOB: RegisterHit đánh MỌI mob
+--         trùng tên quest đang sống, KHÔNG giới hạn khoảng cách (đứng
+--         đâu cũng trúng). Gom = DỊCH CHUYỂN toàn bộ mob trùng tên về
+--         cụm quanh mob neo (PivotTo + anchor cục bộ chống server kéo
+--         về), chỉ chạy khi đã hover trên đầu mob neo; nhả anchor khi
+--         đổi target/quest/chết (ReleaseCluster).
+--  [G-8]  Remote gọi qua cloneref khi executor hỗ trợ (kiểu "Fast
+--         Attack Unban" công khai) để bớt bị theo dõi remote trực tiếp.
 --
 --  AUDIT FIXES v16.4-FIXED (D-1..D-5):
 --  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
@@ -238,8 +246,8 @@ _G.Settings = {
     -- Bring every mob whose name matches the currently accepted quest (q.M)
     -- to the selected farm target.  Set false to keep nearby-only behavior.
     GatherAllQuestMobs  = true,
-    GatherMaxDistance   = 5000,
-    GatherSpacing       = 6,
+    GatherMaxDistance   = 25000,
+    GatherSpacing       = 4,
     GatherInterval      = 0.15,   -- [G-6] gom dày hơn để chống server re-sync
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
@@ -916,12 +924,25 @@ local function ResolveNet()
     return nil
 end
 
-local function FastRegisterHit(preferred)
+-- [G-8] cloneref khi executor hỗ trợ: gọi remote qua bản clone, theo
+-- cách các source "Fast Attack Unban" công khai đang dùng để bớt bị
+-- theo dõi remote trực tiếp.
+local function SafeRemoteRef(remote)
+    if type(cloneref) == "function" then
+        local ok, clone = pcall(cloneref, remote)
+        if ok and clone then return clone end
+    end
+    return remote
+end
+
+local function FastRegisterHit(preferred, mobName)
     local net = ResolveNet()
     local registerAttack = net and net:FindFirstChild("RE/RegisterAttack")
     local registerHit = net and net:FindFirstChild("RE/RegisterHit")
+    if not registerAttack or not registerHit then return false end
+    local attackRef = SafeRemoteRef(registerAttack)
+    local hitRef = SafeRemoteRef(registerHit)
     local me = HRP()
-    if not me or not registerAttack or not registerHit then return false end
     local hitList = {}
     local folder = workspace:FindFirstChild("Enemies")
     if folder then
@@ -929,14 +950,23 @@ local function FastRegisterHit(preferred)
             local hum = enemy:FindFirstChildOfClass("Humanoid")
             local root = enemy:FindFirstChild("HumanoidRootPart")
             local head = enemy:FindFirstChild("Head") or root
-            if hum and hum.Health > 0 and root and head
-                and (root.Position - me.Position).Magnitude <= 100 then
-                hitList[#hitList + 1] = {enemy, head}
+            if hum and hum.Health > 0 and root and head then
+                if mobName then
+                    -- [G-7] Đánh theo TÊN quest, KHÔNG giới hạn khoảng
+                    -- cách: đứng đâu cũng trúng mọi con trùng tên quest.
+                    if IsEnemyNamed(enemy, mobName) then
+                        local d = me and (root.Position - me.Position).Magnitude or 0
+                        hitList[#hitList + 1] = {enemy, head, d}
+                    end
+                elseif not me or (root.Position - me.Position).Magnitude <= 100 then
+                    hitList[#hitList + 1] = {enemy, head, 0}
+                end
             end
         end
     end
     if #hitList == 0 then return false end
-    -- Ưu tiên target đang chọn lên đầu để damage dồn vào mob của quest
+    -- Gần nhất trước; target đang chọn được đưa lên đầu danh sách
+    table.sort(hitList, function(a, b) return (a[3] or 0) < (b[3] or 0) end)
     if preferred then
         for i, entry in ipairs(hitList) do
             if entry[1] == preferred and i > 1 then
@@ -946,14 +976,14 @@ local function FastRegisterHit(preferred)
             end
         end
     end
-    local okAttack = pcall(function() registerAttack:FireServer(0) end)
+    local okAttack = pcall(function() attackRef:FireServer(0) end)
     if not okAttack then return false end
-    -- [G-5] Gửi RegisterHit theo TỪNG enemy với định dạng (part, {part})
-    -- mà server hiện chấp nhận; giới hạn 12 mob gần nhất chống spam.
+    -- [G-5] RegisterHit theo TỪNG enemy, định dạng (part, {part});
+    -- cap 20 để không spam remote khi server spawn nhiều mob.
     local sent = 0
-    for i = 1, math.min(#hitList, 12) do
+    for i = 1, math.min(#hitList, 20) do
         local part = hitList[i][2]
-        if pcall(function() registerHit:FireServer(part, {part}) end) then
+        if pcall(function() hitRef:FireServer(part, {part}) end) then
             sent = sent + 1
         end
     end
@@ -997,7 +1027,7 @@ local function FireGunHits(tool, preferred)
     return sent
 end
 
-local function Attack(preferredTarget)
+local function Attack(preferredTarget, mobName)
     if not IsAlive() then return end
     local now = tick()
     if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return end
@@ -1014,7 +1044,7 @@ local function Attack(preferredTarget)
         if tool and tool:FindFirstChild("LeftClickRemote") then
             FireGunHits(tool, preferredTarget)
         else
-            FastRegisterHit(preferredTarget)
+            FastRegisterHit(preferredTarget, mobName)
         end
         local camera = workspace.CurrentCamera
         local viewport = camera and camera.ViewportSize
@@ -1435,6 +1465,8 @@ end
 -- ══════════════════════════════════════════════════════════════════
 local FarmPositionController = {
     LastGather = 0,
+    -- [G-7] registry các root đã anchor cục bộ khi gom cụm
+    Anchored = {},
 }
 
 
@@ -1517,17 +1549,28 @@ end
 -- This stays inside the existing Farm loop; it does not create movement code
 -- for the player.  Roblox may re-sync server-owned NPCs, so the operation is
 -- intentionally repeated at a small interval while farming.
+-- [G-7] Nhả toàn bộ mob đã neo (unanchor) khi đổi target/quest/chết.
+function FarmPositionController:ReleaseCluster()
+    for root in pairs(self.Anchored or {}) do
+        pcall(function()
+            if root and root.Parent then root.Anchored = false end
+        end)
+    end
+    self.Anchored = {}
+end
+
+-- [G-7] GOM QUÁI KIỂU DỊCH CHUYỂN: khi player đã hover trên đầu mob neo,
+-- MỌI mob trùng tên quest (trong GatherMaxDistance) bị PivotTo về cụm
+-- quanh mob neo rồi ANCHOR cục bộ để server không kéo về lại — đúng kiểu
+-- bring-mob của các hub công khai. KHÔNG bay từng con để gom.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
-    -- Never pull NPCs while the player is still travelling to the anchor.
-    -- The selected mob is the movement anchor; gathering starts only after
-    -- the player is actually hovering above that mob.
     if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
         or not _G.State:IsTargetValid(primary) then
         return 0
     end
     local now = tick()
-    if now - self.LastGather < (_G.Settings.GatherInterval or 0.3) then return 0 end
+    if now - self.LastGather < (_G.Settings.GatherInterval or 0.15) then return 0 end
     self.LastGather = now
     local primaryRoot = primary:FindFirstChild("HumanoidRootPart")
     local folder = workspace:FindFirstChild("Enemies")
@@ -1538,19 +1581,26 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local anchorPos = self:GetFarmPos(primary)
     if not playerRoot or not anchorPos then return 0 end
     local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
-    -- [G-6] Anchor gate nới tối thiểu 30 studs: hover travel dừng ở
-    -- FarmArrivalThreshold nhưng dao động vật lý khiến vòng 15 studs cũ
+    -- [G-6] Anchor gate nới tối thiểu 35 studs: hover travel dừng ở
+    -- FarmArrivalThreshold nhưng dao động vật lý khiến vòng nhỏ cũ
     -- hay tắt gom liên tục.
-    local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 30)
+    local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
     if not okPlayerPos or not IsValidPos(playerPos)
         or (playerPos - anchorPos).Magnitude > anchorRadius then
         return 0
     end
+    self.Anchored = self.Anchored or {}
+    -- Neo mob neo trước để farm pos đứng yên, không bị mob đi lại kéo theo
+    pcall(function()
+        primaryRoot.Anchored = true
+        primaryRoot.CanCollide = false
+    end)
+    self.Anchored[primaryRoot] = true
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
     local maxDistance = gatherAll
         and (_G.Settings.GatherMaxDistance or math.huge)
         or (_G.Settings.MobGatherRadius or 50)
-    local spacing = _G.Settings.GatherSpacing or 6
+    local spacing = _G.Settings.GatherSpacing or 4
     local moved, slot = 0, 0
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
@@ -1564,9 +1614,9 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                 local angle = slot * 2.4
                 local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
                 pcall(function()
-                    -- Do not rewrite an already clustered mob every frame;
-                    -- this avoids physics jitter while still pulling strays.
-                    if offset.Magnitude > spacing + 2 then
+                    -- Đã nằm trong cụm thì chỉ giữ anchor; stray thì dịch
+                    -- MỘT PHÁT về slot ring quanh mob neo.
+                    if offset.Magnitude > spacing + 1 then
                         local destinationCF = CFrame.new(destination, origin)
                         if mob:IsA("Model") then
                             local pivoted = pcall(function() mob:PivotTo(destinationCF) end)
@@ -1578,7 +1628,9 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                         root.AssemblyAngularVelocity = Vector3.zero
                         moved = moved + 1
                     end
+                    root.Anchored = true
                     root.CanCollide = false
+                    self.Anchored[root] = true
                 end)
             end
         end
@@ -2138,6 +2190,7 @@ end
 -- Death/Respawn handlers
 LP.CharacterRemoving:Connect(function()
     HakiController:Reset()
+    FarmPositionController:ReleaseCluster()
     TravelManager:Stop("CharacterRemoving")
     _G.State:SetMode("Dead")
     _G.State:ClearTargets()
@@ -2727,7 +2780,7 @@ function SkipRouteController:Run()
             local farmHolds = not _G.State.IsTraveling or _G.State.MovementOwner == "Farm"
             if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds
                 and EquipCombatTool() then
-                Attack(target)
+                Attack(target, targetName)
                 DLog("SKIP", "Attacking " .. tostring(targetName or target.Name))
             end
         end
@@ -3267,6 +3320,7 @@ task.spawn(function()
                     return
                 end
 
+                FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 if _G.State.IsTraveling then
                     TravelManager:Stop("QuestRefresh")
@@ -3373,6 +3427,7 @@ task.spawn(function()
             -- VERIFY_TARGET: clear NGAY nếu invalid → NEXT_TARGET
             _G.State.FState = "VERIFY_TARGET"
             if not _G.State:IsTargetValid(_G.State.FarmTarget) then
+                FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 _G.State.FState = "NEXT_TARGET"
                 DLog("TARGET", "Old target invalid → selecting a new one")
@@ -3432,7 +3487,7 @@ task.spawn(function()
                         if flatDist <= _G.Settings.AttackRange and farmHolds then
                             _G.State.FState = "ATTACK"
                             if EquipCombatTool() then
-                                Attack(_G.State.FarmTarget)
+                                Attack(_G.State.FarmTarget, q.M)
                                 if os.time() - lastAttackLog >= 5 then
                                     lastAttackLog = os.time()
                                     DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
@@ -3461,7 +3516,7 @@ task.spawn(function()
                     if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
                         and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
                         if EquipCombatTool() then
-                            Attack(_G.State.FarmTarget)
+                            Attack(_G.State.FarmTarget, q.M)
                         end
                     end
                 end
