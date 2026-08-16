@@ -182,6 +182,16 @@
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
+-- Re-execution guard. Newer sessions invalidate every persistent loop from
+-- the previous run and invoke its cleanup hook before creating new state.
+local PreviousUnload = rawget(_G, "BobonUnload")
+if type(PreviousUnload) == "function" then pcall(PreviousUnload) end
+_G.BobonUnload = nil
+_G.BobonSessionID = (_G.BobonSessionID or 0) + 1
+local SessionID = _G.BobonSessionID
+local function SessionAlive()
+    return _G.BobonSessionID == SessionID
+end
 -- Không chờ Character/HRP/Data ở đây: lúc mới execute, ChooseTeam có thể
 -- xuất hiện trước character. Chờ các object này ở từng controller để team
 -- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
@@ -268,6 +278,10 @@ _G.Settings = {
     -- Simulation ownership is requested before movement to avoid ghost mobs.
     GatherAllQuestMobs  = true,
     GatherMaxDistance   = 250,
+    -- If an executor does not expose network-ownership APIs, allow a visual
+    -- soft bring only inside the real RegisterHit range. The server-side mob
+    -- is still close enough to be hit, so this cannot create a far ghost mob.
+    GatherFallbackDistance = 85,
     GatherSpacing       = 6,
     GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
@@ -295,6 +309,15 @@ _G.Settings = {
 --   Centralized target/action management
 -- ══════════════════════════════════════════════════════════════════
 _G.BobonStatus = "Initializing..."
+_G.BobonDiagnostics = {
+    Tool = "wait",
+    Net = "wait",
+    Hits = 0,
+    Packet = "wait",
+    Bring = "wait",
+    BringCandidates = 0,
+    BringMoved = 0,
+}
 
 local function IsUnderwaterY(y)
     return game.PlaceId == 7449423635
@@ -413,7 +436,7 @@ end
 
 -- State consistency watchdog (Fix #22)
 task.spawn(function()
-    while task.wait(5) do
+    while SessionAlive() and task.wait(5) do
         pcall(function()
             -- Fix state contradictions
             if _G.State.Mode == "Idle" and _G.State.IsTraveling and not _G.State.MovementOwner then
@@ -465,6 +488,7 @@ Blur.Name = "BobonHubBlur"; Blur.Size = 0; Blur.Enabled = true
 Blur.Parent = workspace.CurrentCamera
 -- [G-2] Camera có thể bị thay sau respawn/teleport → tự gắn lại blur
 workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    if not SessionAlive() then return end
     pcall(function()
         if Blur and Blur.Parent then Blur.Parent = workspace.CurrentCamera end
     end)
@@ -515,6 +539,7 @@ local function RefreshHudScale()
 end
 RefreshHudScale()
 workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    if not SessionAlive() then return end
     task.defer(RefreshHudScale)
 end)
 if workspace.CurrentCamera then
@@ -589,7 +614,12 @@ MkDivider(6)
 local CurrRow, BeliL, SepL, FragL = MkCurrRow(7)
 local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,105,126),false,22,8)
 local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(100,198,255),false,22,9)
-local HintL  = MkLabel("Nút bên trái / Right Ctrl: Ẩn hiện giao diện",11,Color3.fromRGB(157,178,205),false,18,10)
+local DiagL  = MkLabel("Combat: waiting  |  Bring: waiting",11,Color3.fromRGB(255,184,92),true,18,10)
+DiagL.TextScaled = true
+local DiagTextSize = Instance.new("UITextSizeConstraint", DiagL)
+DiagTextSize.MinTextSize = 8
+DiagTextSize.MaxTextSize = 11
+local HintL  = MkLabel("Nút bên trái / Right Ctrl: Ẩn hiện giao diện",11,Color3.fromRGB(157,178,205),false,18,11)
 
 -- Compact persistent toggle on the left. It stays visible while the frosted
 -- overlay is hidden, unlike toggling ScreenGui.Enabled.
@@ -628,7 +658,7 @@ task.spawn(function()
     TS:Create(Blur, TweenInfo.new(0.8, Enum.EasingStyle.Quad),
         {Size = _G.Settings.MenuBlur}):Play()
     task.wait(0.15)
-    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL,HintL}) do
+    for i,lb in ipairs({TitleL,SubL,StatL,ModeL,TimeL,BeliL,SepL,FragL,KillL,InfoL,DiagL,HintL}) do
         task.delay((i-1)*0.07,function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
@@ -698,13 +728,21 @@ local StatusColors = {
 }
 
 task.spawn(function()
-    while task.wait(0.5) do
+    while SessionAlive() and task.wait(0.5) do
         pcall(function()
             local e = os.time() - _G.State.StartTime
             TimeL.Text = ("Time: %02d:%02d:%02d"):format(math.floor(e/3600),math.floor(e%3600/60),e%60)
             StatL.Text = "Status: " .. (_G.BobonStatus or "Idle")
             ModeL.Text = "Mode: " .. (_G.State.Mode or "Idle")
             StatL.TextColor3 = StatusColors[_G.State.Mode] or Color3.fromRGB(62,255,220)
+            local diag = _G.BobonDiagnostics or {}
+            DiagL.Text = ("Combat: %s / %s / hit:%s / %s  |  Bring: %s %s→%s")
+                :format(tostring(diag.Tool or "?"), tostring(diag.Net or "?"),
+                    tostring(diag.Hits or 0), tostring(diag.Packet or "?"),
+                    tostring(diag.Bring or "?"), tostring(diag.BringCandidates or 0),
+                    tostring(diag.BringMoved or 0))
+            DiagL.TextColor3 = diag.Packet == "sent"
+                and Color3.fromRGB(85,255,145) or Color3.fromRGB(255,184,92)
             KillL.Text = "Kills: " .. Fmt(_G.State.KillCount)
             local d = LP:FindFirstChild("Data")
             if d then
@@ -1036,12 +1074,26 @@ end)
 -- and as nested folders (RE.RegisterHit). Resolve both layouts so a game
 -- update cannot silently disable all attacks.
 local NetFolderCache = nil
+local NetWaitAttempted = false
+local function ExecutorRef(instance)
+    if not instance then return nil end
+    if type(cloneref) == "function" then
+        local ok, cloned = pcall(cloneref, instance)
+        if ok and cloned then return cloned end
+    end
+    return instance
+end
+
 local function ResolveNet()
     if NetFolderCache and NetFolderCache.Parent then return NetFolderCache end
     -- Current clients keep combat remotes in ReplicatedStorage.Modules.Net.
     -- Prefer that exact path; a recursive search under Remotes can select an
     -- unrelated object also named Net and make every FireServer silently fail.
     local modules = RS:FindFirstChild("Modules")
+    if not modules and not NetWaitAttempted then
+        NetWaitAttempted = true
+        modules = RS:WaitForChild("Modules", 5)
+    end
     local exactNet = modules and modules:FindFirstChild("Net")
     if exactNet then
         NetFolderCache = exactNet
@@ -1063,13 +1115,13 @@ end
 local function FindNetRemote(net, path)
     if not net then return nil end
     local direct = net:FindFirstChild(path)
-    if direct then return direct end
+    if direct then return ExecutorRef(direct) end
     local folderName, remoteName = string.match(path, "^([^/]+)/(.+)$")
     local folder = folderName and net:FindFirstChild(folderName)
     local nested = folder and folder:FindFirstChild(remoteName)
-    if nested then return nested end
+    if nested then return ExecutorRef(nested) end
     if remoteName then
-        return net:FindFirstChild(remoteName, true)
+        return ExecutorRef(net:FindFirstChild(remoteName, true))
     end
     return nil
 end
@@ -1081,8 +1133,13 @@ local function FastRegisterHit(preferred, mobName)
     local me = HRP()
     local character = Char()
     local equipped = character and character:FindFirstChildOfClass("Tool")
+    local diag = _G.BobonDiagnostics
+    diag.Tool = equipped and equipped.Name or "NO-TOOL"
+    diag.Net = registerAttack and registerHit and "NET-OK" or "NO-NET"
     if not me or not equipped or not registerAttack or not registerHit then
-        DLog("ATTACK", "Combat remotes unavailable")
+        diag.Hits = 0
+        diag.Packet = not equipped and "blocked-tool" or "blocked-net"
+        DLog("ATTACK", "Combat blocked: " .. diag.Packet)
         return false
     end
     local hitList = {}
@@ -1095,7 +1152,10 @@ local function FastRegisterHit(preferred, mobName)
             local head = enemy:FindFirstChild("Head") or root
             local inRange = root and (root.Position - me.Position).Magnitude
                 <= (_G.Settings.AttackRange or 100)
-            local nameMatches = not mobName or IsEnemyNamed(enemy, mobName)
+            -- Always include the already-validated primary target. A UI mob
+            -- name mismatch must not make an otherwise valid hit list empty.
+            local nameMatches = enemy == preferred
+                or not mobName or IsEnemyNamed(enemy, mobName)
             if hum and hum.Health > 0 and root and head and inRange and nameMatches then
                 -- RegisterHit expects the game's normal pair payload:
                 -- {enemy model, hit part}. Sending several guessed formats
@@ -1107,12 +1167,17 @@ local function FastRegisterHit(preferred, mobName)
             end
         end
     end
-    if #hitList == 0 then return false end
+    diag.Hits = #hitList
+    if #hitList == 0 then
+        diag.Packet = "no-target"
+        return false
+    end
     firstPart = firstPart or hitList[1][2]
     local ok, err = pcall(function()
         registerAttack:FireServer(0)
         registerHit:FireServer(firstPart, hitList)
     end)
+    diag.Packet = ok and "sent" or "remote-error"
     if not ok then DLog("ATTACK", "RegisterHit failed: " .. tostring(err)) end
     return ok
 end
@@ -1162,6 +1227,8 @@ local function Attack(preferredTarget, mobName)
     local c = Char()
     local tool = c and c:FindFirstChildOfClass("Tool")
     if not tool then
+        _G.BobonDiagnostics.Tool = "NO-TOOL"
+        _G.BobonDiagnostics.Packet = "blocked-tool"
         DLog("ATTACK", "Waiting for combat tool")
         return false
     end
@@ -1349,6 +1416,18 @@ local WeaponController = {
     LastResult = "none",
 }
 
+local NonCombatToolNames = {
+    Torch = true, Cup = true, Key = true, Relic = true,
+    Microchip = true, ["Holy Torch"] = true,
+}
+
+local function IsFallbackCombatTool(tool)
+    if not tool or not tool:IsA("Tool") or NonCombatToolNames[tool.Name] then return false end
+    local ok, tip = pcall(function() return tostring(tool.ToolTip or "") end)
+    tip = ok and string.lower(tip) or ""
+    return tip ~= "wear" and tip ~= "material" and tip ~= "quest"
+end
+
 function WeaponController:IsCombatTool(tool)
     return IsMeleeTool(tool) or IsSwordTool(tool) or IsGunTool(tool)
 end
@@ -1358,8 +1437,9 @@ function WeaponController:EquipPreferred()
     local hum = c and c:FindFirstChildOfClass("Humanoid")
     if not c or not hum then self.LastResult = "noChar"; return false end
     local held = c:FindFirstChildOfClass("Tool")
-    if held and self:IsCombatTool(held) then
+    if held and (self:IsCombatTool(held) or IsFallbackCombatTool(held)) then
         self.LastResult = "holding:" .. held.Name
+        _G.BobonDiagnostics.Tool = held.Name
         return true
     end
     local now = tick()
@@ -1385,15 +1465,25 @@ function WeaponController:EquipPreferred()
         end
     end
     if not candidate then
-        -- Combat mặc định của game không nhất thiết là Tool trong Backpack;
-        -- vẫn cho phép M1/VirtualUser đánh bằng fists thay vì đứng im.
-        self.LastResult = "defaultCombat"
-        return true
+        -- New styles/items are not always present in the static name list.
+        -- The live client only needs a held non-quest Tool for RegisterHit, so
+        -- use the first safe Tool instead of reporting a false ready state.
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if IsFallbackCombatTool(tool) then candidate = tool; break end
+        end
+    end
+    if not candidate then
+        self.LastResult = "noCombatTool"
+        _G.BobonDiagnostics.Tool = "NO-TOOL"
+        return false
     end
     self.LastEquip = now
     local ok = pcall(function() hum:EquipTool(candidate) end)
-    self.LastResult = ok and "equipping:" .. candidate.Name or "equipError"
-    return false
+    local equipped = ok and candidate.Parent == c
+    self.LastResult = equipped and "holding:" .. candidate.Name
+        or (ok and "equipping:" .. candidate.Name or "equipError")
+    _G.BobonDiagnostics.Tool = equipped and candidate.Name or self.LastResult
+    return equipped
 end
 
 local function EquipCombatTool()
@@ -1775,7 +1865,8 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
         or (_G.Settings.MobGatherRadius or 50)
     local spacing = _G.Settings.GatherSpacing or 4
     local simulationExpanded = ExpandSimulationRadius()
-    local moved, slot = 0, 0
+    local moved, slot, candidates = 0, 0, 0
+    local bringMode = simulationExpanded and "SIM" or "LOCAL"
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
         local root = mob:FindFirstChild("HumanoidRootPart")
@@ -1784,6 +1875,7 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
             local offset = okPos and (mobPos - origin) or nil
             if okPos and IsValidPos(mobPos) and IsAllowedWorldY(mobPos.Y)
                 and offset.Magnitude <= maxDistance then
+                candidates = candidates + 1
                 slot = slot + 1
                 local angle = slot * 2.4
                 local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
@@ -1793,7 +1885,13 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                     hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
                     hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
                     local owned = ClientOwnsMob(root)
-                    local canMove = owned == true or (owned == nil and simulationExpanded)
+                    local fallbackDistance = _G.Settings.GatherFallbackDistance or 85
+                    -- Keep a bounded local fallback for executors without a
+                    -- working ownership API. Because it is inside attack range,
+                    -- the server copy remains hittable even before ownership
+                    -- replication catches up.
+                    local softBring = offset.Magnitude <= fallbackDistance
+                    local canMove = owned == true or simulationExpanded or softBring
                     if canMove and offset.Magnitude > spacing + 1 then
                         local destinationCF = CFrame.new(destination, origin)
                         hum.WalkSpeed = 0
@@ -1808,6 +1906,9 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
             end
         end
     end
+    _G.BobonDiagnostics.Bring = bringMode
+    _G.BobonDiagnostics.BringCandidates = candidates
+    _G.BobonDiagnostics.BringMoved = moved
     return moved
 end
 
@@ -1907,6 +2008,7 @@ function TravelManager:EnableNoclip(char)
         end
     end
     self.NoclipConn = RunService.Stepped:Connect(function()
+        if not SessionAlive() then return end
         if char and char:FindFirstChild("Humanoid") then
             for _,part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then
@@ -2108,7 +2210,7 @@ function TravelManager:Request(targetCF, owner, options)
         end
 
 
-        while self.CurrentToken == myToken
+        while SessionAlive() and self.CurrentToken == myToken
             and char and char.Parent
             and IsAlive() do
 
@@ -2362,6 +2464,7 @@ end
 
 -- Death/Respawn handlers
 LP.CharacterRemoving:Connect(function()
+    if not SessionAlive() then return end
     HakiController:Reset()
     FarmPositionController:ReleaseCluster()
     TravelManager:Stop("CharacterRemoving")
@@ -2372,6 +2475,7 @@ end)
 
 
 LP.CharacterAdded:Connect(function(char)
+    if not SessionAlive() then return end
     task.spawn(function()
         _G.State:SetMode("Respawning")
         TravelManager:Stop("Respawn")
@@ -2453,7 +2557,7 @@ end
 --   Ngăn hoàn toàn việc "rớt xuống biển" trong khoảng trống recovery/tick.
 -- ══════════════════════════════════════════════════════════════════
 task.spawn(function()
-    while task.wait(0.1) do
+    while SessionAlive() and task.wait(0.1) do
         pcall(function()
             if not IsAlive() then return end
             if _G.State.IsTraveling then return end
@@ -2578,7 +2682,7 @@ end
 -- [D-1] Monitor loop duy nhất cho dodge (0.1s — phản xạ nhanh hơn farm
 -- tick). Chỉ dò + dịch 1 phát, không điều khiển movement liên tục.
 task.spawn(function()
-    while task.wait(0.1) do
+    while SessionAlive() and task.wait(0.1) do
         pcall(function() DodgeController:TryDodge() end)
     end
 end)
@@ -2673,7 +2777,7 @@ end
 -- được sau ≥3 lần. Không trigger khi Dead/Respawning (respawn tự xử lý).
 task.spawn(function()
     local lightFails = 0
-    while task.wait(5) do
+    while SessionAlive() and task.wait(5) do
         pcall(function()
             -- Trigger recovery nặng từ TravelManager (stuck/timeout/crash)
             if _G.State.IsRecovering
@@ -3649,7 +3753,7 @@ end
 -- ══════════════════════════════════════════════════════════════════
 local lastAttackLog = 0
 task.spawn(function()
-    while task.wait(0.15) do
+    while SessionAlive() and task.wait(0.15) do
         -- Skip nếu subsystem đang giữ ActionToken
         if _G.State.ActiveActionToken ~= 0 then continue end
         if _G.State.Mode == "Recovering" or _G.State.Mode == "Dead"
@@ -4014,6 +4118,7 @@ end)
 
 -- Anti-AFK (Fix #16)
 LP.Idled:Connect(function()
+    if not SessionAlive() then return end
     pcall(function() VU:CaptureController(); VU:ClickButton2(Vector2.new()) end)
 end)
 
@@ -4022,7 +4127,7 @@ end)
 -- Chỉ resize khi size thay đổi (tránh physics jitter), CanCollide=false
 -- để weapon không làm character stuck. Handle không tồn tại → bỏ qua.
 task.spawn(function()
-    while task.wait(1) do
+    while SessionAlive() and task.wait(1) do
         pcall(function()
             local c = Char()
             if not c then return end
@@ -4047,7 +4152,7 @@ end)
 -- Giữ batch limit, Points=0 → không làm gì, lỗi remote không ảnh hưởng
 -- Farm. KHÔNG tạo ActionToken cho background stat.
 task.spawn(function()
-    while task.wait(3) do
+    while SessionAlive() and task.wait(3) do
         if not _G.Settings.AutoStats then continue end
         pcall(function()
             local d = LP:FindFirstChild("Data")
@@ -4071,6 +4176,7 @@ local function HookMob(mob)
     if h and not h:GetAttribute("BHooked") then
         h:SetAttribute("BHooked", true)
         h.Died:Connect(function()
+            if not SessionAlive() then return end
             _G.State.KillCount = _G.State.KillCount + 1
         end)
     end
@@ -4082,11 +4188,16 @@ task.spawn(function()
         local f = workspace:FindFirstChild("Enemies")
         if not f then return end
         for _, mob in ipairs(f:GetChildren()) do HookMob(mob) end
-        f.ChildAdded:Connect(function(mob) task.wait(0.1); HookMob(mob) end)
+        f.ChildAdded:Connect(function(mob)
+            if not SessionAlive() then return end
+            task.wait(0.1)
+            if SessionAlive() then HookMob(mob) end
+        end)
     end
     Watch()
     if not workspace:FindFirstChild("Enemies") then
         workspace.ChildAdded:Connect(function(c)
+            if not SessionAlive() then return end
             if c.Name == "Enemies" then task.wait(0.3); Watch() end
         end)
     end
@@ -4096,6 +4207,17 @@ end)
 -- ══════════════════════════════════════════════════════════════════
 _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
+
+-- Future executions call this hook before replacing the session. It releases
+-- physics/movement and destroys the old overlay instead of leaving duplicate
+-- farm controllers alive in the same Roblox process.
+_G.BobonUnload = function()
+    if not SessionAlive() then return end
+    _G.BobonSessionID = SessionID + 1
+    pcall(function() TravelManager:Stop("Reexecute") end)
+    pcall(function() FarmPositionController:ReleaseCluster() end)
+    pcall(function() if SG and SG.Parent then SG:Destroy() end end)
+end
 
 
 print("[BobonHub v16.6 LIVE] Full Script Loaded Successfully!")
