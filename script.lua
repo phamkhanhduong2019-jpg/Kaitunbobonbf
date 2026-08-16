@@ -13,8 +13,11 @@
 --  [C-4] Same-owner retarget replans all travel options atomically; stuck
 --        timing no longer sleeps 0.5s inside the physics loop.
 --  [C-5] Bring counts only network-owned mobs; local fallback is explicitly
---        UNVERIFIED and every changed NPC property is restored on release.
+--        forbidden because it creates client-only "dummy" mobs. Bring never
+--        changes persistent Humanoid/collision state.
 --  [C-6] Skip-level combat remains disabled until fast damage is verified.
+--  [C-7] Quest bring refreshes SimulationRadius, verifies network ownership
+--        before and after each move, and never attacks a locally-ghosted mob.
 --
 --  AUDIT FIXES v16.6-LIVE (L-1..L-7):
 --  [L-1] HUD responsive bằng UIListLayout + UIScale, không chồng chữ
@@ -319,8 +322,10 @@ _G.Settings = {
     -- Simulation ownership is requested before movement to avoid ghost mobs.
     GatherAllQuestMobs  = true,
     GatherMaxDistance   = 250,
-    GatherFallbackDistance = 85,
-    GatherSpacing       = 0,
+    GatherSimulationRefresh = 0.75,
+    GatherSpacing       = 5,
+    GatherPersistTolerance = 8,
+    GatherVerifiedTTL   = 0.6,
     GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
@@ -356,6 +361,7 @@ _G.BobonDiagnostics = {
     Packet = "wait",
     Bring = "wait",
     BringCandidates = 0,
+    BringOwned = 0,
     BringMoved = 0,
 }
 
@@ -812,11 +818,12 @@ task.spawn(function()
             ModeL.Text = "Mode: " .. (_G.State.Mode or "Idle")
             StatL.TextColor3 = StatusColors[_G.State.Mode] or Color3.fromRGB(62,255,220)
             local diag = _G.BobonDiagnostics or {}
-            DiagL.Text = ("Combat: %s / %s / targets:%s / %s / dHP:%s  |  Bring: %s %s->%s")
+            DiagL.Text = ("Combat: %s / %s / targets:%s / %s / dHP:%s  |  Bring: %s c:%s o:%s m:%s")
                 :format(tostring(diag.Tool or "?"), tostring(diag.Net or "?"),
                     tostring(diag.Targets or 0), tostring(diag.Packet or "?"),
                     tostring(diag.LastHPDelta or 0), tostring(diag.Bring or "?"),
-                    tostring(diag.BringCandidates or 0), tostring(diag.BringMoved or 0))
+                    tostring(diag.BringCandidates or 0), tostring(diag.BringOwned or 0),
+                    tostring(diag.BringMoved or 0))
             DiagL.TextColor3 = tostring(diag.Packet or ""):find("CONFIRMED", 1, true)
                 and Color3.fromRGB(85,255,145) or Color3.fromRGB(255,184,92)
             KillL.Text = "Kills: " .. Fmt(_G.State.KillCount)
@@ -1196,6 +1203,9 @@ local function ResolveNet()
 end
 
 local WeaponController
+local ClientOwnsMob
+local VerifiedGatherRoots = setmetatable({}, { __mode = "k" })
+local GatherGeneration = 0
 
 local function ToolCombatKind(tool)
     if not tool or not tool:IsA("Tool") then return nil end
@@ -1397,6 +1407,13 @@ function CombatController:CollectTargets(preferred, mobName, maxRange)
     local folder = workspace:FindFirstChild("Enemies")
     if not me or not folder then return {} end
     local results, seen = {}, {}
+    local activeQuestMob = _G.State and _G.State.ActiveQuestMob
+    local questGatherActive = _G.State.Mode == "Farming"
+        and activeQuestMob ~= nil
+        and mobName ~= nil
+        and string.lower(tostring(activeQuestMob))
+            == string.lower(tostring(mobName))
+    local now = tick()
     local function add(enemy)
         if not enemy or seen[enemy] then return end
         local hum = enemy:FindFirstChildOfClass("Humanoid")
@@ -1414,7 +1431,19 @@ function CombatController:CollectTargets(preferred, mobName, maxRange)
     if mobName then
         for _, enemy in ipairs(folder:GetChildren()) do
             if #results >= (_G.Settings.FastAttackMaxTargets or 12) then break end
-            if IsEnemyNamed(enemy, mobName) then add(enemy) end
+            if IsEnemyNamed(enemy, mobName) then
+                local allowExtra = true
+                if questGatherActive and enemy ~= preferred then
+                    local root = enemy:FindFirstChild("HumanoidRootPart")
+                    local verifiedAt = root and VerifiedGatherRoots[root]
+                    allowExtra = verifiedAt ~= nil
+                        and now - verifiedAt
+                            <= (_G.Settings.GatherVerifiedTTL or 0.6)
+                        and type(ClientOwnsMob) == "function"
+                        and ClientOwnsMob(root) == true
+                end
+                if allowExtra then add(enemy) end
+            end
         end
     end
     return results
@@ -2388,11 +2417,11 @@ end
 --   Gom mob: mob quest trong MobGatherRadius quanh điểm farm được
 --   đưa về một cluster cục bộ quanh target; mob ở xa không bị chạm tới.
 -- ══════════════════════════════════════════════════════════════════
+local TravelManager
 local FarmPositionController = {
     LastGather = 0,
     LastSimulationTry = 0,
     SimulationReady = false,
-    SavedMobState = setmetatable({}, { __mode = "k" }),
 }
 
 
@@ -2467,239 +2496,274 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
     return false
 end
 
-function FarmPositionController:SaveMob(root, hum)
-    if not root or not hum or self.SavedMobState[root] then return end
-    local ok, state = pcall(function() return hum:GetState() end)
-    self.SavedMobState[root] = {
-        Humanoid = hum,
-        Anchored = root.Anchored,
-        CanCollide = root.CanCollide,
-        LinearVelocity = root.AssemblyLinearVelocity,
-        AngularVelocity = root.AssemblyAngularVelocity,
-        WalkSpeed = hum.WalkSpeed,
-        JumpPower = hum.JumpPower,
-        AutoRotate = hum.AutoRotate,
-        HealthDisplayType = hum.HealthDisplayType,
-        DisplayDistanceType = hum.DisplayDistanceType,
-        State = ok and state or nil,
-    }
-end
-
-function FarmPositionController:RestoreMob(root)
-    local saved = root and self.SavedMobState[root]
-    if not saved then return end
-    pcall(function()
-        if root and root.Parent then
-            root.Anchored = saved.Anchored
-            root.CanCollide = saved.CanCollide
-            root.AssemblyLinearVelocity = saved.LinearVelocity
-            root.AssemblyAngularVelocity = saved.AngularVelocity
-        end
-        local hum = saved.Humanoid
-        if hum and hum.Parent then
-            hum.WalkSpeed = saved.WalkSpeed
-            hum.JumpPower = saved.JumpPower
-            hum.AutoRotate = saved.AutoRotate
-            hum.HealthDisplayType = saved.HealthDisplayType
-            hum.DisplayDistanceType = saved.DisplayDistanceType
-            if saved.State then hum:ChangeState(saved.State) end
-        end
-    end)
-    self.SavedMobState[root] = nil
-end
-
--- Restore every NPC property modified by bring. This runs on quest/target
--- changes, death, re-execution and unload.
+-- Bring writes only an owned assembly's CFrame/current velocities. It never
+-- leaves Humanoid, collision or anchored properties to restore. Releasing is
+-- therefore a logical stop plus a diagnostic reset; the server keeps control
+-- of every assembly that is not currently client-owned.
 function FarmPositionController:ReleaseCluster()
-    local roots = {}
-    for root in pairs(self.SavedMobState or {}) do roots[#roots + 1] = root end
-    for _, root in ipairs(roots) do
-        self:RestoreMob(root)
-    end
-    self.SavedMobState = setmetatable({}, { __mode = "k" })
+    GatherGeneration = GatherGeneration + 1
+    VerifiedGatherRoots = setmetatable({}, { __mode = "k" })
+    _G.BobonDiagnostics.Bring = "OFF"
+    _G.BobonDiagnostics.BringCandidates = 0
+    _G.BobonDiagnostics.BringOwned = 0
+    _G.BobonDiagnostics.BringMoved = 0
 end
 
 local function ExpandSimulationRadius()
-    if FarmPositionController.SimulationReady then return true end
     local now = tick()
-    if now - (FarmPositionController.LastSimulationTry or 0) < 1 then return false end
+    -- Public bring implementations refresh this continuously. Do it from the
+    -- existing farm tick at a bounded rate so the executor/server cannot reset
+    -- the radius and silently turn later moves into client-only ghosts.
+    if now - (FarmPositionController.LastSimulationTry or 0)
+        < (_G.Settings.GatherSimulationRefresh or 0.75) then
+        return FarmPositionController.SimulationReady == true
+    end
     FarmPositionController.LastSimulationTry = now
+    local requested = false
+    -- Keep the request inside the local farm envelope. Success here is never
+    -- treated as ownership proof; every NPC is checked independently below.
+    local radius = math.clamp(
+        (_G.Settings.GatherMaxDistance or 250) + 75, 100, 500)
+
+    if type(setscriptable) == "function" then
+        local ok = pcall(function()
+            setscriptable(LP, "SimulationRadius", true)
+            LP.SimulationRadius = radius
+        end)
+        requested = requested or ok
+    end
     if type(sethiddenproperty) == "function" then
         local ok = pcall(function()
-            sethiddenproperty(LP, "SimulationRadius", math.huge)
+            sethiddenproperty(LP, "SimulationRadius", radius)
             pcall(function()
-                sethiddenproperty(LP, "MaximumSimulationRadius", math.huge)
+                sethiddenproperty(LP, "MaximumSimulationRadius", radius)
             end)
         end)
-        if ok then
-            FarmPositionController.SimulationReady = true
-            return true
-        end
+        requested = requested or ok
     end
     if type(setsimulationradius) == "function" then
-        local ok = pcall(function() setsimulationradius(math.huge, math.huge) end)
-        FarmPositionController.SimulationReady = ok
-        return ok
+        local ok = pcall(function() setsimulationradius(radius, radius) end)
+        requested = requested or ok
     end
-    return false
+    FarmPositionController.SimulationReady = requested
+    return requested
 end
 
-local function ClientOwnsMob(root)
-    -- nil means the executor cannot expose ownership; false means it can and
-    -- explicitly reports that the server still owns this NPC.
-    if type(isnetworkowner) ~= "function" then return nil end
-    local ok, owned = pcall(isnetworkowner, root)
-    if not ok then return nil end
-    return owned == true
+ClientOwnsMob = function(root)
+    -- true is the only state allowed to move. false means server/other-client
+    -- ownership; nil means this executor cannot prove ownership. Treating nil
+    -- as true was the exact source of the visible but invulnerable dummy mob.
+    if type(isnetworkowner) == "function" then
+        local ok, owned = pcall(isnetworkowner, root)
+        if ok then return owned == true end
+    end
+    -- Some environments expose the Roblox method even when the convenience
+    -- global is absent. It is normally server-restricted, hence the pcall.
+    local ok, owner = pcall(function() return root:GetNetworkOwner() end)
+    if ok then return owner == LP end
+    return nil
 end
 
--- Gather matching quest mobs only after arriving above the primary target.
--- Simulation ownership is requested first; the bounded local move is repeated
--- while hovering so unsupported executors degrade visibly instead of doing
--- nothing with a permanent zero-moved diagnostic.
+-- Gather only the canonical mob of the quest that this session can identify.
+-- Public bring scripts commonly request SimulationRadius and then CFrame every
+-- NPC; that produces a client-only dummy whenever ownership was not granted.
+-- Here `ClientOwnsMob(root) == true` is a hard precondition for every write.
 function FarmPositionController:GatherMobCluster(mobName, primary)
-    if not primary or not mobName then return 0 end
+    local function StopBring(mode)
+        self:ReleaseCluster()
+        _G.BobonDiagnostics.Bring = mode
+        return 0
+    end
+
+    if not primary or not mobName then return StopBring("INVALID") end
     local activeQuestMob = _G.State.ActiveQuestMob
-    -- Hard quest-only gate: never gather a skip-route mob, boss, old target,
-    -- or any enemy whose canonical name is not the currently accepted quest.
     if not activeQuestMob
-        or string.lower(tostring(activeQuestMob)) ~= string.lower(tostring(mobName))
+        or string.lower(tostring(activeQuestMob))
+            ~= string.lower(tostring(mobName))
         or not IsEnemyNamed(primary, activeQuestMob) then
-        self:ReleaseCluster()
-        _G.BobonDiagnostics.Bring = "QUEST-ONLY"
-        _G.BobonDiagnostics.BringCandidates = 0
-        _G.BobonDiagnostics.BringMoved = 0
-        return 0
+        return StopBring(activeQuestMob and "QUEST-MISMATCH" or "QUEST-UNKNOWN")
     end
-    -- Bring is a movement capability, not a fast-attack capability. A proven
-    -- real M1 backend may gather too; requiring FastReady made bring stay off
-    -- forever on executors that correctly fall back to client input.
-    if not CombatController:IsDamageReady() then
-        self:ReleaseCluster()
-        _G.BobonDiagnostics.Bring = "DAMAGE-WAIT"
-        _G.BobonDiagnostics.BringCandidates = 0
-        _G.BobonDiagnostics.BringMoved = 0
-        return 0
-    end
-    if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
-        or not _G.State:IsTargetValid(primary) then
-        return 0
-    end
-    local now = tick()
-    if now - self.LastGather < (_G.Settings.GatherInterval or 0.15) then return 0 end
-    self.LastGather = now
+
     local primaryRoot = primary:FindFirstChild("HumanoidRootPart")
+    if _G.State.Mode ~= "Farming"
+        or _G.State.ActiveActionToken ~= 0
+        or not CombatController:IsDamageReady()
+        or not _G.State:IsTargetValid(primary)
+        or _G.State.FarmTarget ~= primary
+        or not _G.State.IsTraveling
+        or _G.State.MovementOwner ~= "Farm"
+        or not TravelManager
+        or TravelManager.TargetRef ~= primaryRoot
+        or not TravelManager:IsAtCombatAnchor(primaryRoot) then
+        return StopBring("WAIT-FARM-ANCHOR")
+    end
+
+    local now = tick()
+    local verifiedTTL = _G.Settings.GatherVerifiedTTL or 0.6
+    for root, verifiedAt in pairs(VerifiedGatherRoots) do
+        if not root.Parent or now - verifiedAt > verifiedTTL then
+            VerifiedGatherRoots[root] = nil
+        end
+    end
+    if now - self.LastGather < (_G.Settings.GatherInterval or 0.15) then
+        return 0
+    end
+    self.LastGather = now
+
     local folder = workspace:FindFirstChild("Enemies")
-    if not primaryRoot or not folder then return 0 end
+    if not primaryRoot or not folder then return StopBring("NO-ENEMIES") end
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
-    if not okOrigin or not IsValidPos(origin) then return 0 end
+    if not okOrigin or not IsValidPos(origin) then
+        return StopBring("INVALID-ANCHOR")
+    end
+
     local playerRoot = HRP()
     local activeHeight = (CombatController:IsFastReady()
         or not CombatController:WantsClientRange())
         and (_G.Settings.FarmHeight or 15)
         or (_G.Settings.ClientHoverHeight or 5)
     local anchorPos = self:GetFarmPos(primary, activeHeight)
-    if not playerRoot or not anchorPos then return 0 end
+    if not playerRoot or not anchorPos then return StopBring("NO-PLAYER") end
     local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
-    local anchorRadius = _G.Settings.HoverConfirmRadius or 5
     if not okPlayerPos or not IsValidPos(playerPos)
-        or (playerPos - anchorPos).Magnitude > anchorRadius then
-        _G.BobonDiagnostics.Bring = "WAIT"
-        _G.BobonDiagnostics.BringCandidates = 0
-        _G.BobonDiagnostics.BringMoved = 0
-        return 0
+        or (playerPos - anchorPos).Magnitude
+            > (_G.Settings.HoverConfirmRadius or 5) then
+        return StopBring("WAIT-FARM-ANCHOR")
     end
+
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
     local maxDistance = gatherAll
         and math.min(_G.Settings.GatherMaxDistance or 250, 250)
-        or (_G.Settings.MobGatherRadius or 50)
-    local spacing = _G.Settings.GatherSpacing or 0
-    local simulationExpanded = ExpandSimulationRadius()
-    local moved, slot, candidates = 0, 0, 0
-    local bringMode = simulationExpanded and "SIM-REQUEST" or "NO-SIM"
-    local activeRoots = { [primaryRoot] = true }
-
-    -- Freeze the anchor only when the client actually owns its physics.
-    local primaryHum = primary:FindFirstChildOfClass("Humanoid")
-    local primaryOwned = ClientOwnsMob(primaryRoot)
-    if primaryOwned == false and self.SavedMobState[primaryRoot] then
-        self:RestoreMob(primaryRoot)
-    elseif primaryHum and primaryOwned == true then
-        self:SaveMob(primaryRoot, primaryHum)
-        pcall(function()
-            primaryRoot.Anchored = false
-            primaryRoot.CanCollide = false
-            primaryRoot.AssemblyLinearVelocity = Vector3.zero
-            primaryRoot.AssemblyAngularVelocity = Vector3.zero
-            primaryHum.WalkSpeed = 0
-            primaryHum.JumpPower = 0
-            primaryHum.AutoRotate = false
-            primaryHum:ChangeState(Enum.HumanoidStateType.Physics)
-        end)
-    end
+        or math.min(_G.Settings.MobGatherRadius or 50, 250)
+    local spacing = math.max(_G.Settings.GatherSpacing or 5, 3)
+    local simulationRequested = ExpandSimulationRadius()
+    local eligible = {}
 
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
         local root = mob:FindFirstChild("HumanoidRootPart")
-        if mob ~= primary and IsEnemyNamed(mob, mobName) and hum and hum.Health > 0 and root then
+        if mob ~= primary and IsEnemyNamed(mob, activeQuestMob)
+            and hum and hum.Health > 0 and root and root.Parent
+            and not root.Anchored then
             local okPos, mobPos = pcall(function() return root.Position end)
-            local offset = okPos and (mobPos - origin) or nil
             if okPos and IsValidPos(mobPos) and IsAllowedWorldPosition(mobPos)
-                and offset.Magnitude <= maxDistance then
-                activeRoots[root] = true
-                candidates = candidates + 1
-                slot = slot + 1
-                local angle = slot * 2.4
-                local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
-                local owned = ClientOwnsMob(root)
-                -- Some executors expose ownership as false until after the
-                -- first bounded local move. Keep that fallback close to the
-                -- player/anchor and label it unverified; only true ownership
-                -- is counted as a replicated move in diagnostics.
-                local allowLocalMove = owned == true or owned == nil
-                    or simulationExpanded
-                    or offset.Magnitude <= (_G.Settings.GatherFallbackDistance or 85)
-                if not allowLocalMove and self.SavedMobState[root] then
-                    self:RestoreMob(root)
+                and IsSubmergedPosition(mobPos) == IsSubmergedPosition(origin) then
+                local fromAnchor = (mobPos - origin).Magnitude
+                local fromPlayer = (mobPos - playerPos).Magnitude
+                if fromAnchor <= maxDistance and fromPlayer <= maxDistance then
+                    eligible[#eligible + 1] = {
+                        Model = mob,
+                        Humanoid = hum,
+                        Root = root,
+                        Position = mobPos,
+                        Distance = fromAnchor,
+                    }
                 end
-                pcall(function()
-                    if allowLocalMove then
-                        self:SaveMob(root, hum)
-                        hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
-                        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
-                        root.Anchored = false
-                        root.CanCollide = false
-                        hum.WalkSpeed = 0
-                        hum.JumpPower = 0
-                        hum.AutoRotate = false
-                        hum:ChangeState(Enum.HumanoidStateType.Physics)
-                        root.CFrame = CFrame.new(destination)
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-                    end
-                    if owned == true then
-                        moved = moved + 1
-                        bringMode = "OWNED"
-                    elseif owned == nil then
-                        -- Visual/local fallback only. Without an ownership API
-                        -- there is no honest way to claim server replication.
-                        bringMode = simulationExpanded
-                            and "LOCAL-UNVERIFIED" or "NO-OWNERSHIP-API"
-                    elseif owned == false then
-                        bringMode = allowLocalMove and "LOCAL-UNVERIFIED" or "WAIT-OWN"
-                    end
-                end)
             end
         end
     end
-    local staleRoots = {}
-    for root in pairs(self.SavedMobState) do
-        if not activeRoots[root] then staleRoots[#staleRoots + 1] = root end
+
+    table.sort(eligible, function(a, b) return a.Distance < b.Distance end)
+    local candidateLimit = math.max(
+        (_G.Settings.FastAttackMaxTargets or 12) - 1, 0)
+    local candidates = math.min(#eligible, candidateLimit)
+    local ownedCount = 0
+    local moved = 0
+    local sawUnknownOwnership = false
+    local sawUnowned = false
+    local attempted = {}
+    local myGatherGeneration = GatherGeneration
+
+    for index = 1, candidates do
+        if GatherGeneration ~= myGatherGeneration then return 0 end
+        local entry = eligible[index]
+        local owned = ClientOwnsMob(entry.Root)
+        if owned == nil then
+            VerifiedGatherRoots[entry.Root] = nil
+            sawUnknownOwnership = true
+        elseif owned == false then
+            VerifiedGatherRoots[entry.Root] = nil
+            sawUnowned = true
+        else
+            ownedCount = ownedCount + 1
+            local angle = ((index - 1) / math.max(candidates, 1))
+                * math.pi * 2
+            local destination = origin + Vector3.new(
+                math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
+
+            -- Ownership is dynamic, so check it again immediately before the
+            -- only physics write. Never freeze Humanoid/collision/anchor state.
+            if ClientOwnsMob(entry.Root) == true then
+                local okMove = pcall(function()
+                    local rotation = entry.Root.CFrame.Rotation
+                    entry.Root.CFrame = CFrame.new(destination) * rotation
+                    entry.Root.AssemblyLinearVelocity = Vector3.zero
+                    entry.Root.AssemblyAngularVelocity = Vector3.zero
+                end)
+                if okMove then
+                    attempted[#attempted + 1] = {
+                        Root = entry.Root,
+                        Humanoid = entry.Humanoid,
+                        Destination = destination,
+                    }
+                else
+                    VerifiedGatherRoots[entry.Root] = nil
+                end
+            else
+                VerifiedGatherRoots[entry.Root] = nil
+                sawUnowned = true
+            end
+        end
     end
-    for _, root in ipairs(staleRoots) do self:RestoreMob(root) end
-    if candidates == 0 then bringMode = "SOLO" end
+
+    -- Assignment success is not replication success. Wait one physics frame,
+    -- then count only roots that remain owned and at the requested position.
+    if #attempted > 0 then RunService.Heartbeat:Wait() end
+    if GatherGeneration ~= myGatherGeneration
+        or not SessionAlive()
+        or _G.State.Mode ~= "Farming"
+        or _G.State.ActiveQuestMob ~= activeQuestMob
+        or _G.State.FarmTarget ~= primary
+        or not _G.State.IsTraveling
+        or _G.State.MovementOwner ~= "Farm"
+        or TravelManager.TargetRef ~= primaryRoot
+        or not TravelManager:IsAtCombatAnchor(primaryRoot) then
+        return 0
+    end
+    local tolerance = _G.Settings.GatherPersistTolerance or 8
+    for _, attempt in ipairs(attempted) do
+        local okPersisted, position = pcall(function()
+            return attempt.Root.Parent and attempt.Humanoid.Health > 0
+                and attempt.Root.Position or nil
+        end)
+        if okPersisted and IsValidPos(position)
+            and ClientOwnsMob(attempt.Root) == true
+            and (position - attempt.Destination).Magnitude <= tolerance then
+            moved = moved + 1
+            VerifiedGatherRoots[attempt.Root] = tick()
+        else
+            VerifiedGatherRoots[attempt.Root] = nil
+            sawUnowned = true
+        end
+    end
+
+    local bringMode
+    if candidates == 0 then
+        bringMode = "SOLO"
+    elseif moved > 0 then
+        bringMode = "OWNED"
+    elseif sawUnknownOwnership then
+        bringMode = "NO-OWNERSHIP-API"
+    elseif ownedCount > 0 then
+        bringMode = "OWNERSHIP-LOST"
+    elseif sawUnowned and simulationRequested then
+        bringMode = "WAIT-OWNERSHIP"
+    else
+        bringMode = "SIM-UNAVAILABLE"
+    end
     _G.BobonDiagnostics.Bring = bringMode
     _G.BobonDiagnostics.BringCandidates = candidates
+    _G.BobonDiagnostics.BringOwned = ownedCount
     _G.BobonDiagnostics.BringMoved = moved
     return moved
 end
@@ -2717,7 +2781,7 @@ end
 --   [FIX-5] Validate instance target ngay tại Request()
 --   [FIX-11] Farm hover reset travel timeout khi đã tới → không recovery vô ích
 -- ══════════════════════════════════════════════════════════════════
-local TravelManager = {}
+TravelManager = {}
 TravelManager.ActiveThread = nil
 TravelManager.CurrentToken = 0
 TravelManager.TargetRef = nil
@@ -3642,6 +3706,7 @@ function RecoveryManager:Handle(reason)
 
     -- STEP 1: Stop all movement immediately
     TravelManager:Stop("Recovery")
+    FarmPositionController:ReleaseCluster()
 
 
     -- STEP 2: Force release any active action token
@@ -4111,16 +4176,6 @@ function SkipRouteController:Run()
                 -- every melee style and sword.
                 EquipCombatTool()
                 Attack(target, targetName)
-                -- [G-9] Skip route cũng GOM: đã hover trên target thì dịch
-                -- chuyển mọi mob trùng tên route về cụm như farm thường.
-                local skipFarmPos = FarmPositionController:GetFarmPos(target)
-                local skipHrp = HRP()
-                if skipFarmPos and skipHrp
-                    and (skipHrp.Position - skipFarmPos).Magnitude
-                        <= (_G.Settings.HoverConfirmRadius or 5)
-                    and TravelManager:IsAtCombatAnchor(targetRoot) then
-                    FarmPositionController:GatherMobCluster(targetName, target)
-                end
                 DLog("SKIP", "Attacking " .. tostring(targetName or target.Name))
             end
         end
@@ -4936,21 +4991,50 @@ task.spawn(function()
 
 
             if not q then
+                FarmPositionController:ReleaseCluster()
+                _G.State.ActiveQuestMob = nil
+                _G.State:ClearTargets()
+                if _G.State.IsTraveling
+                    and _G.State.MovementOwner == "Farm" then
+                    TravelManager:Stop("NoQuest")
+                end
                 _G.State:SetMode("Idle")
                 _G.BobonStatus = "Max Level / No Quest"
                 return
             end
 
             -- Keep one canonical mob name for the quest wrapper that is
-            -- currently active. On re-execution the wrapper may already be
-            -- open and localized, so adopt the current QDB entry once. After
-            -- that, level transitions cannot silently change the gather name.
+            -- currently active. On re-execution, adopt it only when the UI
+            -- contains an exact QDB mob name. A localized/unreadable wrapper
+            -- is still safe to farm by level, but bring stays disabled until
+            -- this session accepts the next quest and knows its exact mob.
             if questState == false then
+                FarmPositionController:ReleaseCluster()
                 _G.State.ActiveQuestMob = nil
-            elseif questState == true and not _G.State.ActiveQuestMob then
-                _G.State.ActiveQuestMob = ResolveQuestMobFromText() or q.M
-                DLog("QUEST", "Adopted active quest mob: "
-                    .. tostring(_G.State.ActiveQuestMob))
+            elseif questState == true then
+                local resolvedMob = ResolveQuestMobFromText()
+                if resolvedMob then
+                    local cachedMob = _G.State.ActiveQuestMob
+                    if cachedMob and string.lower(tostring(cachedMob))
+                        ~= string.lower(tostring(resolvedMob)) then
+                        FarmPositionController:ReleaseCluster()
+                        _G.State:ClearTargets()
+                        if _G.State.IsTraveling
+                            and _G.State.MovementOwner == "Farm" then
+                            TravelManager:Stop("QuestIdentityChanged")
+                        end
+                        DLog("QUEST", "Active quest changed: "
+                            .. tostring(cachedMob) .. " -> " .. resolvedMob)
+                    end
+                    _G.State.ActiveQuestMob = resolvedMob
+                    if not cachedMob then
+                        DLog("QUEST", "Adopted active quest mob: " .. resolvedMob)
+                    end
+                elseif not _G.State.ActiveQuestMob then
+                    FarmPositionController:ReleaseCluster()
+                    _G.BobonDiagnostics.Bring = "QUEST-UNKNOWN"
+                    DLog("QUEST", "Active quest name unreadable; bring disabled")
+                end
             end
 
 
@@ -5197,20 +5281,27 @@ task.spawn(function()
                             <= (_G.Settings.HoverConfirmRadius or 5)
                             and TravelManager:IsAtCombatAnchor(targetHRP)
                     end
-                    -- [G-6] Gom mob không còn phụ thuộc strict quest-match
-                    if _G.Settings.GatherMobs and atAnchor
-                        and CombatController:IsDamageReady() then
+                    -- Bring is allowed only while every farm/quest/anchor gate
+                    -- is true. Leaving the anchor immediately stops forcing
+                    -- NPC physics instead of retaining a stale cluster.
+                    local canGather = _G.Settings.GatherMobs
+                        and _G.State.ActiveQuestMob ~= nil
+                        and atAnchor
+                        and CombatController:IsDamageReady()
+                    if canGather then
                         FarmPositionController:GatherMobCluster(
                             questMobName, _G.State.FarmTarget)
-                    elseif not _G.Settings.GatherMobs
-                        or not CombatController:IsDamageReady() then
+                    else
                         FarmPositionController:ReleaseCluster()
-                    end
-                    local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
-                    if farmPos and FarmPositionController:HasNearbyMobs(questMobName, farmPos)
-                        and TravelManager:IsAtCombatAnchor(targetHRP) then
-                        EquipCombatTool()
-                        Attack(_G.State.FarmTarget, questMobName)
+                        if _G.Settings.GatherMobs
+                            and not _G.State.ActiveQuestMob then
+                            _G.BobonDiagnostics.Bring = "QUEST-UNKNOWN"
+                        elseif _G.Settings.GatherMobs
+                            and not CombatController:IsDamageReady() then
+                            _G.BobonDiagnostics.Bring = "DAMAGE-WAIT"
+                        elseif _G.Settings.GatherMobs and not atAnchor then
+                            _G.BobonDiagnostics.Bring = "WAIT-FARM-ANCHOR"
+                        end
                     end
                 end
             else
@@ -5255,6 +5346,12 @@ task.spawn(function()
             end
         end)
         if not okMain then
+            FarmPositionController:ReleaseCluster()
+            _G.State:ClearTargets()
+            if _G.State.IsTraveling
+                and _G.State.MovementOwner == "Farm" then
+                TravelManager:Stop("MainControllerError")
+            end
             warn("[BobonHub] Module Error: MainController: " .. tostring(mainErr))
         end
     end
