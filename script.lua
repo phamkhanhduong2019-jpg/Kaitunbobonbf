@@ -1,1192 +1,113 @@
---==============================================================
--- BANANA STATS CHECKER UI
--- Banana-style recreation
--- Icon Asset: 11618036200
---==============================================================
-
-repeat task.wait() until game:IsLoaded()
-
-local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
-local UIS = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-
-local LP = Players.LocalPlayer
-
---==============================================================
--- CLEAN OLD UI
---==============================================================
-
-pcall(function()
-    local old = CoreGui:FindFirstChild("BananaStatsChecker")
-    if old then
-        old:Destroy()
-    end
-end)
-
---==============================================================
--- SCREEN GUI
---==============================================================
-
-local GUI = Instance.new("ScreenGui")
-GUI.Name = "BananaStatsChecker"
-GUI.ResetOnSpawn = false
-GUI.IgnoreGuiInset = true
-GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-GUI.DisplayOrder = 999
-GUI.Parent = CoreGui
-
---==============================================================
--- COLORS
---==============================================================
-
-local COLOR = {
-    BG = Color3.fromRGB(4, 19, 27),
-    BG2 = Color3.fromRGB(3, 15, 21),
-
-    GOLD = Color3.fromRGB(244, 177, 62),
-    GOLD2 = Color3.fromRGB(255, 190, 72),
-
-    WHITE = Color3.fromRGB(235, 235, 235),
-    LINE = Color3.fromRGB(225, 225, 225),
-
-    BLACK = Color3.fromRGB(0, 0, 0)
-}
-
-local FONT = Enum.Font.GothamBold
-
---==============================================================
--- HELPERS
---==============================================================
-
-local function AddCorner(object, radius)
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, radius or 5)
-    corner.Parent = object
-    return corner
-end
-
-local function AddStroke(object, color, thickness, transparency)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = color or COLOR.GOLD
-    stroke.Thickness = thickness or 2
-    stroke.Transparency = transparency or 0
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = object
-    return stroke
-end
-
-local function CreateLabel(
-    parent,
-    text,
-    position,
-    size,
-    textSize,
-    color,
-    alignment
-)
-    local label = Instance.new("TextLabel")
-
-    label.BackgroundTransparency = 1
-
-    label.Position = position
-    label.Size = size
-
-    label.Font = FONT
-
-    label.Text = text
-    label.TextSize = textSize or 16
-    label.TextColor3 = color or COLOR.WHITE
-
-    label.TextXAlignment =
-        alignment or Enum.TextXAlignment.Left
-
-    label.TextYAlignment =
-        Enum.TextYAlignment.Center
-
-    label.TextWrapped = false
-
-    label.Parent = parent
-
-    return label
-end
-
-local function CreateLine(parent, position, size)
-    local line = Instance.new("Frame")
-
-    line.BorderSizePixel = 0
-    line.BackgroundColor3 = COLOR.LINE
-
-    line.Position = position
-    line.Size = size
-
-    line.Parent = parent
-
-    return line
-end
-
---==============================================================
--- BANANA ICON
---==============================================================
-
-local BananaIcon = Instance.new("ImageButton")
-
-BananaIcon.Name = "BananaIcon"
-
-BananaIcon.AnchorPoint = Vector2.new(0.5, 0.5)
-
-BananaIcon.Position = UDim2.new(
-    0.5,
-    0,
-    0,
-    42
-)
-
-BananaIcon.Size = UDim2.fromOffset(
-    54,
-    54
-)
-
-BananaIcon.BackgroundTransparency = 1
-
-BananaIcon.Image =
-    "rbxassetid://11618036200"
-
-BananaIcon.ScaleType =
-    Enum.ScaleType.Fit
-
-BananaIcon.AutoButtonColor = false
-
-BananaIcon.ZIndex = 20
-
-BananaIcon.Parent = GUI
-
---==============================================================
--- ICON CIRCLE MASK / BORDER
---==============================================================
-
-AddCorner(
-    BananaIcon,
-    100
-)
-
-AddStroke(
-    BananaIcon,
-    COLOR.GOLD,
-    2
-)
-
---==============================================================
--- DISCORD
---==============================================================
-
-local Discord = CreateLabel(
-    GUI,
-
-    "discord.gg/chouihub",
-
-    UDim2.new(
-        0.5,
-        -160,
-        0,
-        66
-    ),
-
-    UDim2.new(
-        0,
-        320,
-        0,
-        25
-    ),
-
-    16,
-
-    COLOR.GOLD2,
-
-    Enum.TextXAlignment.Center
-)
-
-Discord.TextStrokeColor3 =
-    Color3.fromRGB(45, 25, 5)
-
-Discord.TextStrokeTransparency = 0.35
-
---==============================================================
--- STATUS BOX
---==============================================================
-
-local Status = Instance.new("Frame")
-
-Status.Name = "Status"
-
-Status.AnchorPoint =
-    Vector2.new(0.5, 0)
-
-Status.Position =
-    UDim2.new(
-        0.5,
-        0,
-        0,
-        91
-    )
-
-Status.Size =
-    UDim2.fromOffset(
-        270,
-        72
-    )
-
-Status.BackgroundColor3 =
-    COLOR.BG2
-
-Status.BackgroundTransparency =
-    0.12
-
-Status.BorderSizePixel = 0
-
-Status.Parent = GUI
-
-AddCorner(Status, 4)
-
-AddStroke(
-    Status,
-    COLOR.GOLD,
-    2
-)
-
---==============================================================
--- STATUS FARM
---==============================================================
-
-local StatusFarm =
-    CreateLabel(
-        Status,
-
-        "Status Farm : Take Quest",
-
-        UDim2.new(
-            0,
-            5,
-            0,
-            7
-        ),
-
-        UDim2.new(
-            1,
-            -10,
-            0,
-            27
-        ),
-
-        15,
-
-        COLOR.GOLD2,
-
-        Enum.TextXAlignment.Center
-    )
-
---==============================================================
--- STATUS ITEM
---==============================================================
-
-local StatusItem =
-    CreateLabel(
-        Status,
-
-        "Status Item : None",
-
-        UDim2.new(
-            0,
-            5,
-            0,
-            35
-        ),
-
-        UDim2.new(
-            1,
-            -10,
-            0,
-            27
-        ),
-
-        15,
-
-        COLOR.GOLD2,
-
-        Enum.TextXAlignment.Center
-    )
-
---==============================================================
--- MAIN SHADOW
---==============================================================
-
-local Shadow =
-    Instance.new("Frame")
-
-Shadow.Name = "Shadow"
-
-Shadow.AnchorPoint =
-    Vector2.new(0.5, 0.5)
-
-Shadow.Position =
-    UDim2.new(
-        0.5,
-        8,
-        0.56,
-        8
-    )
-
-Shadow.Size =
-    UDim2.fromOffset(
-        635,
-        411
-    )
-
-Shadow.BackgroundColor3 =
-    COLOR.BLACK
-
-Shadow.BackgroundTransparency =
-    0.60
-
-Shadow.BorderSizePixel = 0
-
-Shadow.Parent = GUI
-
-AddCorner(Shadow, 8)
-
---==============================================================
--- MAIN WINDOW
---==============================================================
-
-local Main =
-    Instance.new("Frame")
-
-Main.Name = "Main"
-
-Main.AnchorPoint =
-    Vector2.new(0.5, 0.5)
-
-Main.Position =
-    UDim2.new(
-        0.5,
-        0,
-        0.56,
-        0
-    )
-
-Main.Size =
-    UDim2.fromOffset(
-        625,
-        401
-    )
-
-Main.BackgroundColor3 =
-    COLOR.BG
-
-Main.BackgroundTransparency =
-    0.10
-
-Main.BorderSizePixel = 0
-
-Main.Parent = GUI
-
-AddCorner(Main, 7)
-
-AddStroke(
-    Main,
-    COLOR.GOLD,
-    2
-)
-
---==============================================================
--- TITLE
---==============================================================
-
-local Title =
-    CreateLabel(
-        Main,
-
-        "Banana Stats Checker",
-
-        UDim2.new(
-            0,
-            20,
-            0,
-            14
-        ),
-
-        UDim2.new(
-            1,
-            -40,
-            0,
-            35
-        ),
-
-        17,
-
-        COLOR.GOLD2,
-
-        Enum.TextXAlignment.Center
-    )
-
---==============================================================
--- TOP DIVIDER
---==============================================================
-
-CreateLine(
-    Main,
-
-    UDim2.new(
-        0.15,
-        0,
-        0,
-        61
-    ),
-
-    UDim2.new(
-        0.70,
-        0,
-        0,
-        2
-    )
-)
-
---==============================================================
--- ACCOUNT STATS TITLE
---==============================================================
-
-CreateLabel(
-    Main,
-
-    "Account Stats",
-
-    UDim2.new(
-        0,
-        61,
-        0,
-        91
-    ),
-
-    UDim2.new(
-        0,
-        220,
-        0,
-        31
-    ),
-
-    20,
-
-    COLOR.GOLD2,
-
-    Enum.TextXAlignment.Left
-)
-
---==============================================================
--- ACCOUNT ITEMS TITLE
---==============================================================
-
-CreateLabel(
-    Main,
-
-    "Account Items",
-
-    UDim2.new(
-        0,
-        398,
-        0,
-        91
-    ),
-
-    UDim2.new(
-        0,
-        190,
-        0,
-        31
-    ),
-
-    20,
-
-    COLOR.GOLD2,
-
-    Enum.TextXAlignment.Left
-)
-
---==============================================================
--- STATS HOLDER
---==============================================================
-
-local Stats =
-    Instance.new("Frame")
-
-Stats.Name = "Stats"
-
-Stats.Position =
-    UDim2.new(
-        0,
-        43,
-        0,
-        133
-    )
-
-Stats.Size =
-    UDim2.fromOffset(
-        270,
-        165
-    )
-
-Stats.BackgroundTransparency = 1
-
-Stats.Parent = Main
-
---==============================================================
--- LEVEL
---==============================================================
-
-local Level =
-    CreateLabel(
-        Stats,
-
-        "Level: 2800",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            0
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE
-    )
-
---==============================================================
--- RACE
---==============================================================
-
-local Race =
-    CreateLabel(
-        Stats,
-
-        "Race: Ghoul",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            40
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE
-    )
-
---==============================================================
--- BELI
---==============================================================
-
-local Beli =
-    CreateLabel(
-        Stats,
-
-        "Beli: 7,880,375",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            80
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE
-    )
-
---==============================================================
--- FRAGMENTS
---==============================================================
-
-local Frag =
-    CreateLabel(
-        Stats,
-
-        "Frag: 5,228",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            120
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE
-    )
-
---==============================================================
--- LOWER DIVIDER
---==============================================================
-
-CreateLine(
-    Main,
-
-    UDim2.new(
-        0,
-        64,
-        0,
-        300
-    ),
-
-    UDim2.new(
-        1,
-        -128,
-        0,
-        2
-    )
-)
-
---==============================================================
--- ITEMS HOLDER
---==============================================================
-
-local Items =
-    Instance.new("Frame")
-
-Items.Name = "Items"
-
-Items.Position =
-    UDim2.new(
-        0,
-        380,
-        0,
-        310
-    )
-
-Items.Size =
-    UDim2.fromOffset(
-        220,
-        80
-    )
-
-Items.BackgroundTransparency = 1
-
-Items.Parent = Main
-
---==============================================================
--- ITEM LABEL 1
---==============================================================
-
-local Item1 =
-    CreateLabel(
-        Items,
-
-        "Label",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            0
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE,
-
-        Enum.TextXAlignment.Center
-    )
-
---==============================================================
--- ITEM LABEL 2
---==============================================================
-
-local Item2 =
-    CreateLabel(
-        Items,
-
-        "Label",
-
-        UDim2.new(
-            0,
-            0,
-            0,
-            40
-        ),
-
-        UDim2.new(
-            1,
-            0,
-            0,
-            34
-        ),
-
-        17,
-
-        COLOR.WHITE,
-
-        Enum.TextXAlignment.Center
-    )
-
---==============================================================
--- FORMAT NUMBER
---==============================================================
-
-local function FormatNumber(value)
-
-    value =
-        tonumber(value) or 0
-
-    local text =
-        tostring(
-            math.floor(value)
-        )
-
-    local count
-
-    repeat
-
-        text, count =
-            text:gsub(
-                "^(-?%d+)(%d%d%d)",
-                "%1,%2"
-            )
-
-    until count == 0
-
-    return text
-end
-
---==============================================================
--- FIND PLAYER DATA
---==============================================================
-
-local function FindValue(names)
-
-    local Data =
-        LP:FindFirstChild("Data")
-
-    for _, name in ipairs(names) do
-
-        if Data then
-
-            local value =
-                Data:FindFirstChild(name)
-
-            if
-                value
-                and value:IsA("ValueBase")
-            then
-
-                return value.Value
-            end
-        end
-
-        local leaderstats =
-            LP:FindFirstChild(
-                "leaderstats"
-            )
-
-        if leaderstats then
-
-            local value =
-                leaderstats:FindFirstChild(
-                    name
-                )
-
-            if
-                value
-                and value:IsA("ValueBase")
-            then
-
-                return value.Value
-            end
-        end
-    end
-
-    return nil
-end
-
---==============================================================
--- LIVE PLAYER DATA
---==============================================================
-
-task.spawn(function()
-
-    while GUI.Parent do
-
-        pcall(function()
-
-            -- LEVEL
-
-            local level =
-                FindValue({
-                    "Level",
-                    "Lv"
-                })
-
-            if level ~= nil then
-
-                Level.Text =
-                    "Level: "
-                    .. FormatNumber(level)
-            end
-
-            -- BELI
-
-            local money =
-                FindValue({
-                    "Beli",
-                    "Money",
-                    "Cash"
-                })
-
-            if money ~= nil then
-
-                Beli.Text =
-                    "Beli: "
-                    .. FormatNumber(money)
-            end
-
-            -- FRAGMENTS
-
-            local fragments =
-                FindValue({
-                    "Fragments",
-                    "Fragment",
-                    "Frag"
-                })
-
-            if fragments ~= nil then
-
-                Frag.Text =
-                    "Frag: "
-                    .. FormatNumber(fragments)
-            end
-
-            -- RACE
-
-            local race =
-                FindValue({
-                    "Race"
-                })
-
-            if race ~= nil then
-
-                Race.Text =
-                    "Race: "
-                    .. tostring(race)
-            end
-
-        end)
-
-        task.wait(1)
-    end
-end)
-
---==============================================================
--- PUBLIC UI API
---==============================================================
-
-_G.BananaStatsUI = {}
-
-function _G.BananaStatsUI:SetFarmStatus(text)
-
-    StatusFarm.Text =
-        "Status Farm : "
-        .. tostring(text)
-end
-
-function _G.BananaStatsUI:SetItemStatus(text)
-
-    StatusItem.Text =
-        "Status Item : "
-        .. tostring(text)
-end
-
-function _G.BananaStatsUI:SetLevel(value)
-
-    Level.Text =
-        "Level: "
-        .. FormatNumber(value)
-end
-
-function _G.BananaStatsUI:SetRace(value)
-
-    Race.Text =
-        "Race: "
-        .. tostring(value)
-end
-
-function _G.BananaStatsUI:SetBeli(value)
-
-    Beli.Text =
-        "Beli: "
-        .. FormatNumber(value)
-end
-
-function _G.BananaStatsUI:SetFragments(value)
-
-    Frag.Text =
-        "Frag: "
-        .. FormatNumber(value)
-end
-
-function _G.BananaStatsUI:SetItem1(value)
-
-    Item1.Text =
-        tostring(value)
-end
-
-function _G.BananaStatsUI:SetItem2(value)
-
-    Item2.Text =
-        tostring(value)
-end
-
---==============================================================
--- SHOW / HIDE SYSTEM
---==============================================================
-
-local Open = true
-local ToggleLock = false
-
-local function SetVisible(state)
-
-    Open = state
-
-    Main.Visible = state
-    Shadow.Visible = state
-    Status.Visible = state
-    Discord.Visible = state
-end
-
-BananaIcon.MouseButton1Click:Connect(function()
-
-    if ToggleLock then
-        return
-    end
-
-    ToggleLock = true
-
-    SetVisible(not Open)
-
-    -- small click animation
-
-    TweenService:Create(
-        BananaIcon,
-
-        TweenInfo.new(
-            0.10,
-            Enum.EasingStyle.Quad,
-            Enum.EasingDirection.Out
-        ),
-
-        {
-            Size =
-                UDim2.fromOffset(
-                    48,
-                    48
-                )
-        }
-
-    ):Play()
-
-    task.wait(0.10)
-
-    TweenService:Create(
-        BananaIcon,
-
-        TweenInfo.new(
-            0.12,
-            Enum.EasingStyle.Back,
-            Enum.EasingDirection.Out
-        ),
-
-        {
-            Size =
-                UDim2.fromOffset(
-                    54,
-                    54
-                )
-        }
-
-    ):Play()
-
-    task.wait(0.15)
-
-    ToggleLock = false
-end)
-
---==============================================================
--- DRAG MAIN WINDOW
---==============================================================
-
-local Dragging = false
-local DragStart = nil
-local StartPosition = nil
-
-Main.InputBegan:Connect(function(input)
-
-    if
-        input.UserInputType
-            == Enum.UserInputType.MouseButton1
-
-        or
-
-        input.UserInputType
-            == Enum.UserInputType.Touch
-    then
-
-        Dragging = true
-
-        DragStart =
-            input.Position
-
-        StartPosition =
-            Main.Position
-    end
-end)
-
-Main.InputEnded:Connect(function(input)
-
-    if
-        input.UserInputType
-            == Enum.UserInputType.MouseButton1
-
-        or
-
-        input.UserInputType
-            == Enum.UserInputType.Touch
-    then
-
-        Dragging = false
-    end
-end)
-
-UIS.InputChanged:Connect(function(input)
-
-    if not Dragging then
-        return
-    end
-
-    if
-        input.UserInputType
-            ~= Enum.UserInputType.MouseMovement
-
-        and
-
-        input.UserInputType
-            ~= Enum.UserInputType.Touch
-    then
-
-        return
-    end
-
-    local delta =
-        input.Position - DragStart
-
-    Main.Position =
-        UDim2.new(
-            StartPosition.X.Scale,
-            StartPosition.X.Offset
-                + delta.X,
-
-            StartPosition.Y.Scale,
-            StartPosition.Y.Offset
-                + delta.Y
-        )
-
-    Shadow.Position =
-        UDim2.new(
-            Main.Position.X.Scale,
-            Main.Position.X.Offset + 8,
-
-            Main.Position.Y.Scale,
-            Main.Position.Y.Offset + 8
-        )
-end)
-
---==============================================================
--- ENTRANCE ANIMATION
---==============================================================
-
-local OriginalMainSize =
-    Main.Size
-
-Main.Size =
-    UDim2.fromOffset(
-        580,
-        370
-    )
-
-TweenService:Create(
-    Main,
-
-    TweenInfo.new(
-        0.35,
-        Enum.EasingStyle.Back,
-        Enum.EasingDirection.Out
-    ),
-
-    {
-        Size = OriginalMainSize
-    }
-
-):Play()
-
---==============================================================
--- DEFAULT STATUS
---==============================================================
-
-_G.BananaStatsUI:SetFarmStatus(
-    "Take Quest"
-)
-
-_G.BananaStatsUI:SetItemStatus(
-    "None"
-)
-
-print(
-    "[Banana Stats Checker] UI Loaded"
-)--           recovery vo ich moi 45s
+-- =================================================================
+--         BOBON HUB v16.6 LIVE | STABLE KAITUN BLOX FRUIT
+--         Long-Run Stable | Single Movement Owner | ActionToken
+--         Base: v15.0 | Version: v16.6 LIVE
+--
+--  LIVE HOTFIX VERIFIED COMBAT + ATOMIC TRAVEL:
+--  [C-1] Melee/sword attack adapter: live client helper -> tokenized Net ->
+--        one real client click fallback. Never fire competing input paths.
+--  [C-2] A backend is READY only after two independent verified HP decreases;
+--        pcall/FireServer/input success is reported as PROBE, not damage.
+--  [C-3] Combat hover is explicit for every owner (Farm/Boss/Items/Sea),
+--        stays above the NPC and never faces 180 degrees away on arrival.
+--  [C-4] Same-owner retarget replans all travel options atomically; stuck
+--        timing no longer sleeps 0.5s inside the physics loop.
+--  [C-5] Bring counts only network-owned mobs; local fallback is explicitly
+--        forbidden because it creates client-only "dummy" mobs. Bring never
+--        changes persistent Humanoid/collision state.
+--  [C-6] Skip-level combat remains disabled until fast damage is verified.
+--  [C-7] Quest bring refreshes SimulationRadius, verifies network ownership
+--        before and after each move, and never attacks a locally-ghosted mob.
+--  [C-8] Incoming NPC/player damage never changes the farm hover, target or
+--        bring state; low HP, Stun and Busy do not pause the kaitun.
+--
+--  AUDIT FIXES v16.6-LIVE (L-1..L-7):
+--  [L-1] HUD responsive bằng UIListLayout + UIScale, không chồng chữ
+--         trên màn hình mobile; nền kính vẫn phủ toàn màn hình.
+--  [L-2] Beli xanh, Fragments tím, Status đổi màu theo Mode.
+--  [L-3] Combat ưu tiên đúng ReplicatedStorage.Modules.Net và payload
+--         RegisterAttack/RegisterHit hiện hành; M1 truyền camera CFrame.
+--  [L-4] Attack chỉ gửi khi đã equip Tool; lỗi VirtualUser không hủy
+--         RegisterHit đã gửi.
+--  [L-5] Bring mob xin SimulationRadius, giới hạn 250 studs, không anchor;
+--         freeze vận tốc và chỉ dịch mob khi có quyền physics khả dụng.
+--  [L-6] Sửa item window unreachable; Saber dùng ProQuestProgress,
+--         Pole săn Thunder God thay cho remote BuyPoleV1 không tồn tại.
+--  [L-7] Sửa gate tiến trình Sea2, Bartilo và Sea3 theo live flow.
+--
+--  AUDIT FIXES v16.5-GLASS (G-1..G-9):
+--  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
+--         0.45) + BlurEffect kính mờ (MenuBlur) thay cho [D-2] nền đen
+--         100%. Right Ctrl ẩn/hiện toàn bộ overlay + blur.
+--  [G-2]  Tự dọn blur cũ khi re-execute; blur tự gắn lại khi
+--         CurrentCamera bị thay đổi (respawn/teleport).
+--  [G-3]  RecoveryManager: Velocity/RotVelocity (deprecated) →
+--         AssemblyLinearVelocity/AssemblyAngularVelocity.
+--  [G-4]  FULL-GLASS: bỏ hẳn card/khung menu — chữ nổi trực tiếp trên
+--         nền kính mờ TOÀN màn hình, text stroke đậm hơn để đọc rõ.
+--  [G-5]  ATTACK FIX: Net remote resolver đa đường dẫn (Remotes.Modules.Net
+--         / Modules.Net / tìm sâu theo tên "Net"). Bản cũ chỉ nhìn
+--         RS.Modules.Net nên RegisterHit không bao giờ gửi được → bot
+--         đứng im không đánh. Giờ gửi RegisterHit theo từng enemy
+--         (part, {part}), giới hạn 12 mob gần nhất chống spam.
+--  [G-6]  FARM/GATHER FIX: quest-match KHÔNG đọc được UI (nil sau update
+--         đổi cấu trúc) → vẫn farm thay vì kẹt re-request quest vô hạn;
+--         gom mob không còn phụ thuộc strict quest-match, anchor nới
+--         bán kính tối thiểu 30 studs, GatherInterval 0.3 → 0.15.
+--  [G-7]  FAST ATTACK THEO TÊN + BRING MOB: RegisterHit đánh MỌI mob
+--         trùng tên quest đang sống, KHÔNG giới hạn khoảng cách (đứng
+--         đâu cũng trúng). Gom = DỊCH CHUYỂN toàn bộ mob trùng tên về
+--         cụm quanh mob neo (PivotTo + anchor cục bộ chống server kéo
+--         về), chỉ chạy khi đã hover trên đầu mob neo; nhả anchor khi
+--         đổi target/quest/chết (ReleaseCluster).
+--  [G-8]  Remote gọi qua cloneref khi executor hỗ trợ (kiểu "Fast
+--         Attack Unban" công khai) để bớt bị theo dõi remote trực tiếp.
+--  [G-9]  ATTACK UNBLOCK: equip tool KHÔNG còn là cổng chặn attack
+--         (RegisterHit không cần tool, M1 tay không vẫn damage); camera
+--         quay THẲNG vào target trước khi M1 (game bắn theo hướng
+--         camera, không phải hướng thân); RegisterHit đa định dạng
+--         (part,{part}) / ({parts}) / (part); skip route cũng gom mob;
+--         ActionLockTimeout 180 → 60s chống đứng im dài.
+--
+--  AUDIT FIXES v16.4-FIXED (D-1..D-5):
+--  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
+--         gần player đang tung chiêu (animation tấn công / lao nhanh
+--         về phía player) → dịch ngang 1 phát né, có cooldown chống
+--         spam, không né khi bay xa (giver/island), không phá Single
+--         Movement Owner (chỉ CFrame offset 1 lần, hover kéo về sau).
+--  [D-2]  NỀN ĐEN FULL MÀN HÌNH: Dim phủ kín màn hình, đục hoàn toàn
+--         (BackgroundTransparency = 0, đen 100%) thay vì mờ 86%.
+--  [D-3]  (gộp vào D-4) Skip level không hiệu quả → quay về farm quest.
+--  [D-4]  SKIP KHÔNG HIỆU QUẢ → FARM QUEST: SkipRouteController theo
+--         dõi level đầu route; cùng route quá SkipRouteFallbackTimeout
+--         (90s) mà level không tăng → tắt hẳn skip route, main
+--         controller chạy farm quest bình thường.
+--  [D-5]  KHÔNG CHỜ BOSS: route boss (Bobby/Yeti/Vice Admiral/...) mà
+--         boss không có mặt NGAY → return false, quay về farm quest
+--         tức thời. Chỉ route mob giữ fallback chờ spawn (mob respawn
+--         nhanh). BossManager vẫn săn boss khi boss xuất hiện.
+--
+--  AUDIT FIXES v16.0-FIXED:
+--  [FIX-1]  BossManager undefined -> crash main pcall -> farm khong
+--           bao gio chay -> them BossManager safe stub (return false)
+--  [FIX-2]  Error handling: moi subsystem wrap pcall rieng + warn
+--           "[BobonHub] Module Error: <error>", main van tiep tuc
+--  [FIX-3]  Attack dung khoang cach XZ (FarmHeight 22 > AttackRange 20
+--           -> bot khong bao gio attack duoc truoc day)
+--  [FIX-4]  TravelManager: validate target moi tick (Parent / Humanoid
+--           health / duoi bien) -> mob chet/destroy tu dong clear
+--           target + dung travel, khong recovery nang ne neu chi la
+--           target chet (u tien clear target va resume farm)
+--  [FIX-5]  Request: validate instance target truoc khi travel
+--  [FIX-6]  FarmTarget: clear ngay khi chet / destroy / o duoi bien /
+--           qua xa -> ve q.MC tim mob moi
+--  [FIX-7]  FindNearestMob: bo qua mob o duoi bien (Y < MinY-10)
+--  [FIX-8]  GetFarmPosition: nhan Vector3, clamp Y >= MinY
+--  [FIX-9]  Quest sai mob: tu re-request khi toi giver (truoc day ket
+--           vinh vien), khong farm mob sai quest
+--  [FIX-10] Chua co quest -> khong farm, di lay quest truoc
+--  [FIX-11] Travel timeout khong reset khi dang hover farm -> bo
+--           recovery vo ich moi 45s
 --  [FIX-12] Auto-recovery khong trigger khi Dead/Respawning
 --  [FIX-13] SEA-3 CHOCOLATE LAND FIX: QDB MC sai -> bot "bay ra bien"
 --           - Chocolate Bar Battler MC (507,73,-12789) -> (583,77,-12463)
@@ -1370,6 +291,8 @@ _G.Settings = {
     CombatBaselineQuiet = 0.25,
     CombatRepeatProofGap= 0.9,
     CombatCausalWindow  = 0.65,
+    IgnoreIncomingDamage= true,
+    IncomingDamageGrace = 2.0,
     EquipSettle         = 0.35,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
@@ -1413,11 +336,9 @@ _G.Settings = {
     ServerHopCooldown   = 120,
     MaxFarmDistance     = 300,
     StatBatchLimit      = 100,
-    -- [D-1] NÉ CHIÊU: phát hiện quái gần player tung chiêu (animation
-    -- tấn công / lao nhanh về phía player) → dịch ngang né nhanh.
-    -- Direct CFrame dodge conflicts with the single hover owner. Keep it off
-    -- until it is represented as a TravelManager goal offset.
-    DodgeAttacks        = false,
+    -- [D-1/C-8] Chỉ né chiêu của NPC trong workspace.Enemies. Kỹ năng và
+    -- sát thương từ người chơi không làm đổi target/hover/bring của kaitun.
+    DodgeAttacks        = true,
     DodgeCooldown       = 1.5,
     DodgeDistance       = 12,
     DodgeHeight         = 4,
@@ -1509,6 +430,7 @@ _G.State = {
     LastMoveTime     = os.time(),
     LastPosition     = nil,
     LastAttackTime   = 0,
+    LastIncomingDamage = 0,
     ConsecutiveFails = 0,
     Sea              = 1,
 }
@@ -2678,6 +1600,15 @@ function CombatController:CheckPending(now)
     local timeout = _G.Settings.CombatProbeTimeout or 1.2
     if self.PendingAttempts >= maxAttempts
         and now - self.PendingLastDispatch >= timeout then
+        -- Incoming NPC/PvP damage can interrupt the visible animation or
+        -- delay a server hit. Keep farming and retry without blacklisting a
+        -- previously viable backend merely because the player was hit.
+        if _G.Settings.IgnoreIncomingDamage
+            and now - (_G.State.LastIncomingDamage or 0)
+                <= (_G.Settings.IncomingDamageGrace or 2) then
+            self:AbortPending("RETRY-INCOMING-DAMAGE")
+            return
+        end
         if self.PendingSettleUntil <= 0 then
             self.PendingSettleUntil = now + (_G.Settings.CombatLateGrace or 0.35)
             _G.BobonDiagnostics.Packet = "WAIT-LATE-DAMAGE"
@@ -2885,7 +1816,7 @@ function CombatController:Attack(tool, kind, preferredModel, preferredHum, prefe
         self:AbortPending("WAIT-TOOL-READY")
         return false
     end
-    if tool.Enabled == false then
+    if tool.Enabled == false and candidateInputBackend then
         -- Normal M1 cooldown often disables the Tool before its server damage
         -- arrives. Keep the pending causal probe alive so that delayed HP loss
         -- can confirm the click instead of making combat reset after one hit.
@@ -2893,22 +1824,27 @@ function CombatController:Attack(tool, kind, preferredModel, preferredHum, prefe
         return false
     end
     if WeaponController and type(WeaponController.IsReady) == "function"
-        and not WeaponController:IsReady(tool) then
+        and not WeaponController:IsReady(tool, not candidateInputBackend) then
         self:AbortPending("WAIT-EQUIP-SETTLE")
         return false
     end
-    local character = Char()
-    for _, flagName in ipairs({ "Stun", "Busy" }) do
-        local flag = character and character:FindFirstChild(flagName)
-        if flag and ((flag:IsA("BoolValue") and flag.Value)
-            or (flag:IsA("NumberValue") and flag.Value > 0)) then
-            self:AbortPending("WAIT-" .. string.upper(flagName))
-            return false
-        end
-        local attribute = character and character:GetAttribute(flagName)
-        if attribute == true or (type(attribute) == "number" and attribute > 0) then
-            self:AbortPending("WAIT-" .. string.upper(flagName))
-            return false
+    -- Default kaitun policy ignores combat-control flags caused by incoming
+    -- attacks. We do not mutate those game values; fast/helper dispatch and
+    -- movement simply keep their current target while the server resolves it.
+    if not _G.Settings.IgnoreIncomingDamage then
+        local character = Char()
+        for _, flagName in ipairs({ "Stun", "Busy" }) do
+            local flag = character and character:FindFirstChild(flagName)
+            if flag and ((flag:IsA("BoolValue") and flag.Value)
+                or (flag:IsA("NumberValue") and flag.Value > 0)) then
+                self:AbortPending("WAIT-" .. string.upper(flagName))
+                return false
+            end
+            local attribute = character and character:GetAttribute(flagName)
+            if attribute == true or (type(attribute) == "number" and attribute > 0) then
+                self:AbortPending("WAIT-" .. string.upper(flagName))
+                return false
+            end
         end
     end
 
@@ -2944,6 +1880,20 @@ function CombatController:Attack(tool, kind, preferredModel, preferredHum, prefe
     end
     local inputBackend = IsClientInputBackend(backend)
     self.DesiredClientRange = inputBackend
+    -- SelectBackend can change after CheckPending. Revalidate only the
+    -- physical client-input path; verified remote/helper attacks do not need
+    -- Tool.Enabled to remain true during an incoming hit animation.
+    if backend ~= candidateBackend then
+        if tool.Enabled == false and inputBackend then
+            _G.BobonDiagnostics.Packet = "WAIT-TOOL-COOLDOWN"
+            return false
+        end
+        if WeaponController and type(WeaponController.IsReady) == "function"
+            and not WeaponController:IsReady(tool, not inputBackend) then
+            self:AbortPending("WAIT-EQUIP-SETTLE")
+            return false
+        end
+    end
     local range = inputBackend
         and (_G.Settings.ClientAttackRange or 8)
         or (_G.Settings.FastAttackRange or 100)
@@ -3217,8 +2167,9 @@ function WeaponController:IsCombatTool(tool)
     return IsMeleeTool(tool) or IsSwordTool(tool) or IsGunTool(tool)
 end
 
-function WeaponController:IsReady(tool)
-    return tool ~= nil and tool.Parent == Char() and tool.Enabled ~= false
+function WeaponController:IsReady(tool, ignoreEnabled)
+    return tool ~= nil and tool.Parent == Char()
+        and (ignoreEnabled or tool.Enabled ~= false)
         and self.HeldTool == tool and tick() >= (self.ReadyAt or 0)
 end
 
@@ -4179,7 +3130,6 @@ function TravelManager:Request(targetCF, owner, options)
         local cruiseLogged = false
         local travelTimeout = _G.Settings.TravelTimeout
         local lastStepTime = tick()
-        local safeRetreat = false
         if longTravel and startDist then
             travelTimeout = math.max(_G.Settings.TravelTimeout,
                 startDist / flySpeed + _G.Settings.TravelTimeoutMargin)
@@ -4299,20 +3249,9 @@ function TravelManager:Request(targetCF, owner, options)
                             hoverHeight = _G.Settings.ClientHoverHeight or 5
                         end
                     end
-                    local playerHum = char:FindFirstChildOfClass("Humanoid")
-                    if playerHum and playerHum.MaxHealth > 0 then
-                        local ratio = playerHum.Health / playerHum.MaxHealth
-                        if ratio <= 0.35 then
-                            safeRetreat = true
-                        elseif ratio >= 0.75 then
-                            safeRetreat = false
-                        end
-                    end
-                    if safeRetreat then
-                        hoverHeight = math.max(hoverHeight,
-                            _G.Settings.BossFarmHeight or 24)
-                        _G.BobonStatus = "Combat: Low HP safe hover"
-                    end
+                    -- Never change hover height because player health fell.
+                    -- PvP damage is ignored; NPC skills are handled only by
+                    -- DodgeController without releasing this combat target.
                     combatLookPos = p
                     targetPos = FarmPositionController:GetFarmPos(model, hoverHeight)
                     if tick() < self.DodgeUntil then
@@ -4545,9 +3484,50 @@ function HakiController:EnableForCharacter()
 end
 
 
+-- Observe player HP without creating another polling loop. Damage only marks
+-- a short retry grace for combat verification; it never changes farm mode,
+-- movement ownership, hover height, target, bring state or action token.
+local PlayerDamageConnection = nil
+local PlayerDamageCharacter = nil
+
+local function BindPlayerDamage(character, humanoid)
+    if PlayerDamageConnection then
+        PlayerDamageConnection:Disconnect()
+        PlayerDamageConnection = nil
+    end
+    PlayerDamageCharacter = character
+    if not character or not humanoid then return end
+    local lastHealth = humanoid.Health
+    PlayerDamageConnection = humanoid.HealthChanged:Connect(function(newHealth)
+        if not SessionAlive() or PlayerDamageCharacter ~= character then return end
+        if newHealth < lastHealth then
+            _G.State.LastIncomingDamage = tick()
+        end
+        lastHealth = newHealth
+    end)
+end
+
+local function QueuePlayerDamageBind(character)
+    PlayerDamageCharacter = character
+    if not character then
+        BindPlayerDamage(nil, nil)
+        return
+    end
+    task.spawn(function()
+        local humanoid = character:WaitForChild("Humanoid", 10)
+        if SessionAlive() and PlayerDamageCharacter == character then
+            BindPlayerDamage(character, humanoid)
+        end
+    end)
+end
+
+QueuePlayerDamageBind(Char())
+
+
 -- Death/Respawn handlers
 LP.CharacterRemoving:Connect(function()
     if not SessionAlive() then return end
+    BindPlayerDamage(nil, nil)
     HakiController:Reset()
     CombatController:Cleanup()
     FarmPositionController:ReleaseCluster()
@@ -4560,6 +3540,7 @@ end)
 
 LP.CharacterAdded:Connect(function(char)
     if not SessionAlive() then return end
+    QueuePlayerDamageBind(char)
     task.spawn(function()
         _G.State:SetMode("Respawning")
         TravelManager:Stop("Respawn")
@@ -4581,6 +3562,7 @@ LP.CharacterAdded:Connect(function(char)
         _G.State.MovementOwner = nil
         _G.State:ForceReleaseAction("Respawn")
         _G.State:ClearTargets()
+        _G.State.LastIncomingDamage = 0
         _G.State.ConsecutiveFails = 0
         _G.State.Sea = GetSea()
 
@@ -4738,6 +3720,9 @@ function DodgeController:TryDodge()
     local danger = nil
     local dangerRoot = nil
     for _, enemy in ipairs(folder:GetChildren()) do
+        -- Hard boundary: never classify another player's character as a
+        -- dodge source, even if a future game update reparents it here.
+        if Players:GetPlayerFromCharacter(enemy) then continue end
         local root = enemy:FindFirstChild("HumanoidRootPart")
         if not root then continue end
         local p = root.Position
@@ -6551,6 +5536,7 @@ _G.BobonUnload = function()
     pcall(function() TravelManager:Stop("Reexecute") end)
     pcall(function() CombatController:Cleanup() end)
     pcall(function() FarmPositionController:ReleaseCluster() end)
+    pcall(function() BindPlayerDamage(nil, nil) end)
     pcall(function() if SG and SG.Parent then SG:Destroy() end end)
 end
 
