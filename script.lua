@@ -3,6 +3,16 @@
 --         Long-Run Stable | Single Movement Owner | ActionToken
 --         Base: v15.0 | Version: v16.6 LIVE
 --
+--  LIVE HOTFIX M1 + BRING:
+--  [M1-1] Mọi melee/sword dùng Tool:Activate + input M1 thật của client;
+--         bỏ payload RegisterHit 2 tham số cũ bị server bỏ im lặng.
+--  [M1-2] Quay camera/nhân vật trước khi đánh; hover 6 studs và arrival
+--         8 studs, không cộng chiều cao từ hitbox quái đã resize.
+--  [M1-3] Không resize/ẩn Tool.Handle; áp dụng chung cho Combat, toàn bộ
+--         fighting style và sword.
+--  [M1-4] Bring dùng đủ bán kính cấu hình tối đa 250 studs, giữ mob neo
+--         đứng yên và lặp vị trí cụm mỗi tick gather.
+--
 --  AUDIT FIXES v16.6-LIVE (L-1..L-7):
 --  [L-1] HUD responsive bằng UIListLayout + UIScale, không chồng chữ
 --         trên màn hình mobile; nền kính vẫn phủ toàn màn hình.
@@ -207,6 +217,7 @@ local Players      = game:GetService("Players")
 local RS           = game:GetService("ReplicatedStorage")
 local RunService   = game:GetService("RunService")
 local VU           = game:GetService("VirtualUser")
+local VIM          = game:GetService("VirtualInputManager")
 local TS           = game:GetService("TweenService")
 local TeleportSvc  = game:GetService("TeleportService")
 local CoreGui      = game:GetService("CoreGui")
@@ -224,15 +235,17 @@ if not CommF_ then warn("[BobonHub v16.6 LIVE] CommF_ not found!") return end
 _G.Settings = {
     -- [A-8] DEBUG log: true = in [TAG] log ra console (không spam khi false)
     DEBUG               = false,
-    FarmHeight          = 8,
-    FarmOffsetX         = 3,
+    -- Keep real client M1 inside melee/sword range. The enemy hitbox is
+    -- enlarged locally below, so farm height must never be derived from it.
+    FarmHeight          = 6,
+    FarmOffsetX         = 1.5,
     HitboxSize          = 50,
     FlySpeed            = 180,
     MinY                = 10,
     -- Submerged Island (Sea 3) dùng tọa độ âm dưới mặt biển.
     UnderwaterMinY      = -2300,
     CloseThreshold      = 35,
-    FarmArrivalThreshold= 15,
+    FarmArrivalThreshold= 8,
     -- [A-4] Farm position / gom mob config (điều chỉnh theo game physics)
     MobGatherRadius     = 50,
     TargetRefreshInterval = 0.2,
@@ -247,6 +260,7 @@ _G.Settings = {
     -- 20-stud gate made cluster farming stop attacking while hovering over
     -- the average position of several mobs, so keep the gate in sync.
     AttackRange         = 100,
+    ClientAttackRange   = 30,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
     CruiseStuckTimeout  = 20,
@@ -282,7 +296,7 @@ _G.Settings = {
     -- soft bring only inside the real RegisterHit range. The server-side mob
     -- is still close enough to be hit, so this cannot create a far ghost mob.
     GatherFallbackDistance = 85,
-    GatherSpacing       = 6,
+    GatherSpacing       = 3,
     GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
@@ -1070,19 +1084,10 @@ task.spawn(function()
 end)
 
 
--- Combat remotes have appeared both as literal names ("RE/RegisterHit")
--- and as nested folders (RE.RegisterHit). Resolve both layouts so a game
--- update cannot silently disable all attacks.
+-- Resolve Modules.Net only for non-combat live remotes (for example the
+-- Submerged Island entrance). Melee/sword attacks use real client input.
 local NetFolderCache = nil
 local NetWaitAttempted = false
-local function ExecutorRef(instance)
-    if not instance then return nil end
-    if type(cloneref) == "function" then
-        local ok, cloned = pcall(cloneref, instance)
-        if ok and cloned then return cloned end
-    end
-    return instance
-end
 
 local function ResolveNet()
     if NetFolderCache and NetFolderCache.Parent then return NetFolderCache end
@@ -1112,79 +1117,8 @@ local function ResolveNet()
     return nil
 end
 
-local function FindNetRemote(net, path)
-    if not net then return nil end
-    local direct = net:FindFirstChild(path)
-    if direct then return ExecutorRef(direct) end
-    local folderName, remoteName = string.match(path, "^([^/]+)/(.+)$")
-    local folder = folderName and net:FindFirstChild(folderName)
-    local nested = folder and folder:FindFirstChild(remoteName)
-    if nested then return ExecutorRef(nested) end
-    if remoteName then
-        return ExecutorRef(net:FindFirstChild(remoteName, true))
-    end
-    return nil
-end
-
-local function FastRegisterHit(preferred, mobName)
-    local net = ResolveNet()
-    local registerAttack = FindNetRemote(net, "RE/RegisterAttack")
-    local registerHit = FindNetRemote(net, "RE/RegisterHit")
-    local me = HRP()
-    local character = Char()
-    local equipped = character and character:FindFirstChildOfClass("Tool")
-    local diag = _G.BobonDiagnostics
-    diag.Tool = equipped and equipped.Name or "NO-TOOL"
-    diag.Net = registerAttack and registerHit and "NET-OK" or "NO-NET"
-    if not me or not equipped or not registerAttack or not registerHit then
-        diag.Hits = 0
-        diag.Packet = not equipped and "blocked-tool" or "blocked-net"
-        DLog("ATTACK", "Combat blocked: " .. diag.Packet)
-        return false
-    end
-    local hitList = {}
-    local firstPart = nil
-    local folder = workspace:FindFirstChild("Enemies")
-    if folder then
-        for _, enemy in ipairs(folder:GetChildren()) do
-            local hum = enemy:FindFirstChildOfClass("Humanoid")
-            local root = enemy:FindFirstChild("HumanoidRootPart")
-            local head = enemy:FindFirstChild("Head") or root
-            local inRange = root and (root.Position - me.Position).Magnitude
-                <= (_G.Settings.AttackRange or 100)
-            -- Always include the already-validated primary target. A UI mob
-            -- name mismatch must not make an otherwise valid hit list empty.
-            local nameMatches = enemy == preferred
-                or not mobName or IsEnemyNamed(enemy, mobName)
-            if hum and hum.Health > 0 and root and head and inRange and nameMatches then
-                -- RegisterHit expects the game's normal pair payload:
-                -- {enemy model, hit part}. Sending several guessed formats
-                -- can make the server discard/rate-limit every hit.
-                hitList[#hitList + 1] = {enemy, head}
-                if not firstPart and (not preferred or enemy == preferred) then
-                    firstPart = head
-                end
-            end
-        end
-    end
-    diag.Hits = #hitList
-    if #hitList == 0 then
-        diag.Packet = "no-target"
-        return false
-    end
-    firstPart = firstPart or hitList[1][2]
-    local ok, err = pcall(function()
-        registerAttack:FireServer(0)
-        registerHit:FireServer(firstPart, hitList)
-    end)
-    diag.Packet = ok and "sent" or "remote-error"
-    if not ok then DLog("ATTACK", "RegisterHit failed: " .. tostring(err)) end
-    return ok
-end
-
--- Guns use their own LeftClickRemote in current builds.  RegisterHit is for
--- blades/melee; sending it with a gun can silently do nothing, so mirror the
--- current client path and fire a direction for every nearby enemy.
+-- Guns use their own LeftClickRemote in current builds, so mirror that live
+-- path and fire a direction for every nearby enemy.
 local function FireGunHits(tool, preferred)
     if not tool or not tool:FindFirstChild("LeftClickRemote") then return false end
     local me = HRP()
@@ -1223,7 +1157,6 @@ local function Attack(preferredTarget, mobName)
     if not IsAlive() then return false end
     local now = tick()
     if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return false end
-    _G.State.LastAttackTime = now
     local c = Char()
     local tool = c and c:FindFirstChildOfClass("Tool")
     if not tool then
@@ -1232,38 +1165,103 @@ local function Attack(preferredTarget, mobName)
         DLog("ATTACK", "Waiting for combat tool")
         return false
     end
-    pcall(function() tool:Activate() end)
-
-    -- RegisterAttack/RegisterHit follows the current client payload. Keep the
-    -- equipped-tool gate: the server rejects blade packets without a held tool.
-    local sent = false
-    if tool:FindFirstChild("LeftClickRemote") then
-        sent = FireGunHits(tool, preferredTarget)
-    else
-        sent = FastRegisterHit(preferredTarget, mobName)
+    local targetRoot = preferredTarget and preferredTarget:IsA("BasePart")
+        and preferredTarget
+        or (preferredTarget and preferredTarget:FindFirstChild("HumanoidRootPart"))
+    local targetModel = targetRoot and targetRoot:FindFirstAncestorOfClass("Model")
+    local targetHum = targetModel and targetModel:FindFirstChildOfClass("Humanoid")
+    local me = HRP()
+    if not me or not targetRoot or not targetRoot.Parent
+        or not targetHum or targetHum.Health <= 0 then
+        _G.BobonDiagnostics.Packet = "invalid-target"
+        return false
     end
 
+    -- A real melee/sword M1 is range checked by the client/server. Do not
+    -- report a fake packet while the travel controller is still approaching.
+    local targetDistance = (targetRoot.Position - me.Position).Magnitude
+    if targetDistance > (_G.Settings.ClientAttackRange or 30) then
+        _G.BobonDiagnostics.Packet = "approaching"
+        return false
+    end
+    _G.State.LastAttackTime = now
+
+    -- Face the target before Tool:Activate/input. The previous order activated
+    -- first and only aimed afterwards, so sword/melee controllers attacked the
+    -- old camera direction while the character hovered above the NPC.
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize
     local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
         or Vector2.new(640, 360)
-    if camera and preferredTarget then
-        local tRoot = preferredTarget:IsA("BasePart") and preferredTarget
-            or preferredTarget:FindFirstChild("HumanoidRootPart")
-        if tRoot then
-            pcall(function()
-                camera.CFrame = CFrame.lookAt(camera.CFrame.Position, tRoot.Position)
-            end)
+    if camera then
+        pcall(function()
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetRoot.Position)
+        end)
+    end
+    pcall(function()
+        local flatTarget = Vector3.new(targetRoot.Position.X, me.Position.Y, targetRoot.Position.Z)
+        if (flatTarget - me.Position).Magnitude > 0.05 then
+            me.CFrame = CFrame.lookAt(me.Position, flatTarget)
+        end
+    end)
+
+    local diag = _G.BobonDiagnostics
+    diag.Tool = tool.Name
+    local nearby = 0
+    local folder = workspace:FindFirstChild("Enemies")
+    if folder then
+        for _, enemy in ipairs(folder:GetChildren()) do
+            local hum = enemy:FindFirstChildOfClass("Humanoid")
+            local root = enemy:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 0 and root
+                and (enemy == targetModel or not mobName or IsEnemyNamed(enemy, mobName))
+                and (root.Position - me.Position).Magnitude
+                    <= (_G.Settings.ClientAttackRange or 30) then
+                nearby = nearby + 1
+            end
         end
     end
-    -- VirtualUser expects the camera CFrame as its second argument on current
-    -- clients. Isolate each input call so one executor incompatibility cannot
-    -- cancel the already-valid RegisterHit packet.
+    diag.Hits = math.max(nearby, 1)
+
+    -- Current servers attach a changing session value to their internal hit
+    -- packet. A guessed two-argument RegisterHit can pcall successfully while
+    -- the server discards it. Drive the equipped Tool through the real client
+    -- input path instead; this is shared by Combat, every melee style and all
+    -- swords. Gun tools retain their own live LeftClickRemote path.
+    if tool:FindFirstChild("LeftClickRemote") then
+        diag.Net = "GUN-REMOTE"
+        local activated = pcall(function() tool:Activate() end)
+        local fired = FireGunHits(tool, preferredTarget)
+        diag.Packet = (activated or fired) and "gun-sent" or "gun-error"
+        return activated or fired
+    end
+
+    diag.Net = "CLIENT-M1"
+    local activateOk = pcall(function() tool:Activate() end)
+    local vimDownOk = pcall(function()
+        VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, true, game, 0)
+    end)
+    local executorDownOk = false
+    if type(mouse1press) == "function" then
+        executorDownOk = pcall(mouse1press)
+    elseif type(mouse1click) == "function" then
+        executorDownOk = pcall(mouse1click)
+    end
     local cameraCF = camera and camera.CFrame or CFrame.new()
-    pcall(function() VU:CaptureController() end)
-    pcall(function() VU:Button1Down(clickPos, cameraCF) end)
-    pcall(function() VU:Button1Up(clickPos, cameraCF) end)
-    pcall(function() VU:ClickButton1(clickPos, cameraCF) end)
+    local vuDownOk = pcall(function()
+        VU:CaptureController()
+        VU:Button1Down(clickPos, cameraCF)
+    end)
+    task.delay(0.04, function()
+        if not SessionAlive() then return end
+        pcall(function()
+            VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, false, game, 0)
+        end)
+        if type(mouse1release) == "function" then pcall(mouse1release) end
+        pcall(function() VU:Button1Up(clickPos, cameraCF) end)
+    end)
+    local sent = activateOk or vimDownOk or executorDownOk or vuDownOk
+    diag.Packet = sent and "m1-sent" or "m1-error"
     return sent
 end
 
@@ -1466,7 +1464,7 @@ function WeaponController:EquipPreferred()
     end
     if not candidate then
         -- New styles/items are not always present in the static name list.
-        -- The live client only needs a held non-quest Tool for RegisterHit, so
+        -- The live client needs a held combat Tool for its M1 controller, so
         -- use the first safe Tool instead of reporting a false ready state.
         for _, tool in ipairs(backpack:GetChildren()) do
             if IsFallbackCombatTool(tool) then candidate = tool; break end
@@ -1716,12 +1714,12 @@ function FarmPositionController:GetFarmPos(mob)
     if not root then return nil end
     local ok, pos = pcall(function() return root.Position end)
     if not ok or not IsValidPos(pos) then return nil end
-    local extra = 0
-    local sizeY = root.Size and root.Size.Y or 0
-    if sizeY > 6 then extra = math.min(sizeY - 6, 10) end
+    -- PrepareCombatTarget enlarges this root to improve target acquisition.
+    -- Never use that synthetic Size.Y as hover height: it previously added
+    -- another 10 studs and left every real melee/sword M1 out of reach.
     return Vector3.new(
         pos.X + _G.Settings.FarmOffsetX,
-        math.max(pos.Y + _G.Settings.FarmHeight + extra,
+        math.max(pos.Y + _G.Settings.FarmHeight,
             IsUnderwaterY(pos.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         pos.Z
     )
@@ -1798,11 +1796,14 @@ end
 local function ExpandSimulationRadius()
     if FarmPositionController.SimulationReady then return true end
     local now = tick()
-    if now - (FarmPositionController.LastSimulationTry or 0) < 5 then return false end
+    if now - (FarmPositionController.LastSimulationTry or 0) < 1 then return false end
     FarmPositionController.LastSimulationTry = now
     if type(sethiddenproperty) == "function" then
         local ok = pcall(function()
             sethiddenproperty(LP, "SimulationRadius", math.huge)
+            pcall(function()
+                sethiddenproperty(LP, "MaximumSimulationRadius", math.huge)
+            end)
         end)
         if ok then
             FarmPositionController.SimulationReady = true
@@ -1826,9 +1827,10 @@ local function ClientOwnsMob(root)
     return owned == true
 end
 
--- Safe gather: only nearby, matching quest mobs are moved, and only while
--- this client owns their physics. Server-owned mobs remain at their real
--- position so RegisterHit can damage them and their health bar stays valid.
+-- Gather matching quest mobs only after arriving above the primary target.
+-- Simulation ownership is requested first; the bounded local move is repeated
+-- while hovering so unsupported executors degrade visibly instead of doing
+-- nothing with a permanent zero-moved diagnostic.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
     if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
@@ -1844,8 +1846,16 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
     pcall(function()
+        local primaryHum = primary:FindFirstChildOfClass("Humanoid")
         primaryRoot.Anchored = false
         primaryRoot.CanCollide = false
+        primaryRoot.AssemblyLinearVelocity = Vector3.zero
+        primaryRoot.AssemblyAngularVelocity = Vector3.zero
+        if primaryHum then
+            primaryHum.WalkSpeed = 0
+            primaryHum.JumpPower = 0
+            primaryHum:ChangeState(11)
+        end
     end)
     local playerRoot = HRP()
     local anchorPos = self:GetFarmPos(primary)
@@ -1857,11 +1867,14 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
     if not okPlayerPos or not IsValidPos(playerPos)
         or (playerPos - anchorPos).Magnitude > anchorRadius then
+        _G.BobonDiagnostics.Bring = "WAIT"
+        _G.BobonDiagnostics.BringCandidates = 0
+        _G.BobonDiagnostics.BringMoved = 0
         return 0
     end
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
     local maxDistance = gatherAll
-        and math.min(_G.Settings.GatherMaxDistance or 75, 120)
+        and math.min(_G.Settings.GatherMaxDistance or 250, 250)
         or (_G.Settings.MobGatherRadius or 50)
     local spacing = _G.Settings.GatherSpacing or 4
     local simulationExpanded = ExpandSimulationRadius()
@@ -1885,21 +1898,23 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                     hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
                     hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
                     local owned = ClientOwnsMob(root)
-                    local fallbackDistance = _G.Settings.GatherFallbackDistance or 85
-                    -- Keep a bounded local fallback for executors without a
-                    -- working ownership API. Because it is inside attack range,
-                    -- the server copy remains hittable even before ownership
-                    -- replication catches up.
-                    local softBring = offset.Magnitude <= fallbackDistance
-                    local canMove = owned == true or simulationExpanded or softBring
-                    if canMove and offset.Magnitude > spacing + 1 then
-                        local destinationCF = CFrame.new(destination, origin)
-                        hum.WalkSpeed = 0
-                        hum.JumpPower = 0
-                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Physics) end)
-                        root.CFrame = destinationCF
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
+                    -- Re-apply the local move every gather tick for all quest
+                    -- mobs inside the configured 250-stud island radius. When
+                    -- the executor exposes ownership, SIM/OWN replicates it;
+                    -- otherwise LOCAL remains a visible best-effort bring.
+                    local canMove = owned ~= false or simulationExpanded
+                        or offset.Magnitude <= maxDistance
+                    if owned == true and not simulationExpanded then bringMode = "OWN" end
+                    if canMove then
+                        if offset.Magnitude > spacing + 1 then
+                            local destinationCF = CFrame.new(destination, origin)
+                            hum.WalkSpeed = 0
+                            hum.JumpPower = 0
+                            pcall(function() hum:ChangeState(11) end)
+                            root.CFrame = destinationCF
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end
                         moved = moved + 1
                     end
                 end)
@@ -3056,7 +3071,8 @@ function SkipRouteController:Run()
             local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
             local farmHolds = not _G.State.IsTraveling or _G.State.MovementOwner == "Farm"
             if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds then
-                -- [G-9] Equip không chặn attack; RegisterHit không cần tool.
+                -- Equip first, then Attack drives the real client M1 shared by
+                -- every melee style and sword.
                 EquipCombatTool()
                 Attack(target, targetName)
                 -- [G-9] Skip route cũng GOM: đã hover trên target thì dịch
@@ -4003,9 +4019,9 @@ task.spawn(function()
                             or _G.State.MovementOwner == "Farm"
                         if flatDist <= _G.Settings.AttackRange and farmHolds then
                             _G.State.FState = "ATTACK"
-                            -- [G-9] Equip KHÔNG còn là cổng chặn attack:
-                            -- RegisterHit không cần tool, M1 tay không vẫn
-                            -- gây damage. Equip chỉ là cố gắng thêm.
+                            -- Equip is asynchronous; if it completes on the
+                            -- next controller tick, Attack will immediately
+                            -- drive that melee/sword through real client M1.
                             EquipCombatTool()
                             Attack(_G.State.FarmTarget, q.M)
                             if os.time() - lastAttackLog >= 5 then
@@ -4123,29 +4139,10 @@ LP.Idled:Connect(function()
 end)
 
 
--- Hitbox extender an toàn (Fix #17 / FIX-P6)
--- Chỉ resize khi size thay đổi (tránh physics jitter), CanCollide=false
--- để weapon không làm character stuck. Handle không tồn tại → bỏ qua.
-task.spawn(function()
-    while SessionAlive() and task.wait(1) do
-        pcall(function()
-            local c = Char()
-            if not c then return end
-            for _, tool in ipairs(c:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local h = tool:FindFirstChild("Handle")
-                    if h and h:IsA("BasePart") and h.Parent then
-                        if h.Size.X ~= _G.Settings.HitboxSize then
-                            h.Size = Vector3.new(_G.Settings.HitboxSize,_G.Settings.HitboxSize,_G.Settings.HitboxSize)
-                        end
-                        h.Transparency = 1
-                        if h.CanCollide then h.CanCollide = false end
-                    end
-                end
-            end
-        end)
-    end
-end)
+-- Do not mutate Tool.Handle. Enlarging every melee/sword handle to 50 studs
+-- and hiding it can invalidate the live Tool controller and was shared by all
+-- weapons, which is why Combat, other melee styles and swords failed alike.
+-- Enemy-side target preparation already supplies the local acquisition box.
 
 
 -- Auto Stats batch limit (Fix #15 / FIX-P7)
