@@ -3,15 +3,25 @@
 --         Long-Run Stable | Single Movement Owner | ActionToken
 --         Base: v15.0 | Version: v16.5 GLASS
 --
---  AUDIT FIXES v16.5-GLASS (G-1..G-3):
+--  AUDIT FIXES v16.5-GLASS (G-1..G-6):
 --  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
 --         0.45) + BlurEffect kính mờ (MenuBlur) thay cho [D-2] nền đen
 --         100%. Right Ctrl ẩn/hiện toàn bộ overlay + blur.
---  [G-2]  CARD GLASS: gradient sáng hơn, viền rõ, accent shimmer chạy
---         vô hạn; tự dọn blur cũ khi re-execute; blur tự gắn lại khi
+--  [G-2]  Tự dọn blur cũ khi re-execute; blur tự gắn lại khi
 --         CurrentCamera bị thay đổi (respawn/teleport).
 --  [G-3]  RecoveryManager: Velocity/RotVelocity (deprecated) →
 --         AssemblyLinearVelocity/AssemblyAngularVelocity.
+--  [G-4]  FULL-GLASS: bỏ hẳn card/khung menu — chữ nổi trực tiếp trên
+--         nền kính mờ TOÀN màn hình, text stroke đậm hơn để đọc rõ.
+--  [G-5]  ATTACK FIX: Net remote resolver đa đường dẫn (Remotes.Modules.Net
+--         / Modules.Net / tìm sâu theo tên "Net"). Bản cũ chỉ nhìn
+--         RS.Modules.Net nên RegisterHit không bao giờ gửi được → bot
+--         đứng im không đánh. Giờ gửi RegisterHit theo từng enemy
+--         (part, {part}), giới hạn 12 mob gần nhất chống spam.
+--  [G-6]  FARM/GATHER FIX: quest-match KHÔNG đọc được UI (nil sau update
+--         đổi cấu trúc) → vẫn farm thay vì kẹt re-request quest vô hạn;
+--         gom mob không còn phụ thuộc strict quest-match, anchor nới
+--         bán kính tối thiểu 30 studs, GatherInterval 0.3 → 0.15.
 --
 --  AUDIT FIXES v16.4-FIXED (D-1..D-5):
 --  [D-1]  DODGE CONTROLLER (NÉ CHIÊU): monitor loop duy nhất dò quái
@@ -230,7 +240,7 @@ _G.Settings = {
     GatherAllQuestMobs  = true,
     GatherMaxDistance   = 5000,
     GatherSpacing       = 6,
-    GatherInterval      = 0.3,
+    GatherInterval      = 0.15,   -- [G-6] gom dày hơn để chống server re-sync
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
     ServerHopCooldown   = 120,
@@ -416,9 +426,8 @@ SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
 -- [G-1] Cấu hình hiệu ứng kính mờ (định nghĩa lại được trong _G.Settings)
-_G.Settings.MenuDim         = _G.Settings.MenuDim or 0.45    -- 0 = đục hết, 1 = trong suốt
-_G.Settings.MenuCardOpacity = _G.Settings.MenuCardOpacity or 0.72
-_G.Settings.MenuBlur        = _G.Settings.MenuBlur or 12     -- 0 = tắt hẳn blur
+_G.Settings.MenuDim  = _G.Settings.MenuDim or 0.45    -- 0 = đục hết, 1 = trong suốt
+_G.Settings.MenuBlur = _G.Settings.MenuBlur or 12     -- 0 = tắt hẳn blur
 
 -- [G-1] BLUR: kính mờ thật phủ lên cảnh phía sau overlay
 local Blur = Instance.new("BlurEffect")
@@ -445,37 +454,13 @@ DimGrad.Color = ColorSequence.new({
 })
 
 
--- Center card inspired by the reference image: one clear brand mark, then
--- status and economy values in a compact hierarchy. [G-2] glass variant.
+-- [G-4] FULL-GLASS: KHÔNG còn card/khung menu. Con chỉ là vùng giãn cách
+-- 640x350 vô hình để giữ nguyên toạ độ chữ; nền kính mờ + blur phủ
+-- TOÀN màn hình, chữ nổi trực tiếp trên lớp kính.
 local Con = Instance.new("Frame", SG)
 Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.new(0.5,0,0.47,0)
-Con.Size = UDim2.new(0,640,0,350); Con.BackgroundColor3 = Color3.fromRGB(6,16,32)
-Con.BackgroundTransparency = 1  -- fade-in ở block phía dưới
-Con.BorderSizePixel = 0; Con.ZIndex = 2
-Instance.new("UICorner", Con).CornerRadius = UDim.new(0,18)
-local ConStroke = Instance.new("UIStroke", Con)
-ConStroke.Color = Color3.fromRGB(88,196,255); ConStroke.Transparency = 0.35; ConStroke.Thickness = 1.5
-local ConGradient = Instance.new("UIGradient", Con)
-ConGradient.Rotation = 90
-ConGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(16,42,74)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(6,14,30)),
-})
-
-local Accent = Instance.new("Frame", Con)
-Accent.Position = UDim2.new(0.08,0,0,0); Accent.Size = UDim2.new(0.84,0,0,3)
-Accent.BackgroundColor3 = Color3.fromRGB(88,214,255); Accent.BorderSizePixel = 0; Accent.ZIndex = 3
-Instance.new("UICorner", Accent).CornerRadius = UDim.new(0,3)
--- [G-2] Shimmer chạy vô hạn trên thanh accent
-local AccentGrad = Instance.new("UIGradient", Accent)
-AccentGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(88,214,255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(190,120,255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(88,214,255)),
-})
-TS:Create(AccentGrad,
-    TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1),
-    {Offset = Vector2.new(1, 0)}):Play()
+Con.Size = UDim2.new(0,640,0,350)
+Con.BackgroundTransparency = 1; Con.BorderSizePixel = 0; Con.ZIndex = 2
 
 local function MkLabel(txt,sz,col,bold,pos,height,align)
     local lb = Instance.new("TextLabel", Con)
@@ -485,7 +470,7 @@ local function MkLabel(txt,sz,col,bold,pos,height,align)
     lb.Font = bold and Enum.Font.GothamBlack or Enum.Font.GothamMedium
     lb.TextXAlignment = align or Enum.TextXAlignment.Center
     lb.TextYAlignment = Enum.TextYAlignment.Center
-    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+    lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.45
     lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
     return lb
 end
@@ -509,7 +494,7 @@ local function MkCurrRow()
         lb.Position = pos; lb.Size = UDim2.new(0.44,0,1,0); lb.BackgroundTransparency = 1
         lb.Text = txt; lb.TextColor3 = col; lb.TextSize = 16; lb.Font = Enum.Font.GothamBold
         lb.TextXAlignment = align; lb.TextYAlignment = Enum.TextYAlignment.Center
-        lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.78
+        lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.45
         lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
         return lb
     end
@@ -537,13 +522,11 @@ local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDi
 local HintL  = MkLabel("〔Right Ctrl〕 Ẩn / Hiện overlay",11,Color3.fromRGB(140,165,195),false,UDim2.new(0,24,0,312),18)
 
 
--- [G-1] Fade-in: nền + card + blur hiện dần, chữ cascade như bản gốc
+-- [G-1] Fade-in: nền kính + blur hiện dần, chữ cascade như bản gốc
 task.spawn(function()
     task.wait(0.15)
     TS:Create(Dim, TweenInfo.new(0.6, Enum.EasingStyle.Quad),
         {BackgroundTransparency = _G.Settings.MenuDim}):Play()
-    TS:Create(Con, TweenInfo.new(0.6, Enum.EasingStyle.Quad),
-        {BackgroundTransparency = 1 - _G.Settings.MenuCardOpacity}):Play()
     TS:Create(Blur, TweenInfo.new(0.8, Enum.EasingStyle.Quad),
         {Size = _G.Settings.MenuBlur}):Play()
     task.wait(0.15)
@@ -911,14 +894,35 @@ task.spawn(function()
 end)
 
 
+-- [G-5] Net remote resolver: đường dẫn Net đã đổi qua nhiều update
+-- (ReplicatedStorage.Remotes.Modules.Net / ReplicatedStorage.Modules.Net).
+-- Resolve một lần rồi cache; nếu cả hai đường chính đều đổi thì tìm sâu
+-- theo tên "Net" từ Remotes/RS. Bản cũ chỉ nhìn RS.Modules.Net nên khi
+-- game dời Net vào dưới Remotes, RegisterHit KHÔNG BAO GIỜ gửi được →
+-- bot bay tới mob rồi đứng im không đánh.
+local NetFolderCache = nil
+local function ResolveNet()
+    if NetFolderCache and NetFolderCache.Parent then return NetFolderCache end
+    local roots = {}
+    if Remotes then roots[#roots + 1] = Remotes end
+    roots[#roots + 1] = RS
+    for _, root in ipairs(roots) do
+        local net = root:FindFirstChild("Net", true)
+        if net then
+            NetFolderCache = net
+            return net
+        end
+    end
+    return nil
+end
+
 local function FastRegisterHit(preferred)
-    local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
+    local net = ResolveNet()
     local registerAttack = net and net:FindFirstChild("RE/RegisterAttack")
     local registerHit = net and net:FindFirstChild("RE/RegisterHit")
     local me = HRP()
     if not me or not registerAttack or not registerHit then return false end
     local hitList = {}
-    local firstPart = nil
     local folder = workspace:FindFirstChild("Enemies")
     if folder then
         for _, enemy in ipairs(folder:GetChildren()) do
@@ -928,18 +932,32 @@ local function FastRegisterHit(preferred)
             if hum and hum.Health > 0 and root and head
                 and (root.Position - me.Position).Magnitude <= 100 then
                 hitList[#hitList + 1] = {enemy, head}
-                if not firstPart and (not preferred or enemy == preferred) then
-                    firstPart = head
-                end
             end
         end
     end
     if #hitList == 0 then return false end
-    firstPart = firstPart or hitList[1][2]
-    return pcall(function()
-        registerAttack:FireServer(0)
-        registerHit:FireServer(firstPart, hitList)
-    end)
+    -- Ưu tiên target đang chọn lên đầu để damage dồn vào mob của quest
+    if preferred then
+        for i, entry in ipairs(hitList) do
+            if entry[1] == preferred and i > 1 then
+                table.remove(hitList, i)
+                table.insert(hitList, 1, entry)
+                break
+            end
+        end
+    end
+    local okAttack = pcall(function() registerAttack:FireServer(0) end)
+    if not okAttack then return false end
+    -- [G-5] Gửi RegisterHit theo TỪNG enemy với định dạng (part, {part})
+    -- mà server hiện chấp nhận; giới hạn 12 mob gần nhất chống spam.
+    local sent = 0
+    for i = 1, math.min(#hitList, 12) do
+        local part = hitList[i][2]
+        if pcall(function() registerHit:FireServer(part, {part}) end) then
+            sent = sent + 1
+        end
+    end
+    return sent > 0
 end
 
 -- Guns use their own LeftClickRemote in current builds.  RegisterHit is for
@@ -1520,8 +1538,12 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local anchorPos = self:GetFarmPos(primary)
     if not playerRoot or not anchorPos then return 0 end
     local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
+    -- [G-6] Anchor gate nới tối thiểu 30 studs: hover travel dừng ở
+    -- FarmArrivalThreshold nhưng dao động vật lý khiến vòng 15 studs cũ
+    -- hay tắt gom liên tục.
+    local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 30)
     if not okPlayerPos or not IsValidPos(playerPos)
-        or (playerPos - anchorPos).Magnitude > (_G.Settings.FarmArrivalThreshold or 15) then
+        or (playerPos - anchorPos).Magnitude > anchorRadius then
         return 0
     end
     local gatherAll = _G.Settings.GatherAllQuestMobs == true
@@ -1598,7 +1620,7 @@ function TravelManager:MaybeRequestEntrance(targetPos)
         -- Update 27 Submerged Island: use the live Net remote when present.
         -- If the island is not unlocked, the call safely fails and normal
         -- validation prevents a blind teleport to an invalid fallback.
-        local net = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("Net")
+        local net = ResolveNet()
         local speak = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
         local ok = false
         if speak then
@@ -3223,9 +3245,11 @@ task.spawn(function()
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
             local questState = HasQuest() -- true / false / nil (UI not ready)
             local questMatch = QuestMatches(q.M)
-            -- Farm chỉ được phép khi UI xác nhận đồng thời wrapper đang mở
-            -- và title đúng mob.  Không dùng title cũ/stale để tiếp tục farm.
-            local hasQuest = questState == true and questMatch == true
+            -- [G-6] Farm khi wrapper quest đang mở VÀ match KHÔNG bị xác
+            -- nhận là SAI (nil = UI đổi cấu trúc sau update, đọc không ra
+            -- title). Bản cũ đòi match == true nên nil khiến bot kẹt
+            -- re-request quest vô hạn → không farm, không gom, không đánh.
+            local hasQuest = questState == true and questMatch ~= false
             local questOk = hasQuest
 
             -- Quest-first invariant: quest vừa hết, bị mất, sai mob, hoặc UI
@@ -3429,7 +3453,8 @@ task.spawn(function()
                         atAnchor = (hrp.Position - anchorFarmPos).Magnitude
                             <= (_G.Settings.FarmArrivalThreshold or 15)
                     end
-                    if _G.Settings.GatherMobs and hasQuest and atAnchor then
+                    -- [G-6] Gom mob không còn phụ thuộc strict quest-match
+                    if _G.Settings.GatherMobs and atAnchor then
                         FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
                     end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
