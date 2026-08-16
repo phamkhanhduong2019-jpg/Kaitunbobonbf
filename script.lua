@@ -9,8 +9,8 @@
 --         về phía player) → dịch ngang 1 phát né, có cooldown chống
 --         spam, không né khi bay xa (giver/island), không phá Single
 --         Movement Owner (chỉ CFrame offset 1 lần, hover kéo về sau).
---  [D-2]  NỀN ĐEN FULL MÀN HÌNH: Dim phủ kín màn hình, đục hoàn toàn
---         (BackgroundTransparency = 0, đen 100%) thay vì mờ 86%.
+--  [D-2]  NỀN TỐI MỜ XUNG QUANH: Dim phủ kín màn hình, mờ 55%
+--         (BackgroundTransparency = 0.45) thay vì đen thui 100%.
 --  [D-3]  (gộp vào D-4) Skip level không hiệu quả → quay về farm quest.
 --  [D-4]  SKIP KHÔNG HIỆU QUẢ → FARM QUEST: SkipRouteController theo
 --         dõi level đầu route; cùng route quá SkipRouteFallbackTimeout
@@ -397,11 +397,12 @@ SG.Name = "BobonHubUI"; SG.Parent = CoreGui
 SG.ResetOnSpawn = false; SG.DisplayOrder = 10000; SG.IgnoreGuiInset = true
 
 
--- [D-2] NỀN ĐEN FULL MÀN HÌNH: phủ kín toàn màn hình, đục hoàn toàn
--- (đen 100%, không nhìn xuyên game) để overlay hiển thị rõ nhất.
+-- [D-2] NỀN TỐI MỜ XUNG QUANH: phủ kín toàn màn hình nhưng mờ 55%
+-- (BackgroundTransparency = 0.45, nhìn xuyên game được) để overlay
+-- hiển thị rõ mà không đen thui cả màn hình.
 local Dim = Instance.new("Frame", SG)
 Dim.Size = UDim2.new(1,0,1,0); Dim.BackgroundColor3 = Color3.fromRGB(0,0,0)
-Dim.BackgroundTransparency = 0; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
+Dim.BackgroundTransparency = 0.45; Dim.BorderSizePixel = 0; Dim.ZIndex = 1
 
 
 -- Center card inspired by the reference image: one clear brand mark, then
