@@ -1,7 +1,21 @@
 -- =================================================================
---         BOBON HUB v16.5 GLASS | STABLE KAITUN BLOX FRUIT
+--         BOBON HUB v16.6 LIVE | STABLE KAITUN BLOX FRUIT
 --         Long-Run Stable | Single Movement Owner | ActionToken
---         Base: v15.0 | Version: v16.5 GLASS
+--         Base: v15.0 | Version: v16.6 LIVE
+--
+--  AUDIT FIXES v16.6-LIVE (L-1..L-7):
+--  [L-1] HUD responsive bằng UIListLayout + UIScale, không chồng chữ
+--         trên màn hình mobile; nền kính vẫn phủ toàn màn hình.
+--  [L-2] Beli xanh, Fragments tím, Status đổi màu theo Mode.
+--  [L-3] Combat ưu tiên đúng ReplicatedStorage.Modules.Net và payload
+--         RegisterAttack/RegisterHit hiện hành; M1 truyền camera CFrame.
+--  [L-4] Attack chỉ gửi khi đã equip Tool; lỗi VirtualUser không hủy
+--         RegisterHit đã gửi.
+--  [L-5] Bring mob xin SimulationRadius, giới hạn 250 studs, không anchor;
+--         freeze vận tốc và chỉ dịch mob khi có quyền physics khả dụng.
+--  [L-6] Sửa item window unreachable; Saber dùng ProQuestProgress,
+--         Pole săn Thunder God thay cho remote BuyPoleV1 không tồn tại.
+--  [L-7] Sửa gate tiến trình Sea2, Bartilo và Sea3 theo live flow.
 --
 --  AUDIT FIXES v16.5-GLASS (G-1..G-9):
 --  [G-1]  OVERLAY KÍNH MỜ: nền Dim mờ xuyên cảnh (MenuDim, mặc định
@@ -173,7 +187,7 @@ repeat task.wait() until game.Players.LocalPlayer
 -- được chọn ngay lập tức thay vì kẹt vô hạn trong bootstrap.
 
 
-print("[BobonHub v16.5 GLASS] Loading...")
+print("[BobonHub v16.6 LIVE] Loading...")
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -191,7 +205,7 @@ local CoreGui      = game:GetService("CoreGui")
 local LP      = Players.LocalPlayer
 local Remotes = RS:WaitForChild("Remotes", 10)
 local CommF_  = Remotes and Remotes:WaitForChild("CommF_", 10)
-if not CommF_ then warn("[BobonHub v16.5 GLASS] CommF_ not found!") return end
+if not CommF_ then warn("[BobonHub v16.6 LIVE] CommF_ not found!") return end
 
 
 -- ══════════════════════════════════════════════════════════════════
@@ -250,13 +264,12 @@ _G.Settings = {
     GatherMobs          = true,
     -- Sea 1 optimized skip route (Fountain, bosses, Upper Sky/Galley).
     SkipLevelRoute      = true,
-    -- Safe gather only moves nearby NPCs when this client actually owns their
-    -- physics. Moving arbitrary server-owned NPCs creates invulnerable
-    -- "ghost mobs" whose visible position differs from the server position.
-    GatherAllQuestMobs  = false,
-    GatherMaxDistance   = 75,
+    -- Bring matching quest mobs only inside the current island/farm area.
+    -- Simulation ownership is requested before movement to avoid ghost mobs.
+    GatherAllQuestMobs  = true,
+    GatherMaxDistance   = 250,
     GatherSpacing       = 6,
-    GatherInterval      = 0.25,
+    GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
     ServerHopCooldown   = 120,
@@ -478,34 +491,73 @@ Con.AnchorPoint = Vector2.new(0.5,0.5); Con.Position = UDim2.fromScale(0.5,0.5)
 Con.Size = UDim2.fromScale(1,1)
 Con.BackgroundTransparency = 1; Con.BorderSizePixel = 0; Con.ZIndex = 2
 
-local function MkLabel(txt,sz,col,bold,pos,height,align)
-    local lb = Instance.new("TextLabel", Con)
-    lb.Position = pos; lb.Size = UDim2.new(1,-48,0,height or (sz+8))
-    lb.AnchorPoint = Vector2.new(0,0); lb.BackgroundTransparency = 1
+-- A single vertically-laid-out content column prevents labels from
+-- overlapping on short mobile viewports. UIScale shrinks the whole column
+-- uniformly instead of letting independent percentage positions collide.
+local Content = Instance.new("Frame", Con)
+Content.Name = "Content"
+Content.AnchorPoint = Vector2.new(0.5,0.5)
+Content.Position = UDim2.fromScale(0.5,0.5)
+Content.Size = UDim2.new(0.88,0,0,350)
+Content.BackgroundTransparency = 1
+Content.BorderSizePixel = 0
+Content.ZIndex = 2
+
+local ContentConstraint = Instance.new("UISizeConstraint", Content)
+ContentConstraint.MinSize = Vector2.new(280,350)
+ContentConstraint.MaxSize = Vector2.new(760,350)
+
+local ContentScale = Instance.new("UIScale", Content)
+local function RefreshHudScale()
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(1280,720)
+    ContentScale.Scale = math.clamp(math.min(viewport.X / 760, viewport.Y / 470), 0.72, 1)
+end
+RefreshHudScale()
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    task.defer(RefreshHudScale)
+end)
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(RefreshHudScale)
+end
+
+local ContentLayout = Instance.new("UIListLayout", Content)
+ContentLayout.FillDirection = Enum.FillDirection.Vertical
+ContentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ContentLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ContentLayout.Padding = UDim.new(0,4)
+
+local function MkLabel(txt,sz,col,bold,height,order,align)
+    local lb = Instance.new("TextLabel", Content)
+    lb.Size = UDim2.new(1,0,0,height or (sz+8))
+    lb.BackgroundTransparency = 1
     lb.Text = txt; lb.TextColor3 = col; lb.TextSize = sz
     lb.Font = bold and Enum.Font.GothamBlack or Enum.Font.GothamMedium
     lb.TextXAlignment = align or Enum.TextXAlignment.Center
     lb.TextYAlignment = Enum.TextYAlignment.Center
     lb.TextTransparency = 1; lb.TextStrokeTransparency = 0.45
     lb.TextStrokeColor3 = Color3.fromRGB(0,0,0); lb.ZIndex = 4
+    lb.LayoutOrder = order or 1
     return lb
 end
 
 
-local function MkDivider(y)
-    local f = Instance.new("Frame", Con)
-    f.Position = UDim2.new(0.18,0,y,0); f.Size = UDim2.new(0.64,0,0,1)
-    f.BackgroundColor3 = Color3.fromRGB(120,205,255); f.BackgroundTransparency = 0.72
+local function MkDivider(order)
+    local f = Instance.new("Frame", Content)
+    f.Size = UDim2.new(0.72,0,0,1)
+    f.BackgroundColor3 = Color3.fromRGB(87,218,255); f.BackgroundTransparency = 0.55
     f.BorderSizePixel = 0; f.ZIndex = 3
+    f.LayoutOrder = order or 1
     return f
 end
 
 
-local function MkCurrRow()
-    local row = Instance.new("Frame", Con)
-    row.AnchorPoint = Vector2.new(0.5,0)
-    row.Position = UDim2.new(0.5,0,0.62,0); row.Size = UDim2.new(0.72,0,0,32)
+local function MkCurrRow(order)
+    local row = Instance.new("Frame", Content)
+    row.Size = UDim2.new(0.82,0,0,34)
     row.BackgroundTransparency = 1; row.BorderSizePixel = 0; row.ZIndex = 3
+    row.LayoutOrder = order or 1
     local function Side(txt,col,pos,align)
         local lb = Instance.new("TextLabel", row)
         lb.Position = pos; lb.Size = UDim2.new(0.44,0,1,0); lb.BackgroundTransparency = 1
@@ -522,21 +574,22 @@ local function MkCurrRow()
     sep.TextXAlignment = Enum.TextXAlignment.Center; sep.TextYAlignment = Enum.TextYAlignment.Center
     sep.TextTransparency = 1; sep.TextStrokeTransparency = 1; sep.ZIndex = 4
     local beli = Side("Beli: 0",Color3.fromRGB(255,205,76),UDim2.new(0,0,0,0),Enum.TextXAlignment.Right)
-    local frag = Side("Fragments: 0",Color3.fromRGB(94,194,255),UDim2.new(0.56,0,0,0),Enum.TextXAlignment.Left)
+    beli.TextColor3 = Color3.fromRGB(66,255,133)
+    local frag = Side("Fragments: 0",Color3.fromRGB(190,115,255),UDim2.new(0.56,0,0,0),Enum.TextXAlignment.Left)
     return row, beli, sep, frag
 end
 
 
-local TitleL = MkLabel("BoBonHub",58,Color3.fromRGB(245,252,255),true,UDim2.new(0,24,0.25,0),70)
-local SubL   = MkLabel("STABLE KAITUN  •  AUTO FARM",12,Color3.fromRGB(102,214,255),true,UDim2.new(0,24,0.25,70),24)
-local StatL  = MkLabel("Status: Initializing...",18,Color3.fromRGB(101,255,157),true,UDim2.new(0,24,0.43,0),30)
-local ModeL  = MkLabel("Mode: Idle",14,Color3.fromRGB(188,211,235),false,UDim2.new(0,24,0.49,0),22)
-local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(218,228,242),false,UDim2.new(0,24,0.54,0),23)
-MkDivider(0.59)
-local CurrRow, BeliL, SepL, FragL = MkCurrRow()
-local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,126,126),false,UDim2.new(0,24,0.70,0),22)
-local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(169,190,216),false,UDim2.new(0,24,0.75,0),22)
-local HintL  = MkLabel("Nút bên trái / Right Ctrl: Ẩn hiện giao diện",11,Color3.fromRGB(140,165,195),false,UDim2.new(0,24,0.80,0),18)
+local TitleL = MkLabel("BoBonHub",54,Color3.fromRGB(248,253,255),true,68,1)
+local SubL   = MkLabel("STABLE KAITUN  •  AUTO FARM",12,Color3.fromRGB(75,222,255),true,22,2)
+local StatL  = MkLabel("Status: Initializing...",18,Color3.fromRGB(62,255,220),true,32,3)
+local ModeL  = MkLabel("Mode: Idle",14,Color3.fromRGB(255,214,92),false,22,4)
+local TimeL  = MkLabel("Time: 00:00:00",14,Color3.fromRGB(231,240,250),false,22,5)
+MkDivider(6)
+local CurrRow, BeliL, SepL, FragL = MkCurrRow(7)
+local KillL  = MkLabel("Kills: 0",13,Color3.fromRGB(255,105,126),false,22,8)
+local InfoL  = MkLabel("Sea: 1 | Lv: 1",13,Color3.fromRGB(100,198,255),false,22,9)
+local HintL  = MkLabel("Nút bên trái / Right Ctrl: Ẩn hiện giao diện",11,Color3.fromRGB(157,178,205),false,18,10)
 
 -- Compact persistent toggle on the left. It stays visible while the frosted
 -- overlay is hidden, unlike toggling ScreenGui.Enabled.
@@ -580,7 +633,7 @@ task.spawn(function()
             TS:Create(lb,TweenInfo.new(0.55,Enum.EasingStyle.Quad),{TextTransparency=0}):Play()
         end)
     end
-    print("[BobonHub v16.5 GLASS] UI Ready!")
+    print("[BobonHub v16.6 LIVE] UI Ready!")
 end)
 
 local OverlayVisible = true
@@ -632,6 +685,17 @@ local function Fmt(n)
     return s:reverse():gsub("(%d%d%d)","%1,"):reverse():gsub("^,","")
 end
 
+local StatusColors = {
+    Idle         = Color3.fromRGB(190,210,232),
+    Farming      = Color3.fromRGB(65,255,145),
+    GettingQuest = Color3.fromRGB(255,214,92),
+    GettingItem  = Color3.fromRGB(196,120,255),
+    Bossing      = Color3.fromRGB(255,116,92),
+    UnlockingSea = Color3.fromRGB(75,222,255),
+    Recovering   = Color3.fromRGB(255,92,115),
+    Dead         = Color3.fromRGB(255,92,115),
+    Respawning   = Color3.fromRGB(255,183,85),
+}
 
 task.spawn(function()
     while task.wait(0.5) do
@@ -640,6 +704,7 @@ task.spawn(function()
             TimeL.Text = ("Time: %02d:%02d:%02d"):format(math.floor(e/3600),math.floor(e%3600/60),e%60)
             StatL.Text = "Status: " .. (_G.BobonStatus or "Idle")
             ModeL.Text = "Mode: " .. (_G.State.Mode or "Idle")
+            StatL.TextColor3 = StatusColors[_G.State.Mode] or Color3.fromRGB(62,255,220)
             KillL.Text = "Kills: " .. Fmt(_G.State.KillCount)
             local d = LP:FindFirstChild("Data")
             if d then
@@ -973,9 +1038,18 @@ end)
 local NetFolderCache = nil
 local function ResolveNet()
     if NetFolderCache and NetFolderCache.Parent then return NetFolderCache end
+    -- Current clients keep combat remotes in ReplicatedStorage.Modules.Net.
+    -- Prefer that exact path; a recursive search under Remotes can select an
+    -- unrelated object also named Net and make every FireServer silently fail.
+    local modules = RS:FindFirstChild("Modules")
+    local exactNet = modules and modules:FindFirstChild("Net")
+    if exactNet then
+        NetFolderCache = exactNet
+        return exactNet
+    end
     local roots = {}
-    if Remotes then roots[#roots + 1] = Remotes end
     roots[#roots + 1] = RS
+    if Remotes then roots[#roots + 1] = Remotes end
     for _, root in ipairs(roots) do
         local net = root:FindFirstChild("Net", true)
         if net then
@@ -1005,7 +1079,9 @@ local function FastRegisterHit(preferred, mobName)
     local registerAttack = FindNetRemote(net, "RE/RegisterAttack")
     local registerHit = FindNetRemote(net, "RE/RegisterHit")
     local me = HRP()
-    if not me or not registerAttack or not registerHit then
+    local character = Char()
+    local equipped = character and character:FindFirstChildOfClass("Tool")
+    if not me or not equipped or not registerAttack or not registerHit then
         DLog("ATTACK", "Combat remotes unavailable")
         return false
     end
@@ -1083,45 +1159,45 @@ local function Attack(preferredTarget, mobName)
     local now = tick()
     if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return false end
     _G.State.LastAttackTime = now
-    local ok, err = pcall(function()
-        local c = Char()
-        local tool = c and c:FindFirstChildOfClass("Tool")
-        if tool then
-            tool:Activate()
+    local c = Char()
+    local tool = c and c:FindFirstChildOfClass("Tool")
+    if not tool then
+        DLog("ATTACK", "Waiting for combat tool")
+        return false
+    end
+    pcall(function() tool:Activate() end)
+
+    -- RegisterAttack/RegisterHit follows the current client payload. Keep the
+    -- equipped-tool gate: the server rejects blade packets without a held tool.
+    local sent = false
+    if tool:FindFirstChild("LeftClickRemote") then
+        sent = FireGunHits(tool, preferredTarget)
+    else
+        sent = FastRegisterHit(preferredTarget, mobName)
+    end
+
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize
+    local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+        or Vector2.new(640, 360)
+    if camera and preferredTarget then
+        local tRoot = preferredTarget:IsA("BasePart") and preferredTarget
+            or preferredTarget:FindFirstChild("HumanoidRootPart")
+        if tRoot then
+            pcall(function()
+                camera.CFrame = CFrame.lookAt(camera.CFrame.Position, tRoot.Position)
+            end)
         end
-        -- Update combat path: RegisterAttack/RegisterHit xử lý M1 ở các
-        -- client hiện tại ổn định hơn VirtualUser đơn lẻ, đồng thời đánh
-        -- được nhiều mob trong cụm ở cả ba Sea.
-        if tool and tool:FindFirstChild("LeftClickRemote") then
-            FireGunHits(tool, preferredTarget)
-        else
-            FastRegisterHit(preferredTarget, mobName)
-        end
-        local camera = workspace.CurrentCamera
-        local viewport = camera and camera.ViewportSize
-        local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
-            or Vector2.new(640, 360)
-        -- [G-9] Hướng camera THẲNG vào target trước khi click: M1 của
-        -- game bắn theo hướng camera, không phải hướng thân character.
-        -- Camera mặc định theo chuột nên không quay xuống mob đang hover.
-        if camera and preferredTarget then
-            local tRoot = preferredTarget:IsA("BasePart") and preferredTarget
-                or preferredTarget:FindFirstChild("HumanoidRootPart")
-            if tRoot then
-                pcall(function()
-                    camera.CFrame = CFrame.lookAt(camera.CFrame.Position, tRoot.Position)
-                end)
-            end
-        end
-        VU:CaptureController()
-        -- Giữ M1 theo đúng input flow của game; (0,0) thường không được
-        -- Roblox coi là click gameplay nên trước đây tool không đánh.
-        VU:Button1Down(clickPos)
-        VU:Button1Up(clickPos)
-        VU:ClickButton1(clickPos)
-    end)
-    if not ok then DLog("ATTACK", "Attack error: " .. tostring(err)) end
-    return ok
+    end
+    -- VirtualUser expects the camera CFrame as its second argument on current
+    -- clients. Isolate each input call so one executor incompatibility cannot
+    -- cancel the already-valid RegisterHit packet.
+    local cameraCF = camera and camera.CFrame or CFrame.new()
+    pcall(function() VU:CaptureController() end)
+    pcall(function() VU:Button1Down(clickPos, cameraCF) end)
+    pcall(function() VU:Button1Up(clickPos, cameraCF) end)
+    pcall(function() VU:ClickButton1(clickPos, cameraCF) end)
+    return sent
 end
 
 local function PrepareCombatTarget(target)
@@ -1537,6 +1613,8 @@ end
 -- ══════════════════════════════════════════════════════════════════
 local FarmPositionController = {
     LastGather = 0,
+    LastSimulationTry = 0,
+    SimulationReady = false,
     -- [G-7] registry các root đã anchor cục bộ khi gom cụm
     Anchored = {},
 }
@@ -1627,12 +1705,35 @@ function FarmPositionController:ReleaseCluster()
     self.Anchored = {}
 end
 
+local function ExpandSimulationRadius()
+    if FarmPositionController.SimulationReady then return true end
+    local now = tick()
+    if now - (FarmPositionController.LastSimulationTry or 0) < 5 then return false end
+    FarmPositionController.LastSimulationTry = now
+    if type(sethiddenproperty) == "function" then
+        local ok = pcall(function()
+            sethiddenproperty(LP, "SimulationRadius", math.huge)
+        end)
+        if ok then
+            FarmPositionController.SimulationReady = true
+            return true
+        end
+    end
+    if type(setsimulationradius) == "function" then
+        local ok = pcall(function() setsimulationradius(math.huge, math.huge) end)
+        FarmPositionController.SimulationReady = ok
+        return ok
+    end
+    return false
+end
+
 local function ClientOwnsMob(root)
-    -- isnetworkowner is executor-specific. If it is missing or errors, treat
-    -- the NPC as server-owned and leave its position untouched.
-    if type(isnetworkowner) ~= "function" then return false end
+    -- nil means the executor cannot expose ownership; false means it can and
+    -- explicitly reports that the server still owns this NPC.
+    if type(isnetworkowner) ~= "function" then return nil end
     local ok, owned = pcall(isnetworkowner, root)
-    return ok and owned == true
+    if not ok then return nil end
+    return owned == true
 end
 
 -- Safe gather: only nearby, matching quest mobs are moved, and only while
@@ -1673,6 +1774,7 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
         and math.min(_G.Settings.GatherMaxDistance or 75, 120)
         or (_G.Settings.MobGatherRadius or 50)
     local spacing = _G.Settings.GatherSpacing or 4
+    local simulationExpanded = ExpandSimulationRadius()
     local moved, slot = 0, 0
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
@@ -1690,14 +1792,14 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                     root.CanCollide = false
                     hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
                     hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
-                    if ClientOwnsMob(root) and offset.Magnitude > spacing + 1 then
+                    local owned = ClientOwnsMob(root)
+                    local canMove = owned == true or (owned == nil and simulationExpanded)
+                    if canMove and offset.Magnitude > spacing + 1 then
                         local destinationCF = CFrame.new(destination, origin)
-                        if mob:IsA("Model") then
-                            local pivoted = pcall(function() mob:PivotTo(destinationCF) end)
-                            if not pivoted then root.CFrame = destinationCF end
-                        else
-                            root.CFrame = destinationCF
-                        end
+                        hum.WalkSpeed = 0
+                        hum.JumpPower = 0
+                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Physics) end)
+                        root.CFrame = destinationCF
                         root.AssemblyLinearVelocity = Vector3.zero
                         root.AssemblyAngularVelocity = Vector3.zero
                         moved = moved + 1
@@ -2949,34 +3051,125 @@ function ItemProgression:CheckSaber()
 
     task.spawn(function()
         local ok, err = xpcall(function()
-            local torches = {
-                {N="Torch1",C=CFrame.new(-1610,11,163)},
-                {N="Torch2",C=CFrame.new(1114,4,4350)},
-                {N="Torch3",C=CFrame.new(1400,101,-1250)},
-                {N="Torch4",C=CFrame.new(-5070,23,4325)},
-                {N="Torch5",C=CFrame.new(-1675,7,-2985)},
-            }
-            -- [FIX-P8] Mỗi torch: travel + VERIFY tới nơi + check alive/token
-            -- rồi mới gọi remote (không "task.wait(2)" giả định thành công)
-            for _, t in ipairs(torches) do
-                if not _G.State:IsActionValid(myToken) then return end
-                if TravelAndWait("Saber", myToken, t.C, {timeout=90}) then
-                    pcall(function() CommF_:InvokeServer("Torch", t.N) end)
-                end
-                task.wait(0.5)
+            local function EquipNamed(name)
+                local c = Char()
+                local hum = c and c:FindFirstChildOfClass("Humanoid")
+                local backpack = LP:FindFirstChildOfClass("Backpack")
+                local tool = (c and c:FindFirstChild(name))
+                    or (backpack and backpack:FindFirstChild(name))
+                if not tool or not hum then return false end
+                if tool.Parent ~= c then pcall(function() hum:EquipTool(tool) end) end
+                task.wait(0.2)
+                return c and c:FindFirstChild(name) ~= nil
             end
-            local timeout = os.time() + 300
+
+            -- Current Saber flow: Jungle plates -> Torch/Burn -> Cup/SickMan
+            -- -> RichSon/Mob Leader -> Relic -> Saber Expert.
+            local map = workspace:FindFirstChild("Map")
+            local jungle = map and map:FindFirstChild("Jungle")
+            local plates = jungle and jungle:FindFirstChild("QuestPlates")
+            local plateDoor = plates and plates:FindFirstChild("Door")
+            if plateDoor and plateDoor.Transparency == 0 then
+                for i = 1, 5 do
+                    local plate = plates:FindFirstChild("Plate" .. i)
+                    local button = plate and plate:FindFirstChild("Button")
+                    if button and _G.State:IsActionValid(myToken) then
+                        TravelAndWait("Saber", myToken, button.CFrame, {
+                            timeout = 60, arrivalThreshold = 5, settle = 0.35,
+                        })
+                    end
+                end
+            end
+
+            if not _G.State:IsActionValid(myToken) then return end
+            if not HasItem("Torch") then
+                TravelAndWait("Saber", myToken, CFrame.new(-1610,11,164), {
+                    timeout = 90, arrivalThreshold = 6, settle = 1,
+                })
+            end
+            if HasItem("Torch") and EquipNamed("Torch") then
+                TravelAndWait("Saber", myToken, CFrame.new(1114,5,4350), {
+                    timeout = 90, arrivalThreshold = 7, settle = 1,
+                })
+            end
+
+            if not _G.State:IsActionValid(myToken) then return end
+            local sickProgress
+            pcall(function()
+                sickProgress = CommF_:InvokeServer("ProQuestProgress", "SickMan")
+            end)
+            if sickProgress ~= 0 then
+                pcall(function() CommF_:InvokeServer("ProQuestProgress", "GetCup") end)
+                if EquipNamed("Cup") then
+                    local cup = Char() and Char():FindFirstChild("Cup")
+                    if cup then
+                        pcall(function()
+                            CommF_:InvokeServer("ProQuestProgress", "FillCup", cup)
+                        end)
+                    end
+                end
+                pcall(function() CommF_:InvokeServer("ProQuestProgress", "SickMan") end)
+            end
+
+            if not _G.State:IsActionValid(myToken) then return end
+            local richProgress
+            pcall(function()
+                richProgress = CommF_:InvokeServer("ProQuestProgress", "RichSon")
+            end)
+            if richProgress == 0 then
+                local boss = FindBoss("Mob Leader")
+                if not boss then
+                    _G.BobonStatus = "Item: Waiting for Mob Leader"
+                    return
+                end
+                local deadline = tick() + 120
+                while boss and _G.State:IsActionValid(myToken) and IsAlive()
+                    and tick() < deadline do
+                    local bh = boss:FindFirstChildOfClass("Humanoid")
+                    local br = boss:FindFirstChild("HumanoidRootPart")
+                    if not bh or bh.Health <= 0 or not br then break end
+                    PrepareCombatTarget(boss)
+                    EquipCombatTool()
+                    TravelManager:Request(br, "Saber", {arrivalThreshold=15})
+                    Attack(boss, "Mob Leader")
+                    task.wait(0.12)
+                end
+                pcall(function() CommF_:InvokeServer("ProQuestProgress", "RichSon") end)
+            end
+
+            pcall(function()
+                richProgress = CommF_:InvokeServer("ProQuestProgress", "RichSon")
+            end)
+            if richProgress == 1 or HasItem("Relic") then
+                pcall(function() CommF_:InvokeServer("ProQuestProgress", "RichSon") end)
+                EquipNamed("Relic")
+                if TravelAndWait("Saber", myToken, CFrame.new(-1405,30,4), {
+                    timeout=90, arrivalThreshold=8, settle=0.5,
+                }) then
+                    pcall(function()
+                        CommF_:InvokeServer("ProQuestProgress", "PlaceRelic")
+                    end)
+                end
+            end
+
+            local saberBoss = FindBoss("Saber Expert")
+            if not saberBoss then
+                _G.BobonStatus = "Item: Waiting for Saber Expert"
+                return
+            end
+            local timeout = os.time() + 180
             while _G.State:IsActionValid(myToken) and not HasItem("Saber")
                 and os.time() < timeout and IsAlive() do
-                local boss = FindBoss("Saber Expert")
+                local boss = saberBoss
                 if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
                     PrepareCombatTarget(boss)
-                    EquipMelee()
-                    TravelManager:Request(boss.HumanoidRootPart, "Saber")
-                    Attack(boss)
+                    EquipCombatTool()
+                    TravelManager:Request(boss.HumanoidRootPart, "Saber", {
+                        arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                    })
+                    Attack(boss, "Saber Expert")
                 else
-                    TravelManager:Request(CFrame.new(-1405,30,-3330), "Saber")
-                    task.wait(3)
+                    break
                 end
                 task.wait(0.1)
             end
@@ -2993,8 +3186,13 @@ end
 
 function ItemProgression:CheckPoleV1()
     if not _G.Settings.AutoItems then return false end
-    if HasItem("Pole (1st Form)") or Level() < 150 or GetSea() ~= 1 then return false end
+    if HasItem("Pole (1st Form)") or Level() < 575 or GetSea() ~= 1 then return false end
     if not self:OptionalReady("PoleV1") then return false end
+    local boss = FindBoss("Thunder God")
+    if not boss then
+        self:DelayOptional("PoleV1")
+        return false
+    end
     local myToken = _G.State:ClaimAction("PoleV1")
     if myToken == 0 then return false end
     self:DelayOptional("PoleV1")
@@ -3004,12 +3202,22 @@ function ItemProgression:CheckPoleV1()
 
     task.spawn(function()
         local ok, err = xpcall(function()
-            if not _G.State:IsActionValid(myToken) then return end
-            -- [FIX-P8] Travel + verify tới Skylands rồi mới BuyPoleV1
-            if TravelAndWait("PoleV1", myToken, CFrame.new(-7748,5606,-2305), {timeout=120}) then
-                pcall(function() CommF_:InvokeServer("BuyPoleV1") end)
+            local deadline = tick() + 180
+            while _G.State:IsActionValid(myToken) and IsAlive()
+                and tick() < deadline and not HasItem("Pole (1st Form)") do
+                local hum = boss and boss:FindFirstChildOfClass("Humanoid")
+                local root = boss and boss:FindFirstChild("HumanoidRootPart")
+                if not boss or not boss.Parent or not hum or hum.Health <= 0 or not root then
+                    break
+                end
+                PrepareCombatTarget(boss)
+                EquipCombatTool()
+                TravelManager:Request(root, "PoleV1", {
+                    arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                })
+                Attack(boss, "Thunder God")
+                task.wait(0.12)
             end
-            task.wait(1)
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: PoleV1: " .. tostring(err)) end
         _G.State:ReleaseAction(myToken)
@@ -3023,8 +3231,10 @@ end
 
 function ItemProgression:CheckSecondSea()
     if GetSea() >= 2 or Level() < 700 then return false end
+    if not self:OptionalReady("Sea2") then return false end
     local myToken = _G.State:ClaimAction("Sea2")
     if myToken == 0 then return false end
+    self.NextOptional.Sea2 = tick() + 10
     _G.State:SetMode("UnlockingSea")
     _G.BobonStatus = "Sea: Unlock 2nd Sea"
 
@@ -3032,67 +3242,48 @@ function ItemProgression:CheckSecondSea()
     task.spawn(function()
         local ok, err = xpcall(function()
             if not _G.State:IsActionValid(myToken) then return end
-            -- [FIX-P9] Mỗi bước: travel + verify tới nơi + check alive/token
-            if TravelAndWait("Sea2", myToken, CFrame.new(-4909,4,4450), {timeout=90}) then
+            -- Correct Sea 2 gate: Military Detective gives the Key, the key
+            -- opens the Ice cave, then Ice Admiral unlocks TravelDressrosa.
+            if TravelAndWait("Sea2", myToken, CFrame.new(4851.87,5.65,718.47), {
+                timeout=90, arrivalThreshold=8,
+            }) then
                 pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Detective") end)
             end
-            task.wait(1)
-
-
-            if not _G.State:IsActionValid(myToken) then return end
-            if TravelAndWait("Sea2", myToken, CFrame.new(932,13,4482), {timeout=90}) then
-                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
+            local key = HasItem("Key")
+            if key then
+                local c, hum = Char(), Hum()
+                if key.Parent ~= c and hum then pcall(function() hum:EquipTool(key) end) end
             end
-            task.wait(1)
-
-
-            -- Kill 50 Swan Pirate, đếm chính xác qua Humanoid.Died (1 lần/mob)
-            local kills = 0
-            local function TryCount(mob)
-                local hm = mob:FindFirstChild("Humanoid")
-                if hm and not hm:GetAttribute("Sea2Counted") then
-                    hm:SetAttribute("Sea2Counted", true)
-                    hm.Died:Connect(function()
-                        kills = kills + 1
-                    end)
-                end
+            if not TravelAndWait("Sea2", myToken, CFrame.new(1347.71,37.38,-1325.65), {
+                timeout=90, arrivalThreshold=8, settle=1,
+            }) then
+                return
             end
-            local timeout = os.time()+600
-            while _G.State:IsActionValid(myToken) and kills < 50
-                and os.time() < timeout and IsAlive() do
-                local mob = FindMob("Swan Pirate")
-                if mob and mob:FindFirstChild("HumanoidRootPart") then
-                    PrepareCombatTarget(mob)
-                    EquipMelee()
-                    TryCount(mob)
-                    TravelManager:Request(mob.HumanoidRootPart, "Sea2")
-                    Attack(mob)
-                else
-                    TravelManager:Request(CFrame.new(878,122,1235), "Sea2")
-                    task.wait(2)
-                end
-                task.wait(0.1)
+            task.wait(1.5)
+
+            local boss = FindBoss("Ice Admiral")
+            local deadline = tick() + 180
+            while boss and _G.State:IsActionValid(myToken) and IsAlive()
+                and tick() < deadline do
+                local bh = boss:FindFirstChildOfClass("Humanoid")
+                local br = boss:FindFirstChild("HumanoidRootPart")
+                if not bh or bh.Health <= 0 or not br then break end
+                PrepareCombatTarget(boss)
+                EquipCombatTool()
+                TravelManager:Request(br, "Sea2", {
+                    arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                })
+                Attack(boss, "Ice Admiral")
+                task.wait(0.12)
             end
 
-
-            if not _G.State:IsActionValid(myToken) then return end
-            if TravelAndWait("Sea2", myToken, CFrame.new(932,13,4482), {timeout=90}) then
-                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Bartilo") end)
-            end
-            task.wait(1)
-
-
-            if not _G.State:IsActionValid(myToken) then return end
-            if TravelAndWait("Sea2", myToken, CFrame.new(-12471,374,-7551), {timeout=120}) then
-                pcall(function() CommF_:InvokeServer("DressrosaQuestProgress","Door") end)
-            end
-            task.wait(2)
-
-
-            -- [FIX-P9] Chỉ teleport sang Sea 2 khi progression hoàn tất + còn sống
             if _G.State:IsActionValid(myToken) and IsAlive() then
-                TeleportSvc:Teleport(4442272183, LP)
-                _G.State.LastServerHop = os.time()
+                local traveled = false
+                pcall(function()
+                    CommF_:InvokeServer("TravelDressrosa")
+                    traveled = true
+                end)
+                if traveled then _G.State.LastServerHop = os.time() end
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: Sea2: " .. tostring(err)) end
@@ -3105,10 +3296,100 @@ function ItemProgression:CheckSecondSea()
 end
 
 
+function ItemProgression:CheckBartilo()
+    if GetSea() ~= 2 or Level() < 800 then return false end
+    if not self:OptionalReady("Bartilo") then return false end
+    local progress
+    local okProgress = pcall(function()
+        progress = CommF_:InvokeServer("BartiloQuestProgress", "Bartilo")
+    end)
+    if not okProgress or type(progress) ~= "number" or progress >= 3 then return false end
+
+    local myToken = _G.State:ClaimAction("Bartilo")
+    if myToken == 0 then return false end
+    self.NextOptional.Bartilo = tick() + 10
+    _G.State:SetMode("GettingItem")
+    _G.BobonStatus = "Progression: Bartilo " .. tostring(progress)
+
+    task.spawn(function()
+        local ok, err = xpcall(function()
+            if progress == 0 then
+                if TravelAndWait("Bartilo", myToken, CFrame.new(-456.29,73.02,299.90), {
+                    timeout=90, arrivalThreshold=10, settle=0.6,
+                }) then
+                    pcall(function() CommF_:InvokeServer("StartQuest", "BartiloQuest", 1) end)
+                end
+                local deadline = tick() + 600
+                while _G.State:IsActionValid(myToken) and IsAlive() and tick() < deadline do
+                    local current
+                    pcall(function()
+                        current = CommF_:InvokeServer("BartiloQuestProgress", "Bartilo")
+                    end)
+                    if type(current) == "number" and current ~= 0 then break end
+                    local mob = FindMob("Swan Pirate")
+                    if mob and mob:FindFirstChild("HumanoidRootPart") then
+                        PrepareCombatTarget(mob)
+                        EquipCombatTool()
+                        TravelManager:Request(mob.HumanoidRootPart, "Bartilo", {
+                            arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                        })
+                        Attack(mob, "Swan Pirate")
+                    else
+                        TravelManager:Request(CFrame.new(932.62,156.11,1180.27), "Bartilo")
+                        task.wait(1)
+                    end
+                    task.wait(0.12)
+                end
+            elseif progress == 1 then
+                local boss = FindBoss("Jeremy")
+                if not boss then
+                    _G.BobonStatus = "Progression: Waiting for Jeremy"
+                    return
+                end
+                local deadline = tick() + 180
+                while _G.State:IsActionValid(myToken) and IsAlive() and tick() < deadline do
+                    local bh = boss:FindFirstChildOfClass("Humanoid")
+                    local br = boss:FindFirstChild("HumanoidRootPart")
+                    if not bh or bh.Health <= 0 or not br then break end
+                    PrepareCombatTarget(boss)
+                    EquipCombatTool()
+                    TravelManager:Request(br, "Bartilo", {
+                        arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                    })
+                    Attack(boss, "Jeremy")
+                    task.wait(0.12)
+                end
+            elseif progress == 2 then
+                local maze = {
+                    CFrame.new(-1850.49,13.18,1750.90), CFrame.new(-1858.87,19.38,1712.02),
+                    CFrame.new(-1803.94,16.58,1750.90), CFrame.new(-1858.56,16.86,1724.80),
+                    CFrame.new(-1869.54,15.99,1681.01), CFrame.new(-1800.10,16.50,1684.52),
+                    CFrame.new(-1819.26,14.80,1717.91), CFrame.new(-1813.52,14.86,1724.80),
+                }
+                for _, cf in ipairs(maze) do
+                    if not TravelAndWait("Bartilo", myToken, cf, {
+                        timeout=30, arrivalThreshold=6, settle=0.25,
+                    }) then break end
+                end
+            end
+        end, debug.traceback)
+        if not ok then warn("[BobonHub] Module Error: Bartilo: " .. tostring(err)) end
+        if _G.State.IsTraveling and _G.State.MovementOwner == "Bartilo" then
+            TravelManager:Stop("BartiloComplete")
+        end
+        _G.State:ReleaseAction(myToken)
+        if _G.State.Mode == "GettingItem" then _G.State:SetMode("Idle") end
+    end)
+    return true
+end
+
+
 function ItemProgression:CheckThirdSea()
     if GetSea() ~= 2 or Level() < 1500 then return false end
+    if not self:OptionalReady("Sea3") then return false end
     local myToken = _G.State:ClaimAction("Sea3")
     if myToken == 0 then return false end
+    self.NextOptional.Sea3 = tick() + 10
     _G.State:SetMode("UnlockingSea")
     _G.BobonStatus = "Sea: Unlock 3rd Sea"
 
@@ -3116,38 +3397,69 @@ function ItemProgression:CheckThirdSea()
     task.spawn(function()
         local ok, err = xpcall(function()
             if not _G.State:IsActionValid(myToken) then return end
-            -- [FIX-P9] Verify từng bước trước khi gọi ZQuestProgress
-            if TravelAndWait("Sea3", myToken, CFrame.new(-285,306,611), {timeout=90}) then
-                pcall(function() CommF_:InvokeServer("ZQuestProgress","Check") end)
+            local progress
+            pcall(function()
+                progress = CommF_:InvokeServer("ZQuestProgress", "General")
+            end)
+            if progress ~= 0 then
+                local donSwan = FindBoss("Don Swan")
+                if donSwan then
+                    local deadline = tick() + 180
+                    while _G.State:IsActionValid(myToken) and IsAlive()
+                        and tick() < deadline do
+                        local bh = donSwan:FindFirstChildOfClass("Humanoid")
+                        local br = donSwan:FindFirstChild("HumanoidRootPart")
+                        if not bh or bh.Health <= 0 or not br then break end
+                        PrepareCombatTarget(donSwan)
+                        EquipCombatTool()
+                        TravelManager:Request(br, "Sea3", {
+                            arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                        })
+                        Attack(donSwan, "Don Swan")
+                        task.wait(0.12)
+                    end
+                    pcall(function()
+                        progress = CommF_:InvokeServer("ZQuestProgress", "General")
+                    end)
+                end
             end
-            task.wait(1)
+            if progress == 0 then
+                if not TravelAndWait("Sea3", myToken, CFrame.new(-1926.32,12.82,1738.31), {
+                    timeout=90, arrivalThreshold=10, settle=1.5,
+                }) then
+                    return
+                end
+                pcall(function() CommF_:InvokeServer("ZQuestProgress", "Begin") end)
+                task.wait(1.5)
 
-
-            local timeout = os.time()+600
-            while _G.State:IsActionValid(myToken) and os.time() < timeout and IsAlive() do
-                local boss = FindBoss("Don Swan")
-                if boss and boss:FindFirstChild("HumanoidRootPart") and boss.Humanoid.Health > 0 then
+                local boss = FindBoss("rip_indra")
+                if not boss then
+                    _G.BobonStatus = "Sea: Waiting for rip_indra quest boss"
+                    return
+                end
+                local deadline = tick() + 240
+                while _G.State:IsActionValid(myToken) and IsAlive()
+                    and tick() < deadline do
+                    local bh = boss:FindFirstChildOfClass("Humanoid")
+                    local br = boss:FindFirstChild("HumanoidRootPart")
+                    if not bh or bh.Health <= 0 or not br then break end
                     PrepareCombatTarget(boss)
-                    EquipMelee()
-                    TravelManager:Request(boss.HumanoidRootPart, "Sea3")
-                    Attack(boss)
-                else break end
-                task.wait(0.1)
+                    EquipCombatTool()
+                    TravelManager:Request(br, "Sea3", {
+                        arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                    })
+                    Attack(boss, "rip_indra")
+                    task.wait(0.12)
+                end
             end
-            task.wait(2)
 
-
-            if not _G.State:IsActionValid(myToken) then return end
-            if TravelAndWait("Sea3", myToken, CFrame.new(-285,306,611), {timeout=90}) then
-                pcall(function() CommF_:InvokeServer("ZQuestProgress","Begin") end)
-            end
-            task.wait(2)
-
-
-            -- [FIX-P9] Chỉ teleport sang Sea 3 khi progression hoàn tất + còn sống
             if _G.State:IsActionValid(myToken) and IsAlive() then
-                TeleportSvc:Teleport(7449423635, LP)
-                _G.State.LastServerHop = os.time()
+                local traveled = false
+                pcall(function()
+                    CommF_:InvokeServer("TravelZou")
+                    traveled = true
+                end)
+                if traveled then _G.State.LastServerHop = os.time() end
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: Sea3: " .. tostring(err)) end
@@ -3169,6 +3481,7 @@ function ItemProgression:RunChecks(allowSea, allowOptional)
     if not allowSea or not _G.State:CanAct() then return false end
     -- Sea changes are mandatory gates, so they run before optional items.
     if self:CheckSecondSea() then return true end
+    if self:CheckBartilo() then return true end
     if self:CheckThirdSea() then return true end
     if not allowOptional then return false end
     if self:CheckSaber() then return true end
@@ -3220,6 +3533,15 @@ local BossDatabase = {
     {N="rip_indra",Sea=3,MinLevel=1500},
 }
 
+-- Optional boss work must advance the kaitun instead of interrupting every
+-- completed quest for unrelated bosses. Level-skip bosses are handled by the
+-- dedicated SkipRouteController; this manager targets missing useful drops.
+local BossDropItems = {
+    ["Thunder God"] = "Pole (1st Form)",
+    ["Awakened Ice Admiral"] = "Rengoku",
+    ["Cake Queen"] = "Buddy Sword",
+}
+
 function BossManager:FindLiveBoss()
     local folder = workspace:FindFirstChild("Enemies")
     local root = HRP()
@@ -3231,7 +3553,9 @@ function BossManager:FindLiveBoss()
         local mobRoot = mob:FindFirstChild("HumanoidRootPart")
         if hum and hum.Health > 0 and mobRoot then
             for _, entry in ipairs(BossDatabase) do
-                if entry.Sea == sea and level >= entry.MinLevel
+                local wantedItem = BossDropItems[entry.N]
+                if wantedItem and not HasItem(wantedItem)
+                    and entry.Sea == sea and level >= entry.MinLevel
                     and IsEnemyNamed(mob, entry.N) then
                     local p = mobRoot.Position
                     if IsValidPos(p) and IsAllowedWorldY(p.Y) then
@@ -3411,6 +3735,34 @@ task.spawn(function()
                     return
                 end
 
+                -- A confirmed closed quest is the only safe window for
+                -- optional kaitun items/boss drops. The old placement was
+                -- below this return path, so Saber/Pole/BossManager were
+                -- logically unreachable and never ran at all.
+                -- The wrapper is authoritative here. A completed quest can
+                -- leave stale title text behind, so questMatch may still be
+                -- true even though there is no active quest.
+                local safeItemWindow = questState == false
+                if safeItemWindow then
+                    local okItems, itemResult = pcall(function()
+                        return ItemProgression:RunChecks(true, true)
+                    end)
+                    if not okItems then
+                        warn("[BobonHub] Module Error: ItemProgression: " .. tostring(itemResult))
+                    elseif itemResult then
+                        return
+                    end
+
+                    local okBoss, bossResult = pcall(function()
+                        return BossManager:TryFightBoss()
+                    end)
+                    if not okBoss then
+                        warn("[BobonHub] Module Error: BossManager: " .. tostring(bossResult))
+                    elseif bossResult then
+                        return
+                    end
+                end
+
                 FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 if _G.State.IsTraveling then
@@ -3427,36 +3779,6 @@ task.spawn(function()
                 TravelManager:Request(q.QC, "Farm")
                 return
             end
-
-            -- No quest means a safe window: finish mandatory Sea progression,
-            -- then claim level-appropriate items before requesting the next
-            -- farming quest.  Wrong/unknown quest stays on quest repair first.
-            -- Only a confirmed `false` UI state opens optional item/boss work;
-            -- an unreadable quest UI must keep the controller on quest repair.
-            local itemWindow = questState == false and questMatch ~= true
-            local seaWindow = itemWindow or questMatch == false
-            local okMod, modResult = pcall(function()
-                return ItemProgression:RunChecks(seaWindow, itemWindow)
-            end)
-            if not okMod then
-                warn("[BobonHub] Module Error: ItemProgression: " .. tostring(modResult))
-            elseif modResult then
-                return
-            end
-
-            -- Boss drops are optional Kaitun work; only scan/fight while no
-            -- quest is active, never during normal level farming.
-            if itemWindow then
-                local okBoss, bossResult = pcall(function()
-                    return BossManager:TryFightBoss()
-                end)
-                if not okBoss then
-                    warn("[BobonHub] Module Error: BossManager: " .. tostring(bossResult))
-                elseif bossResult then
-                    return
-                end
-            end
-
 
             -- QUEST + FARM (primary progression from level 1 to max)
 
@@ -3776,11 +4098,10 @@ _G.State.Sea = GetSea()
 _G.State.StartTime = os.time()
 
 
-print("[BobonHub v16.5 GLASS] Full Script Loaded Successfully!")
-print("[BobonHub v16.5 GLASS] Architecture: Persistent Travel | ActionToken | Single Owner")
-print("[BobonHub v16.5 GLASS] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.5 GLASS] Modules: QuestFarm(P2/P3) | TeamController(A1) | WeaponController(A2)")
-print("[BobonHub v16.5 GLASS] Modules: BossManager | MovementManager(A3) | FarmPositionController(A4)")
-print("[BobonHub v16.5 GLASS] Modules: DodgeController(D1) | SkipRouteController(D4/D5) | Glass Overlay(G1)")
-print("[BobonHub v16.5 GLASS] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
-print("[BobonHub v16.5 GLASS] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
+print("[BobonHub v16.6 LIVE] Full Script Loaded Successfully!")
+print("[BobonHub v16.6 LIVE] Architecture: Persistent Travel | ActionToken | Single Owner")
+print("[BobonHub v16.6 LIVE] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
+print("[BobonHub v16.6 LIVE] Modules: QuestFarm | Current FastAttack | Safe Bring | Responsive Glass HUD")
+print("[BobonHub v16.6 LIVE] Progression: Saber | Pole | Sea2 | Bartilo | Sea3")
+print("[BobonHub v16.6 LIVE] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
+print("[BobonHub v16.6 LIVE] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
