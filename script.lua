@@ -275,6 +275,9 @@ _G.Settings = {
     CombatProbeTimeout  = 1.2,
     CombatProbeAttempts = 3,
     CombatBackendRetry  = 12,
+    CombatFastUpgradeInterval = 90,
+    CombatVerifiedMissLimit = 8,
+    CombatVerifiedRetry = 0.25,
     CombatLateGrace     = 0.35,
     CombatProofsRequired= 2,
     -- A previously verified backend is re-probed after a quiet period, but
@@ -316,6 +319,7 @@ _G.Settings = {
     -- Simulation ownership is requested before movement to avoid ghost mobs.
     GatherAllQuestMobs  = true,
     GatherMaxDistance   = 250,
+    GatherFallbackDistance = 85,
     GatherSpacing       = 0,
     GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
@@ -403,6 +407,10 @@ _G.State = {
     LastQuestRequest = 0,
     LastQuestAccepted= 0,
     QuestRetries     = 0,
+    -- Canonical workspace enemy name for the quest that is actually active.
+    -- Quest UI may be localized, so gathering must not infer a mob name from
+    -- the visible translated text on every frame.
+    ActiveQuestMob   = nil,
     IsTraveling      = false,
     IsRecovering     = false,
     ActionToken      = 0,
@@ -1017,9 +1025,24 @@ end
 -- [FIX-P2] Kiểm tra quest hiện tại có đúng mob q.M hay không.
 -- Trả về: true = khớp, false = sai mob, nil = không đọc được UI.
 local function QuestMatches(mobName)
+    if not mobName then return nil end
+    -- Once this session accepted (or adopted) an active quest, this canonical
+    -- name is authoritative. It also makes level-boundary changes explicit:
+    -- an old active quest returns false for the next QDB entry and is replaced.
+    local activeMob = _G.State and _G.State.ActiveQuestMob
+    if activeMob then
+        return string.lower(tostring(activeMob))
+            == string.lower(tostring(mobName))
+    end
     local text = GetQuestText()
-    if not text or not mobName then return nil end
-    return string.find(string.lower(text), string.lower(mobName), 1, true) ~= nil
+    if not text then return nil end
+    if string.find(string.lower(text), string.lower(mobName), 1, true) then
+        return true
+    end
+    -- Roblox can render the objective through a localization table (for
+    -- example Brute -> a Vietnamese name). An untranslated miss is therefore
+    -- unknown, not proof that the player holds the wrong quest.
+    return nil
 end
 
 
@@ -1047,6 +1070,7 @@ local function HandleQuestAtGiver(q, atGiver)
     -- giữ quest cũ và controller tưởng rằng StartQuest bị lỗi.
     local currentMatch = QuestMatches(q.M)
     if currentMatch == false then
+        _G.State.ActiveQuestMob = nil
         pcall(function() CommF_:InvokeServer("AbandonQuest") end)
         task.wait(0.15)
     end
@@ -1081,6 +1105,7 @@ local function HandleQuestAtGiver(q, atGiver)
     if okRQ and accepted then
         _G.State.QuestRetries = 0
         _G.State.LastQuestAccepted = tick()
+        _G.State.ActiveQuestMob = q.M
         _G.BobonStatus = "Quest: Accepted " .. q.M
         DLog("QUEST", "Accepted: " .. q.M)
     else
@@ -1249,6 +1274,7 @@ local CombatController = {
     FailedUntil = {},
     BackendProofs = {},
     BackendLastProof = {},
+    VerifiedMisses = {},
     VerifiedBackend = nil,
     FastVerified = false,
     FastVerifiedAt = 0,
@@ -1401,6 +1427,7 @@ function CombatController:ConfirmDamage(backend, delta)
         return
     end
     self.FailedUntil[backend] = nil
+    self.VerifiedMisses[backend] = 0
     local now = tick()
     local priorProof = self.BackendLastProof[backend]
     local independentProof = not priorProof
@@ -1423,7 +1450,8 @@ function CombatController:ConfirmDamage(backend, delta)
     self.LastConfirmedAt = self.FastVerifiedAt
     self.DesiredClientRange = IsClientInputBackend(backend)
     if IsClientInputBackend(backend) and self.NextFastUpgrade <= 0 then
-        self.NextFastUpgrade = tick() + (_G.Settings.CombatBackendRetry or 12)
+        self.NextFastUpgrade = tick()
+            + (_G.Settings.CombatFastUpgradeInterval or 90)
     end
     self.PendingBackend = nil
     self.PendingTarget = nil
@@ -1472,8 +1500,13 @@ function CombatController:WatchTarget(model, humanoid)
             and self.PendingAttempts > 0
             and now - self.PendingLastDispatch
                 <= (_G.Settings.CombatCausalWindow or 0.65)
+        -- A creator marker can update one frame behind a genuine local M1.
+        -- For a real client-input click, the short causal window is stronger
+        -- evidence than that stale marker; remote/helper probes stay strict.
+        local attributedElsewhere = DamageAttributedToOtherPlayer(model, humanoid)
+        local clientCausalProof = IsClientInputBackend(self.PendingBackend)
         if oldHealth and newHealth < oldHealth and withinProbe
-            and not DamageAttributedToOtherPlayer(model, humanoid) then
+            and (clientCausalProof or not attributedElsewhere) then
             self:ConfirmDamage(self.PendingBackend, oldHealth - newHealth)
         end
         if oldHealth and newHealth ~= oldHealth then
@@ -1491,7 +1524,8 @@ function CombatController:FailBackend(backend, reason)
         self.HelperScanDone = 0
     end
     if not IsClientInputBackend(backend) and backend ~= "GUN-REMOTE" then
-        self.NextFastUpgrade = tick() + (_G.Settings.CombatBackendRetry or 12)
+        self.NextFastUpgrade = tick()
+            + (_G.Settings.CombatFastUpgradeInterval or 90)
     end
     if self.VerifiedBackend == backend then
         self.VerifiedBackend = nil
@@ -1500,6 +1534,7 @@ function CombatController:FailBackend(backend, reason)
     end
     self.BackendProofs[backend] = nil
     self.BackendLastProof[backend] = nil
+    self.VerifiedMisses[backend] = nil
     self.PendingBackend = nil
     self.PendingTarget = nil
     self.PendingHumanoid = nil
@@ -1537,7 +1572,20 @@ function CombatController:CheckPending(now)
             self.PendingSettleUntil = now + (_G.Settings.CombatLateGrace or 0.35)
             _G.BobonDiagnostics.Packet = "WAIT-LATE-DAMAGE"
         elseif now >= self.PendingSettleUntil then
-            self:FailBackend(self.PendingBackend, "NO-HP-DELTA")
+            local backend = self.PendingBackend
+            local proven = self.VerifiedBackend == backend
+                and (self.BackendProofs[backend] or 0)
+                    >= (_G.Settings.CombatProofsRequired or 2)
+            if proven then
+                self.VerifiedMisses[backend] = (self.VerifiedMisses[backend] or 0) + 1
+                if self.VerifiedMisses[backend]
+                    < (_G.Settings.CombatVerifiedMissLimit or 8) then
+                    self:AbortPending("RETRY-VERIFIED:" .. backend)
+                    self.NextProbeAt = now + (_G.Settings.CombatVerifiedRetry or 0.25)
+                    return
+                end
+            end
+            self:FailBackend(backend, "NO-HP-DELTA")
         end
     end
 end
@@ -1723,8 +1771,15 @@ function CombatController:Attack(tool, kind, preferredModel, preferredHum, prefe
         _G.BobonDiagnostics.Packet = "APPROACHING"
         return false
     end
-    if tool.Parent ~= Char() or tool.Enabled == false then
+    if tool.Parent ~= Char() then
         self:AbortPending("WAIT-TOOL-READY")
+        return false
+    end
+    if tool.Enabled == false then
+        -- Normal M1 cooldown often disables the Tool before its server damage
+        -- arrives. Keep the pending causal probe alive so that delayed HP loss
+        -- can confirm the click instead of making combat reset after one hit.
+        _G.BobonDiagnostics.Packet = "WAIT-TOOL-COOLDOWN"
         return false
     end
     if WeaponController and type(WeaponController.IsReady) == "function"
@@ -1791,7 +1846,7 @@ function CombatController:Attack(tool, kind, preferredModel, preferredHum, prefe
         or self:CollectTargets(preferredModel,
             inputBackend and nil or mobName, range)
     if #entries == 0 then
-        _G.BobonDiagnostics.Packet = "NO-TARGETS"
+        self:AbortPending("NO-TARGETS")
         return false
     end
     if now - _G.State.LastAttackTime < (_G.Settings.AttackDelay or 0.08) then
@@ -1855,6 +1910,7 @@ function CombatController:Cleanup()
     self.FailedUntil = {}
     self.BackendProofs = {}
     self.BackendLastProof = {}
+    self.VerifiedMisses = {}
     self.NextFastUpgrade = 0
     self.DesiredClientRange = false
     self.WatchedStableSince = 0
@@ -2503,9 +2559,24 @@ end
 -- nothing with a permanent zero-moved diagnostic.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
-    if not CombatController:IsFastReady() then
+    local activeQuestMob = _G.State.ActiveQuestMob
+    -- Hard quest-only gate: never gather a skip-route mob, boss, old target,
+    -- or any enemy whose canonical name is not the currently accepted quest.
+    if not activeQuestMob
+        or string.lower(tostring(activeQuestMob)) ~= string.lower(tostring(mobName))
+        or not IsEnemyNamed(primary, activeQuestMob) then
         self:ReleaseCluster()
-        _G.BobonDiagnostics.Bring = "FAST-REQUIRED"
+        _G.BobonDiagnostics.Bring = "QUEST-ONLY"
+        _G.BobonDiagnostics.BringCandidates = 0
+        _G.BobonDiagnostics.BringMoved = 0
+        return 0
+    end
+    -- Bring is a movement capability, not a fast-attack capability. A proven
+    -- real M1 backend may gather too; requiring FastReady made bring stay off
+    -- forever on executors that correctly fall back to client input.
+    if not CombatController:IsDamageReady() then
+        self:ReleaseCluster()
+        _G.BobonDiagnostics.Bring = "DAMAGE-WAIT"
         _G.BobonDiagnostics.BringCandidates = 0
         _G.BobonDiagnostics.BringMoved = 0
         return 0
@@ -2523,7 +2594,8 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
     local playerRoot = HRP()
-    local activeHeight = CombatController:IsFastReady()
+    local activeHeight = (CombatController:IsFastReady()
+        or not CombatController:WantsClientRange())
         and (_G.Settings.FarmHeight or 15)
         or (_G.Settings.ClientHoverHeight or 5)
     local anchorPos = self:GetFarmPos(primary, activeHeight)
@@ -2580,11 +2652,18 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                 local angle = slot * 2.4
                 local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
                 local owned = ClientOwnsMob(root)
-                if owned == false and self.SavedMobState[root] then
+                -- Some executors expose ownership as false until after the
+                -- first bounded local move. Keep that fallback close to the
+                -- player/anchor and label it unverified; only true ownership
+                -- is counted as a replicated move in diagnostics.
+                local allowLocalMove = owned == true or owned == nil
+                    or simulationExpanded
+                    or offset.Magnitude <= (_G.Settings.GatherFallbackDistance or 85)
+                if not allowLocalMove and self.SavedMobState[root] then
                     self:RestoreMob(root)
                 end
                 pcall(function()
-                    if owned == true or owned == nil then
+                    if allowLocalMove then
                         self:SaveMob(root, hum)
                         hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
                         hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
@@ -2606,8 +2685,8 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
                         -- there is no honest way to claim server replication.
                         bringMode = simulationExpanded
                             and "LOCAL-UNVERIFIED" or "NO-OWNERSHIP-API"
-                    elseif owned == false and moved == 0 then
-                        bringMode = "WAIT-OWN"
+                    elseif owned == false then
+                        bringMode = allowLocalMove and "LOCAL-UNVERIFIED" or "WAIT-OWN"
                     end
                 end)
             end
@@ -3776,6 +3855,26 @@ local QDB = {
     {Min=2725,Max=2800,Q="SubmergedQuest3",M="Grand Devotee",QL=2,QC=CFrame.new(9640.088,-1992.445,9613.652),MC=CFrame.new(9611.705,-1993.471,9882.688)},
 }
 
+-- Resolve an already-open quest after re-execution. Prefer an exact canonical
+-- enemy name found in the source quest text; if Roblox only exposes translated
+-- text, the main controller safely falls back to the current level's QDB entry.
+local function ResolveQuestMobFromText()
+    local text = GetQuestText()
+    if not text then return nil end
+    local lowerText = string.lower(text)
+    local bestMatch = nil
+    for _, entry in ipairs(QDB) do
+        if string.find(lowerText, string.lower(entry.M), 1, true) then
+            -- Prefer the longest match so `Galley Pirate` is not mistaken for
+            -- the earlier generic `Pirate` entry (same for Bandit/Snow Bandit).
+            if not bestMatch or #entry.M > #bestMatch then
+                bestMatch = entry.M
+            end
+        end
+    end
+    return bestMatch
+end
+
 local SubmergedAccessController = {
     Confirmed = false,
     PendingUntil = 0,
@@ -4842,11 +4941,28 @@ task.spawn(function()
                 return
             end
 
+            -- Keep one canonical mob name for the quest wrapper that is
+            -- currently active. On re-execution the wrapper may already be
+            -- open and localized, so adopt the current QDB entry once. After
+            -- that, level transitions cannot silently change the gather name.
+            if questState == false then
+                _G.State.ActiveQuestMob = nil
+            elseif questState == true and not _G.State.ActiveQuestMob then
+                _G.State.ActiveQuestMob = ResolveQuestMobFromText() or q.M
+                DLog("QUEST", "Adopted active quest mob: "
+                    .. tostring(_G.State.ActiveQuestMob))
+            end
+
 
             -- Fast Sea 1 route runs before the normal quest gate.  It keeps
             -- the level-skip behavior deterministic and still uses the same
             -- TravelManager, target validation, attack gate and watchdog.
-            if SkipRouteController:Run() then
+            -- Never let the fast skip route interrupt an accepted quest. It
+            -- previously activated right after the first verified hits, which
+            -- looked exactly like "attacks briefly, then stops/leaves".
+            if questState == true or _G.State.ActiveQuestMob then
+                SkipRouteController:Reset("active quest has priority")
+            elseif SkipRouteController:Run() then
                 return
             end
 
@@ -4868,6 +4984,7 @@ task.spawn(function()
                 hasQuest = true
             end
             local questOk = hasQuest
+            local questMobName = _G.State.ActiveQuestMob or q.M
 
             -- Quest-first invariant: quest vừa hết, bị mất, sai mob, hoặc UI
             -- không còn xác nhận được đều phải quay lại giver ngay trong tick
@@ -4987,7 +5104,8 @@ task.spawn(function()
 
             -- VERIFY_TARGET: clear NGAY nếu invalid → NEXT_TARGET
             _G.State.FState = "VERIFY_TARGET"
-            if not _G.State:IsTargetValid(_G.State.FarmTarget) then
+            if not _G.State:IsTargetValid(_G.State.FarmTarget)
+                or not IsEnemyNamed(_G.State.FarmTarget, questMobName) then
                 FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
                 _G.State.FState = "NEXT_TARGET"
@@ -5053,7 +5171,7 @@ task.spawn(function()
                             -- Equip is asynchronous; the next tick runs the
                             -- same verified adapter for melee or sword.
                             EquipCombatTool()
-                            Attack(_G.State.FarmTarget, q.M)
+                            Attack(_G.State.FarmTarget, questMobName)
                             if os.time() - lastAttackLog >= 5 then
                                 lastAttackLog = os.time()
                                 DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
@@ -5081,17 +5199,18 @@ task.spawn(function()
                     end
                     -- [G-6] Gom mob không còn phụ thuộc strict quest-match
                     if _G.Settings.GatherMobs and atAnchor
-                        and CombatController:IsFastReady() then
-                        FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
+                        and CombatController:IsDamageReady() then
+                        FarmPositionController:GatherMobCluster(
+                            questMobName, _G.State.FarmTarget)
                     elseif not _G.Settings.GatherMobs
-                        or not CombatController:IsFastReady() then
+                        or not CombatController:IsDamageReady() then
                         FarmPositionController:ReleaseCluster()
                     end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
-                    if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
+                    if farmPos and FarmPositionController:HasNearbyMobs(questMobName, farmPos)
                         and TravelManager:IsAtCombatAnchor(targetHRP) then
                         EquipCombatTool()
-                        Attack(_G.State.FarmTarget, q.M)
+                        Attack(_G.State.FarmTarget, questMobName)
                     end
                 end
             else
@@ -5099,7 +5218,7 @@ task.spawn(function()
                 -- chọn mob GẦN player nhất (không chọn ngẫu nhiên cả map)
                 _G.State.FState = "SELECT_TARGET"
                 DLog("FARM", "State = SELECT_TARGET")
-                local mob, dist = FindNearestMob(q.M)
+                local mob, dist = FindNearestMob(questMobName)
 
 
                 if mob and mob:FindFirstChild("HumanoidRootPart") and mob.Humanoid.Health > 0 then
@@ -5107,7 +5226,7 @@ task.spawn(function()
                     if dist > _G.Settings.MaxFarmDistance then
                         -- Mob quá xa → về khu farm, KHÔNG giữ target xa
                         _G.State:ClearTargets()
-                        _G.BobonStatus = "Farm: " .. q.M .. " is far, returning to farm area"
+                        _G.BobonStatus = "Farm: " .. questMobName .. " is far, returning to farm area"
                         DLog("TARGET", q.M .. " is too far (" .. string.format("%.0f", dist) .. ") → returning to farm area")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(q.MC, "Farm")
@@ -5116,7 +5235,7 @@ task.spawn(function()
                         _G.State.FarmTarget = mob
                         _G.State.CurrentTarget = mob
                         _G.State.FState = "MOVE_TO_TARGET"
-                        _G.BobonStatus = "Farm: " .. q.M
+                        _G.BobonStatus = "Farm: " .. questMobName
                         DLog("TARGET", "Found: " .. q.M .. " @" .. string.format("%.0f", dist) .. " studs")
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(mob.HumanoidRootPart, "Farm", {
@@ -5127,7 +5246,7 @@ task.spawn(function()
                         end
                     end
                 else
-                    _G.BobonStatus = "Farm: Waiting for " .. q.M .. " spawn"
+                    _G.BobonStatus = "Farm: Waiting for " .. questMobName .. " spawn"
                     DLog("TARGET", "Waiting for " .. q.M .. " spawn")
                     if _G.State:CanRequestTravel() then
                         TravelManager:Request(q.MC, "Farm")
