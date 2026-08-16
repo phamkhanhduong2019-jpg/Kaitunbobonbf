@@ -3,15 +3,18 @@
 --         Long-Run Stable | Single Movement Owner | ActionToken
 --         Base: v15.0 | Version: v16.6 LIVE
 --
---  LIVE HOTFIX M1 + BRING:
---  [M1-1] Mọi melee/sword dùng Tool:Activate + input M1 thật của client;
---         bỏ payload RegisterHit 2 tham số cũ bị server bỏ im lặng.
---  [M1-2] Quay camera/nhân vật trước khi đánh; hover 6 studs và arrival
---         8 studs, không cộng chiều cao từ hitbox quái đã resize.
---  [M1-3] Không resize/ẩn Tool.Handle; áp dụng chung cho Combat, toàn bộ
---         fighting style và sword.
---  [M1-4] Bring dùng đủ bán kính cấu hình tối đa 250 studs, giữ mob neo
---         đứng yên và lặp vị trí cụm mỗi tick gather.
+--  LIVE HOTFIX VERIFIED COMBAT + ATOMIC TRAVEL:
+--  [C-1] Melee/sword attack adapter: live client helper -> tokenized Net ->
+--        one real client click fallback. Never fire competing input paths.
+--  [C-2] A backend is READY only after two independent verified HP decreases;
+--        pcall/FireServer/input success is reported as PROBE, not damage.
+--  [C-3] Combat hover is explicit for every owner (Farm/Boss/Items/Sea),
+--        stays above the NPC and never faces 180 degrees away on arrival.
+--  [C-4] Same-owner retarget replans all travel options atomically; stuck
+--        timing no longer sleeps 0.5s inside the physics loop.
+--  [C-5] Bring counts only network-owned mobs; local fallback is explicitly
+--        UNVERIFIED and every changed NPC property is restored on release.
+--  [C-6] Skip-level combat remains disabled until fast damage is verified.
 --
 --  AUDIT FIXES v16.6-LIVE (L-1..L-7):
 --  [L-1] HUD responsive bằng UIListLayout + UIScale, không chồng chữ
@@ -235,17 +238,23 @@ if not CommF_ then warn("[BobonHub v16.6 LIVE] CommF_ not found!") return end
 _G.Settings = {
     -- [A-8] DEBUG log: true = in [TAG] log ra console (không spam khi false)
     DEBUG               = false,
-    -- Keep real client M1 inside melee/sword range. The enemy hitbox is
-    -- enlarged locally below, so farm height must never be derived from it.
-    FarmHeight          = 6,
+    -- Safe hover for verified fast attack. Before fast damage is confirmed,
+    -- the controller temporarily uses ClientHoverHeight for a genuine M1.
+    FarmHeight          = 15,
+    BossFarmHeight      = 24,
+    -- Only the real-click fallback descends this low. Verified fast attack
+    -- remains at FarmHeight/BossFarmHeight, safely outside ordinary NPC M1.
+    ClientHoverHeight   = 5,
     FarmOffsetX         = 1.5,
-    HitboxSize          = 50,
+    -- Retained for compatibility only; enemy roots are no longer resized.
+    HitboxSize          = 0,
     FlySpeed            = 180,
     MinY                = 10,
     -- Submerged Island (Sea 3) dùng tọa độ âm dưới mặt biển.
     UnderwaterMinY      = -2300,
     CloseThreshold      = 35,
-    FarmArrivalThreshold= 8,
+    FarmArrivalThreshold= 2.5,
+    HoverConfirmRadius  = 5,
     -- [A-4] Farm position / gom mob config (điều chỉnh theo game physics)
     MobGatherRadius     = 50,
     TargetRefreshInterval = 0.2,
@@ -260,7 +269,21 @@ _G.Settings = {
     -- 20-stud gate made cluster farming stop attacking while hovering over
     -- the average position of several mobs, so keep the gate in sync.
     AttackRange         = 100,
-    ClientAttackRange   = 30,
+    FastAttackRange     = 100,
+    ClientAttackRange   = 8,
+    FastAttackMaxTargets= 12,
+    CombatProbeTimeout  = 1.2,
+    CombatProbeAttempts = 3,
+    CombatBackendRetry  = 12,
+    CombatLateGrace     = 0.35,
+    CombatProofsRequired= 2,
+    -- A previously verified backend is re-probed after a quiet period, but
+    -- ordinary island travel must not invalidate it every few seconds.
+    CombatVerificationTTL= 120,
+    CombatBaselineQuiet = 0.25,
+    CombatRepeatProofGap= 0.9,
+    CombatCausalWindow  = 0.65,
+    EquipSettle         = 0.35,
     StuckTimeout        = 8,
     HoverStuckTimeout   = 30,
     CruiseStuckTimeout  = 20,
@@ -271,7 +294,7 @@ _G.Settings = {
     ApproachThreshold   = 120,
     TravelTimeoutMargin = 20,
     RandomFruitInterval = 120,
-    AttackDelay         = 0.15,
+    AttackDelay         = 0.08,
     QuestDelay          = 1.5,
     QuestRetryLimit     = 3,
     QuestRetryBackoff   = 6,
@@ -287,16 +310,13 @@ _G.Settings = {
     -- Local-only bring-mob for nearby quest enemies; no extra movement loop.
     GatherMobs          = true,
     -- Sea 1 optimized skip route (Fountain, bosses, Upper Sky/Galley).
+    -- Enabled only after the combat adapter confirms real fast damage.
     SkipLevelRoute      = true,
     -- Bring matching quest mobs only inside the current island/farm area.
     -- Simulation ownership is requested before movement to avoid ghost mobs.
     GatherAllQuestMobs  = true,
     GatherMaxDistance   = 250,
-    -- If an executor does not expose network-ownership APIs, allow a visual
-    -- soft bring only inside the real RegisterHit range. The server-side mob
-    -- is still close enough to be hit, so this cannot create a far ghost mob.
-    GatherFallbackDistance = 85,
-    GatherSpacing       = 3,
+    GatherSpacing       = 0,
     GatherInterval      = 0.12,
     -- Optional item failure/timeout must not block level farming forever.
     ItemRetryCooldown   = 300,
@@ -305,7 +325,9 @@ _G.Settings = {
     StatBatchLimit      = 100,
     -- [D-1] NÉ CHIÊU: phát hiện quái gần player tung chiêu (animation
     -- tấn công / lao nhanh về phía player) → dịch ngang né nhanh.
-    DodgeAttacks        = true,
+    -- Direct CFrame dodge conflicts with the single hover owner. Keep it off
+    -- until it is represented as a TravelManager goal offset.
+    DodgeAttacks        = false,
     DodgeCooldown       = 1.5,
     DodgeDistance       = 12,
     DodgeHeight         = 4,
@@ -326,22 +348,46 @@ _G.BobonStatus = "Initializing..."
 _G.BobonDiagnostics = {
     Tool = "wait",
     Net = "wait",
-    Hits = 0,
+    Targets = 0,
     Packet = "wait",
     Bring = "wait",
     BringCandidates = 0,
     BringMoved = 0,
 }
 
-local function IsUnderwaterY(y)
-    return game.PlaceId == 7449423635
-        and type(y) == "number" and y <= -100
-        and y >= (_G.Settings.UnderwaterMinY or -2300)
+-- Submerged is a bounded region, not every negative-Y point in Third Sea.
+-- Full XYZ checks prevent an ordinary ocean fall from being misclassified as
+-- a valid underwater island and disabling the anti-fall rescue forever.
+local SUBMERGED_REGION = {
+    MinX = 8400, MaxX = 12300,
+    MinZ = 8000, MaxZ = 11500,
+    MinY = _G.Settings.UnderwaterMinY or -2300,
+    MaxY = -100,
+}
+
+local function IsFiniteNumber(value)
+    return type(value) == "number" and value == value
+        and value > -math.huge and value < math.huge
 end
 
-local function IsAllowedWorldY(y)
-    return type(y) == "number"
-        and (y >= _G.Settings.MinY - 10 or IsUnderwaterY(y))
+local function IsFiniteVector3(pos)
+    return typeof(pos) == "Vector3"
+        and IsFiniteNumber(pos.X)
+        and IsFiniteNumber(pos.Y)
+        and IsFiniteNumber(pos.Z)
+end
+
+local function IsSubmergedPosition(pos)
+    if game.PlaceId ~= 7449423635 or not IsFiniteVector3(pos) then return false end
+    local bounds = SUBMERGED_REGION
+    return pos.X >= bounds.MinX and pos.X <= bounds.MaxX
+        and pos.Z >= bounds.MinZ and pos.Z <= bounds.MaxZ
+        and pos.Y >= bounds.MinY and pos.Y <= bounds.MaxY
+end
+
+local function IsAllowedWorldPosition(pos)
+    return IsFiniteVector3(pos)
+        and (pos.Y >= _G.Settings.MinY - 10 or IsSubmergedPosition(pos))
 end
 
 
@@ -410,6 +456,14 @@ function _G.State:IsActionValid(myToken)
     return myToken > 0 and myToken == self.ActiveActionToken
 end
 
+function _G.State:TouchAction(myToken)
+    if self:IsActionValid(myToken) then
+        self.ActionStartTime = os.time()
+        return true
+    end
+    return false
+end
+
 
 function _G.State:ReleaseAction(myToken)
     if myToken > 0 and myToken == self.ActiveActionToken then
@@ -442,8 +496,8 @@ function _G.State:IsTargetValid(target)
     local root = target:FindFirstChild("HumanoidRootPart")
     if not root then return false end
     -- [FIX-7] Reject target o duoi bien / vi tri bat thuong
-    local ok, posY = pcall(function() return root.Position.Y end)
-    if not ok or not IsAllowedWorldY(posY) then return false end
+    local ok, position = pcall(function() return root.Position end)
+    if not ok or not IsAllowedWorldPosition(position) then return false end
     return true
 end
 
@@ -750,12 +804,12 @@ task.spawn(function()
             ModeL.Text = "Mode: " .. (_G.State.Mode or "Idle")
             StatL.TextColor3 = StatusColors[_G.State.Mode] or Color3.fromRGB(62,255,220)
             local diag = _G.BobonDiagnostics or {}
-            DiagL.Text = ("Combat: %s / %s / hit:%s / %s  |  Bring: %s %s→%s")
+            DiagL.Text = ("Combat: %s / %s / targets:%s / %s / dHP:%s  |  Bring: %s %s->%s")
                 :format(tostring(diag.Tool or "?"), tostring(diag.Net or "?"),
-                    tostring(diag.Hits or 0), tostring(diag.Packet or "?"),
-                    tostring(diag.Bring or "?"), tostring(diag.BringCandidates or 0),
-                    tostring(diag.BringMoved or 0))
-            DiagL.TextColor3 = diag.Packet == "sent"
+                    tostring(diag.Targets or 0), tostring(diag.Packet or "?"),
+                    tostring(diag.LastHPDelta or 0), tostring(diag.Bring or "?"),
+                    tostring(diag.BringCandidates or 0), tostring(diag.BringMoved or 0))
+            DiagL.TextColor3 = tostring(diag.Packet or ""):find("CONFIRMED", 1, true)
                 and Color3.fromRGB(85,255,145) or Color3.fromRGB(255,184,92)
             KillL.Text = "Kills: " .. Fmt(_G.State.KillCount)
             local d = LP:FindFirstChild("Data")
@@ -890,8 +944,7 @@ end
 
 -- [FIX-P11] Kiểm tra Vector3 hợp lệ (reject NaN / vô hạn)
 local function IsValidPos(p)
-    return p ~= nil and typeof(p) == "Vector3"
-        and p.X == p.X and p.Y == p.Y and p.Z == p.Z
+    return IsFiniteVector3(p)
 end
 
 -- Enemy models thường có hậu tố "[Lv. n]"; chuẩn hoá để FindNearestMob
@@ -1084,8 +1137,8 @@ task.spawn(function()
 end)
 
 
--- Resolve Modules.Net only for non-combat live remotes (for example the
--- Submerged Island entrance). Melee/sword attacks use real client input.
+-- Resolve the live Net folder. Combat backends are capability-detected and
+-- must pass a health-delta probe before they are treated as working.
 local NetFolderCache = nil
 local NetWaitAttempted = false
 
@@ -1117,52 +1170,704 @@ local function ResolveNet()
     return nil
 end
 
--- Guns use their own LeftClickRemote in current builds, so mirror that live
--- path and fire a direction for every nearby enemy.
-local function FireGunHits(tool, preferred)
-    if not tool or not tool:FindFirstChild("LeftClickRemote") then return false end
-    local me = HRP()
-    local folder = workspace:FindFirstChild("Enemies")
-    if not me or not folder then return false end
-    local enemies = {}
-    local function add(enemy)
-        local hum = enemy:FindFirstChildOfClass("Humanoid")
-        local root = enemy:FindFirstChild("HumanoidRootPart")
-        if hum and hum.Health > 0 and root
-            and (root.Position - me.Position).Magnitude <= 100 then
-            enemies[#enemies + 1] = enemy
-        end
+local WeaponController
+
+local function ToolCombatKind(tool)
+    if not tool or not tool:IsA("Tool") then return nil end
+    if tool:FindFirstChild("LeftClickRemote") then return "Gun" end
+    local ok, tip = pcall(function() return tostring(tool.ToolTip or "") end)
+    tip = ok and string.lower(tip) or ""
+    if tip:find("melee", 1, true) then return "Melee" end
+    if tip:find("sword", 1, true) or tip:find("blade", 1, true) then return "Sword" end
+    if tip:find("gun", 1, true) or tip:find("rifle", 1, true)
+        or tip:find("bow", 1, true) then
+        return "Gun"
     end
-    if preferred and preferred.Parent then add(preferred) end
-    for _, enemy in ipairs(folder:GetChildren()) do
-        if enemy ~= preferred then add(enemy) end
+    -- Combat is the only starter style whose tooltip can be temporarily
+    -- blank while its controller initializes.
+    if tool.Name == "Combat" then return "Melee" end
+    -- Once the catalog controller below is initialized, it also covers named
+    -- melee styles/swords whose ToolTip is temporarily blank.
+    if WeaponController and type(WeaponController.IsCombatTool) == "function"
+        and WeaponController:IsCombatTool(tool) then
+        return tool:FindFirstChild("LeftClickRemote") and "Gun" or "CloseCombat"
     end
-    local sent = false
-    for _, enemy in ipairs(enemies) do
-        local root = enemy:FindFirstChild("HumanoidRootPart")
-        if root then
-            local direction = (root.Position - me.Position)
-            if direction.Magnitude > 0.01 then
-                pcall(function()
-                    tool.LeftClickRemote:FireServer(direction.Unit, 1)
-                end)
-                sent = true
+    return nil
+end
+
+local function IsCombatToken(value)
+    return type(value) == "string" and #value == 8
+        and value:match("^%x+$") ~= nil
+end
+
+local function IsClientInputBackend(name)
+    return name == "CLIENT-MOUSE" or name == "CLIENT-VIM"
+        or name == "CLIENT-TOOL"
+end
+
+-- Some NPC controllers attach a creator/last-hit marker. When it explicitly
+-- names another player, that HP change cannot prove this controller worked.
+local function DamageAttributedToOtherPlayer(model, humanoid)
+    for _, scope in ipairs({ humanoid, model }) do
+        if scope then
+            for _, markerName in ipairs({ "creator", "Creator", "LastHitBy", "lastHitBy" }) do
+                local marker = scope:FindFirstChild(markerName)
+                if marker and marker:IsA("ObjectValue") and marker.Value then
+                    local value = marker.Value
+                    local player = value:IsA("Player") and value or nil
+                    if not player and value:IsA("Model") then
+                        player = Players:GetPlayerFromCharacter(value)
+                    end
+                    if player == LP then return false end
+                    if player then
+                        -- Creator tags can remain after an older attacker has
+                        -- left. Treat the tag as current only while that
+                        -- character is still near enough to affect this NPC.
+                        local targetRoot = model and model:FindFirstChild("HumanoidRootPart")
+                        local otherRoot = player.Character
+                            and player.Character:FindFirstChild("HumanoidRootPart")
+                        local okPositions, distance = pcall(function()
+                            return (targetRoot.Position - otherRoot.Position).Magnitude
+                        end)
+                        if okPositions and distance <= 60 then return true end
+                    end
+                end
             end
         end
     end
-    return sent
+    return false
+end
+
+local CombatController = {
+    RegisterAttack = nil,
+    RegisterHit = nil,
+    GameGlobal = nil,
+    NativeHelper = nil,
+    HelperScanDone = 0,
+    SessionToken = nil,
+    SessionTokenSource = nil,
+    FailedUntil = {},
+    BackendProofs = {},
+    BackendLastProof = {},
+    VerifiedBackend = nil,
+    FastVerified = false,
+    FastVerifiedAt = 0,
+    NextFastUpgrade = 0,
+    PendingBackend = nil,
+    PendingTarget = nil,
+    PendingHumanoid = nil,
+    PendingSince = 0,
+    PendingLastDispatch = 0,
+    PendingSettleUntil = 0,
+    PendingAttempts = 0,
+    NextProbeAt = 0,
+    LastConfirmedAt = 0,
+    DesiredClientRange = false,
+    WatchedModel = nil,
+    WatchedHumanoid = nil,
+    WatchedHealth = nil,
+    WatchedStableSince = 0,
+    HealthConnection = nil,
+}
+
+function CombatController:ResolveRemotes()
+    if self.RegisterAttack and self.RegisterAttack.Parent
+        and self.RegisterHit and self.RegisterHit.Parent then
+        return true
+    end
+    local net = ResolveNet()
+    self.RegisterAttack = net and net:FindFirstChild("RE/RegisterAttack") or nil
+    self.RegisterHit = net and net:FindFirstChild("RE/RegisterHit") or nil
+    return self.RegisterAttack ~= nil and self.RegisterHit ~= nil
+end
+
+function CombatController:GetGameGlobal()
+    if type(self.GameGlobal) == "table" then return self.GameGlobal end
+    if type(getrenv) == "function" then
+        local ok, env = pcall(getrenv)
+        if ok and type(env) == "table" and type(rawget(env, "_G")) == "table" then
+            self.GameGlobal = rawget(env, "_G")
+            return self.GameGlobal
+        end
+    end
+    return nil
+end
+
+function CombatController:ResolveNativeHelper()
+    if type(self.NativeHelper) == "function" then return self.NativeHelper end
+    local gameGlobal = self:GetGameGlobal()
+    local direct = gameGlobal and rawget(gameGlobal, "SendHitsToServer")
+    if type(direct) == "function" then
+        self.NativeHelper = direct
+        return direct
+    end
+    if type(getsenv) ~= "function" then return nil end
+    if tick() - (self.HelperScanDone or 0) < 5 then return nil end
+    self.HelperScanDone = tick()
+    for _, scope in ipairs({ LP:FindFirstChild("PlayerScripts"), Char() }) do
+        if scope then
+            for _, scriptObject in ipairs(scope:GetDescendants()) do
+                if scriptObject:IsA("LocalScript") then
+                    local ok, env = pcall(getsenv, scriptObject)
+                    if ok and type(env) == "table" then
+                        local helper = rawget(env, "SendHitsToServer")
+                        local scopedGlobal = rawget(env, "_G")
+                        if type(helper) ~= "function" and type(scopedGlobal) == "table" then
+                            helper = rawget(scopedGlobal, "SendHitsToServer")
+                        end
+                        if type(helper) == "function" then
+                            self.NativeHelper = helper
+                            return helper
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function CombatController:ResolveSessionToken()
+    if IsCombatToken(self.SessionToken) then return self.SessionToken end
+    local gameGlobal = self:GetGameGlobal()
+    local helper = gameGlobal and rawget(gameGlobal, "SendHitsToServer")
+    local getUps = type(getupvalues) == "function" and getupvalues
+        or (type(debug) == "table" and type(debug.getupvalues) == "function"
+            and debug.getupvalues or nil)
+    if type(helper) ~= "function" or type(getUps) ~= "function" then return nil end
+    local ok, upvalues = pcall(getUps, helper)
+    if not ok or type(upvalues) ~= "table" or upvalues[1] == nil then return nil end
+    -- Runtime-derived adapter observed in current public clients. It is never
+    -- trusted merely because it has the right shape; health delta is the gate.
+    local candidate = tostring(LP.UserId):sub(2, 4)
+        .. tostring(upvalues[1]):sub(11, 15)
+    if IsCombatToken(candidate) then
+        self.SessionToken = candidate
+        self.SessionTokenSource = "runtime"
+        return candidate
+    end
+    return nil
+end
+
+function CombatController:LegacyAllowed()
+    local gameGlobal = self:GetGameGlobal()
+    return gameGlobal and rawget(gameGlobal, "COMBAT_REMOTE_THREAD") == false
+end
+
+local function SelectEnemyHitPart(enemy)
+    if not enemy then return nil end
+    for _, name in ipairs({
+        "LeftHand", "RightHand", "RightLowerLeg", "LeftLowerLeg",
+        "Head", "HumanoidRootPart",
+    }) do
+        local part = enemy:FindFirstChild(name)
+        if part and part:IsA("BasePart") then return part end
+    end
+    return nil
+end
+
+function CombatController:CollectTargets(preferred, mobName, maxRange)
+    local me = HRP()
+    local folder = workspace:FindFirstChild("Enemies")
+    if not me or not folder then return {} end
+    local results, seen = {}, {}
+    local function add(enemy)
+        if not enemy or seen[enemy] then return end
+        local hum = enemy:FindFirstChildOfClass("Humanoid")
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        local part = SelectEnemyHitPart(enemy)
+        local okPosition, rootPosition = pcall(function() return root.Position end)
+        if hum and hum.Health > 0 and root and root.Parent and part and part.Parent
+            and okPosition and IsValidPos(rootPosition)
+            and (rootPosition - me.Position).Magnitude <= maxRange then
+            seen[enemy] = true
+            results[#results + 1] = { Model=enemy, Humanoid=hum, Root=root, Part=part }
+        end
+    end
+    add(preferred)
+    if mobName then
+        for _, enemy in ipairs(folder:GetChildren()) do
+            if #results >= (_G.Settings.FastAttackMaxTargets or 12) then break end
+            if IsEnemyNamed(enemy, mobName) then add(enemy) end
+        end
+    end
+    return results
+end
+
+function CombatController:ConfirmDamage(backend, delta)
+    if not backend or delta <= 0 or self.PendingBackend ~= backend
+        or self.PendingHumanoid ~= self.WatchedHumanoid
+        or self.PendingTarget ~= self.WatchedModel then
+        return
+    end
+    self.FailedUntil[backend] = nil
+    local now = tick()
+    local priorProof = self.BackendLastProof[backend]
+    local independentProof = not priorProof
+        or priorProof.Target ~= self.WatchedModel
+        or now - priorProof.Time >= (_G.Settings.CombatRepeatProofGap or 0.9)
+    if independentProof then
+        self.BackendProofs[backend] = (self.BackendProofs[backend] or 0) + 1
+        self.BackendLastProof[backend] = {
+            Target = self.WatchedModel,
+            Time = now,
+        }
+    end
+    self.VerifiedBackend = backend
+    local isFastBackend = backend == "CLIENT-HELPER"
+        or backend == "TOKEN-4" or backend == "LEGACY-2"
+    self.FastVerified = isFastBackend
+        and self.BackendProofs[backend]
+            >= (_G.Settings.CombatProofsRequired or 2)
+    self.FastVerifiedAt = now
+    self.LastConfirmedAt = self.FastVerifiedAt
+    self.DesiredClientRange = IsClientInputBackend(backend)
+    if IsClientInputBackend(backend) and self.NextFastUpgrade <= 0 then
+        self.NextFastUpgrade = tick() + (_G.Settings.CombatBackendRetry or 12)
+    end
+    self.PendingBackend = nil
+    self.PendingTarget = nil
+    self.PendingHumanoid = nil
+    self.PendingSince = 0
+    self.PendingLastDispatch = 0
+    self.PendingSettleUntil = 0
+    self.PendingAttempts = 0
+    self.NextProbeAt = 0
+    local diag = _G.BobonDiagnostics
+    diag.Packet = "CONFIRMED"
+    diag.Net = backend
+    diag.LastHPDelta = delta
+    DLog("ATTACK", backend .. " confirmed, HP delta=" .. tostring(delta))
+end
+
+function CombatController:WatchTarget(model, humanoid)
+    if self.WatchedHumanoid == humanoid then return end
+    if self.HealthConnection then self.HealthConnection:Disconnect() end
+    self.HealthConnection = nil
+    self.WatchedModel = model
+    self.WatchedHumanoid = humanoid
+    self.WatchedHealth = humanoid and humanoid.Health or nil
+    self.WatchedStableSince = tick()
+    self.DesiredClientRange = IsClientInputBackend(self.VerifiedBackend)
+    self.PendingBackend = nil
+    self.PendingTarget = nil
+    self.PendingHumanoid = nil
+    self.PendingSince = 0
+    self.PendingLastDispatch = 0
+    self.PendingSettleUntil = 0
+    self.PendingAttempts = 0
+    self.LastConfirmedAt = 0
+    self.NextProbeAt = 0
+    _G.BobonDiagnostics.LastHPDelta = 0
+    _G.BobonDiagnostics.Targets = 0
+    if not humanoid then return end
+    self.HealthConnection = humanoid.HealthChanged:Connect(function(newHealth)
+        if not SessionAlive() or self.WatchedHumanoid ~= humanoid then return end
+        local oldHealth = self.WatchedHealth
+        self.WatchedHealth = newHealth
+        local now = tick()
+        local withinProbe = self.PendingBackend ~= nil
+            and self.PendingTarget == model
+            and self.PendingHumanoid == humanoid
+            and self.PendingAttempts > 0
+            and now - self.PendingLastDispatch
+                <= (_G.Settings.CombatCausalWindow or 0.65)
+        if oldHealth and newHealth < oldHealth and withinProbe
+            and not DamageAttributedToOtherPlayer(model, humanoid) then
+            self:ConfirmDamage(self.PendingBackend, oldHealth - newHealth)
+        end
+        if oldHealth and newHealth ~= oldHealth then
+            self.WatchedStableSince = now
+        end
+    end)
+end
+
+function CombatController:FailBackend(backend, reason)
+    if not backend then return end
+    self.FailedUntil[backend] = tick() + (_G.Settings.CombatBackendRetry or 12)
+    if backend == "TOKEN-4" then self.SessionToken = nil end
+    if backend == "CLIENT-HELPER" then
+        self.NativeHelper = nil
+        self.HelperScanDone = 0
+    end
+    if not IsClientInputBackend(backend) and backend ~= "GUN-REMOTE" then
+        self.NextFastUpgrade = tick() + (_G.Settings.CombatBackendRetry or 12)
+    end
+    if self.VerifiedBackend == backend then
+        self.VerifiedBackend = nil
+        self.FastVerified = false
+        self.DesiredClientRange = false
+    end
+    self.BackendProofs[backend] = nil
+    self.BackendLastProof[backend] = nil
+    self.PendingBackend = nil
+    self.PendingTarget = nil
+    self.PendingHumanoid = nil
+    self.PendingSince = 0
+    self.PendingLastDispatch = 0
+    self.PendingSettleUntil = 0
+    self.PendingAttempts = 0
+    self.NextProbeAt = tick() + 0.25
+    _G.BobonDiagnostics.Packet = "FAILED:" .. tostring(reason or backend)
+    DLog("ATTACK", backend .. " failed health probe: " .. tostring(reason))
+end
+
+-- Range, stun and equip transitions are not evidence that a backend is bad.
+-- Cancel that probe without blacklisting it, then retry after the transient
+-- physical condition has cleared.
+function CombatController:AbortPending(reason)
+    self.PendingBackend = nil
+    self.PendingTarget = nil
+    self.PendingHumanoid = nil
+    self.PendingSince = 0
+    self.PendingLastDispatch = 0
+    self.PendingSettleUntil = 0
+    self.PendingAttempts = 0
+    self.NextProbeAt = tick() + 0.1
+    _G.BobonDiagnostics.Packet = tostring(reason or "WAIT-PHYSICAL")
+end
+
+function CombatController:CheckPending(now)
+    if not self.PendingBackend then return end
+    local maxAttempts = _G.Settings.CombatProbeAttempts or 3
+    local timeout = _G.Settings.CombatProbeTimeout or 1.2
+    if self.PendingAttempts >= maxAttempts
+        and now - self.PendingLastDispatch >= timeout then
+        if self.PendingSettleUntil <= 0 then
+            self.PendingSettleUntil = now + (_G.Settings.CombatLateGrace or 0.35)
+            _G.BobonDiagnostics.Packet = "WAIT-LATE-DAMAGE"
+        elseif now >= self.PendingSettleUntil then
+            self:FailBackend(self.PendingBackend, "NO-HP-DELTA")
+        end
+    end
+end
+
+function CombatController:BackendAvailable(name)
+    if (self.FailedUntil[name] or 0) > tick() then return false end
+    if name == "CLIENT-HELPER" then
+        return self:ResolveRemotes() and type(self:ResolveNativeHelper()) == "function"
+    elseif name == "TOKEN-4" then
+        return self:ResolveRemotes() and IsCombatToken(self:ResolveSessionToken())
+    elseif name == "LEGACY-2" then
+        return self:ResolveRemotes() and self:LegacyAllowed()
+    elseif name == "CLIENT-MOUSE" then
+        return type(mouse1click) == "function"
+    elseif name == "CLIENT-VIM" or name == "CLIENT-TOOL" then
+        return true
+    end
+    return false
+end
+
+function CombatController:SelectBackend(now)
+    if self.PendingBackend then
+        if self.PendingAttempts >= (_G.Settings.CombatProbeAttempts or 3) then
+            return nil
+        end
+        return self.PendingBackend
+    end
+    if now < self.NextProbeAt then return nil end
+    if self.VerifiedBackend and self:BackendAvailable(self.VerifiedBackend) then
+        if not IsClientInputBackend(self.VerifiedBackend) or now < self.NextFastUpgrade then
+            return self.VerifiedBackend
+        end
+    end
+    for _, name in ipairs({
+        "CLIENT-HELPER", "TOKEN-4", "LEGACY-2",
+        "CLIENT-MOUSE", "CLIENT-VIM", "CLIENT-TOOL",
+    }) do
+        if self:BackendAvailable(name) then return name end
+    end
+    return nil
+end
+
+function CombatController:IsFastReady()
+    local ttl = _G.Settings.CombatVerificationTTL or 120
+    return self.FastVerified and self.VerifiedBackend ~= nil
+        and tick() - (self.FastVerifiedAt or 0) <= ttl
+        and (self.FailedUntil[self.VerifiedBackend] or 0) <= tick()
+end
+
+function CombatController:IsDamageReady()
+    local ttl = _G.Settings.CombatVerificationTTL or 120
+    return self.VerifiedBackend ~= nil
+        and (self.BackendProofs[self.VerifiedBackend] or 0)
+            >= (_G.Settings.CombatProofsRequired or 2)
+        and tick() - (self.FastVerifiedAt or 0) <= ttl
+        and (self.FailedUntil[self.VerifiedBackend] or 0) <= tick()
+end
+
+function CombatController:WantsClientRange()
+    return self.DesiredClientRange == true
+end
+
+function CombatController:DispatchClientClick(tool, targetRoot, backend)
+    local camera = workspace.CurrentCamera
+    local okTarget, targetPosition = pcall(function() return targetRoot.Position end)
+    if not okTarget or not IsValidPos(targetPosition) then return false end
+    if camera then
+        pcall(function()
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetPosition)
+        end)
+    end
+    if backend == "CLIENT-MOUSE" and type(mouse1click) == "function" then
+        return pcall(mouse1click)
+    end
+    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local clickPos = Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+    if backend == "CLIENT-VIM" then
+        local ok = pcall(function()
+            VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, true, game, 0)
+        end)
+        if not ok then return false end
+        task.delay(0.04, function()
+            if not SessionAlive() then return end
+            pcall(function()
+                VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, false, game, 0)
+            end)
+        end)
+        return true
+    end
+    if backend == "CLIENT-TOOL" then
+        local ok = pcall(function() tool:Activate() end)
+        if ok then
+            task.delay(0.05, function()
+                if SessionAlive() and tool and tool.Parent then
+                    pcall(function() tool:Deactivate() end)
+                end
+            end)
+        end
+        return ok
+    end
+    return false
+end
+
+function CombatController:Dispatch(backend, tool, entries, preferredRoot)
+    if #entries == 0 then return false end
+    if IsClientInputBackend(backend) then
+        return self:DispatchClientClick(tool, preferredRoot, backend)
+    elseif backend == "CLIENT-HELPER" then
+        local helper = self:ResolveNativeHelper()
+        local hitList = {}
+        for _, entry in ipairs(entries) do
+            hitList[#hitList + 1] = { entry.Model, entry.Part }
+        end
+        pcall(function() self.RegisterAttack:FireServer(0) end)
+        local hitOk = pcall(function() helper(entries[1].Part, hitList) end)
+        return hitOk
+    elseif backend == "TOKEN-4" then
+        local token = self:ResolveSessionToken()
+        local hitOk = false
+        for _, entry in ipairs(entries) do
+            pcall(function() self.RegisterAttack:FireServer(0.5) end)
+            local ok = pcall(function()
+                self.RegisterHit:FireServer(entry.Part, {}, nil, token)
+            end)
+            hitOk = hitOk or ok
+        end
+        return hitOk
+    elseif backend == "LEGACY-2" then
+        local hitList = {}
+        for _, entry in ipairs(entries) do
+            hitList[#hitList + 1] = { entry.Model, entry.Part }
+        end
+        pcall(function() self.RegisterAttack:FireServer(0) end)
+        local hitOk = pcall(function()
+            self.RegisterHit:FireServer(entries[1].Part, hitList)
+        end)
+        return hitOk
+    elseif backend == "GUN-REMOTE" then
+        local remote = tool:FindFirstChild("LeftClickRemote")
+        local playerRoot = HRP()
+        if not remote or not playerRoot then return false end
+        local playerPosition = playerRoot.Position
+        local sent = false
+        for _, entry in ipairs(entries) do
+            local okRoot, enemyPosition = pcall(function() return entry.Root.Position end)
+            local direction = okRoot and (enemyPosition - playerPosition) or nil
+            if direction and direction.Magnitude > 0.01 then
+                local ok = pcall(function() remote:FireServer(direction.Unit, 1) end)
+                sent = sent or ok
+            end
+        end
+        return sent
+    end
+    return false
+end
+
+function CombatController:Attack(tool, kind, preferredModel, preferredHum, preferredRoot, mobName)
+    local now = tick()
+    self:WatchTarget(preferredModel, preferredHum)
+
+    -- Choose the desired physical range before dispatching. Fast/helper
+    -- probes stay at safe hover; only an actual client-input backend asks the
+    -- travel controller to descend into real melee/sword range.
+    local candidateBackend = kind == "Gun" and "GUN-REMOTE"
+        or self.PendingBackend or self:SelectBackend(now)
+    self.DesiredClientRange = IsClientInputBackend(candidateBackend)
+        or (not candidateBackend and IsClientInputBackend(self.VerifiedBackend))
+    if not candidateBackend then
+        _G.BobonDiagnostics.Packet = "WAIT-BACKEND"
+        return false
+    end
+    local candidateInputBackend = IsClientInputBackend(candidateBackend)
+    local candidateRange = candidateInputBackend
+        and (_G.Settings.ClientAttackRange or 8)
+        or (_G.Settings.FastAttackRange or 100)
+    local me = HRP()
+    local okPreferred, preferredPosition = pcall(function()
+        return preferredRoot.Parent and preferredRoot.Position or nil
+    end)
+    if not me or not okPreferred or not IsValidPos(preferredPosition)
+        or (preferredPosition - me.Position).Magnitude > candidateRange then
+        if self.PendingBackend then self:AbortPending("APPROACHING") end
+        _G.BobonDiagnostics.Packet = "APPROACHING"
+        return false
+    end
+    if tool.Parent ~= Char() or tool.Enabled == false then
+        self:AbortPending("WAIT-TOOL-READY")
+        return false
+    end
+    if WeaponController and type(WeaponController.IsReady) == "function"
+        and not WeaponController:IsReady(tool) then
+        self:AbortPending("WAIT-EQUIP-SETTLE")
+        return false
+    end
+    local character = Char()
+    for _, flagName in ipairs({ "Stun", "Busy" }) do
+        local flag = character and character:FindFirstChild(flagName)
+        if flag and ((flag:IsA("BoolValue") and flag.Value)
+            or (flag:IsA("NumberValue") and flag.Value > 0)) then
+            self:AbortPending("WAIT-" .. string.upper(flagName))
+            return false
+        end
+        local attribute = character and character:GetAttribute(flagName)
+        if attribute == true or (type(attribute) == "number" and attribute > 0) then
+            self:AbortPending("WAIT-" .. string.upper(flagName))
+            return false
+        end
+    end
+
+    -- Validate the streamed hit part before allowing an old pending probe to
+    -- time out. A despawned limb/root is a target transition, not evidence
+    -- that the combat backend failed.
+    local candidateEntries = self:CollectTargets(preferredModel,
+        candidateInputBackend and nil or mobName, candidateRange)
+    if #candidateEntries == 0 then
+        self:AbortPending("NO-TARGETS")
+        return false
+    end
+
+    -- Before the first proof (or after TTL expiry), require a short quiet HP
+    -- baseline. This makes ambient/DOT damage less likely to validate a bad
+    -- backend. Existing in-flight probes are allowed to finish normally.
+    if not self.PendingBackend and not self:IsDamageReady()
+        and now - (self.WatchedStableSince or now)
+            < (_G.Settings.CombatBaselineQuiet or 0.25) then
+        _G.BobonDiagnostics.Packet = "WAIT-STABLE-HP"
+        return false
+    end
+
+    -- Only expire a health probe while its target, tool and character are in
+    -- a valid attacking state. Physical interruptions above abort, not fail.
+    self:CheckPending(now)
+    local backend = kind == "Gun" and "GUN-REMOTE" or self:SelectBackend(now)
+    if not backend then
+        self.DesiredClientRange = IsClientInputBackend(self.PendingBackend)
+            or IsClientInputBackend(self.VerifiedBackend)
+        _G.BobonDiagnostics.Packet = "WAIT-HP"
+        return false
+    end
+    local inputBackend = IsClientInputBackend(backend)
+    self.DesiredClientRange = inputBackend
+    local range = inputBackend
+        and (_G.Settings.ClientAttackRange or 8)
+        or (_G.Settings.FastAttackRange or 100)
+    if (preferredPosition - me.Position).Magnitude > range then
+        if self.PendingBackend then self:AbortPending("APPROACHING") end
+        _G.BobonDiagnostics.Packet = "APPROACHING"
+        return false
+    end
+    local entries = backend == candidateBackend and candidateEntries
+        or self:CollectTargets(preferredModel,
+            inputBackend and nil or mobName, range)
+    if #entries == 0 then
+        _G.BobonDiagnostics.Packet = "NO-TARGETS"
+        return false
+    end
+    if now - _G.State.LastAttackTime < (_G.Settings.AttackDelay or 0.08) then
+        return false
+    end
+    _G.State.LastAttackTime = now
+    if self.PendingBackend ~= backend then
+        self.PendingBackend = backend
+        self.PendingTarget = preferredModel
+        self.PendingHumanoid = preferredHum
+        self.PendingSince = now
+        self.PendingLastDispatch = 0
+        self.PendingSettleUntil = 0
+        self.PendingAttempts = 0
+    end
+    -- Probe only the watched primary. Once that backend has produced real HP
+    -- deltas, helper/remote backends may fan out to the matching cluster.
+    local dispatchEntries = entries
+    if self.VerifiedBackend ~= backend or not self:IsFastReady() then
+        dispatchEntries = { entries[1] }
+    end
+    local attempted = self:Dispatch(backend, tool, dispatchEntries, preferredRoot)
+    local diag = _G.BobonDiagnostics
+    diag.Net = backend
+    diag.Targets = #entries
+    if attempted then
+        self.PendingAttempts = self.PendingAttempts + 1
+        self.PendingLastDispatch = now
+        self.PendingSettleUntil = 0
+        diag.Packet = "ATTEMPT:" .. backend
+    else
+        self:FailBackend(backend, "DISPATCH-ERROR")
+        diag.Packet = "ERROR:" .. backend
+    end
+    return attempted
+end
+
+function CombatController:Cleanup()
+    if self.HealthConnection then self.HealthConnection:Disconnect() end
+    self.HealthConnection = nil
+    self.WatchedHumanoid = nil
+    self.WatchedModel = nil
+    self.WatchedHealth = nil
+    self.NativeHelper = nil
+    self.HelperScanDone = 0
+    self.SessionToken = nil
+    self.SessionTokenSource = nil
+    self.GameGlobal = nil
+    self.VerifiedBackend = nil
+    self.FastVerified = false
+    self.FastVerifiedAt = 0
+    self.LastConfirmedAt = 0
+    self.PendingBackend = nil
+    self.PendingTarget = nil
+    self.PendingHumanoid = nil
+    self.PendingSince = 0
+    self.PendingLastDispatch = 0
+    self.PendingSettleUntil = 0
+    self.PendingAttempts = 0
+    self.NextProbeAt = 0
+    self.FailedUntil = {}
+    self.BackendProofs = {}
+    self.BackendLastProof = {}
+    self.NextFastUpgrade = 0
+    self.DesiredClientRange = false
+    self.WatchedStableSince = 0
 end
 
 local function Attack(preferredTarget, mobName)
     if not IsAlive() then return false end
-    local now = tick()
-    if now - _G.State.LastAttackTime < _G.Settings.AttackDelay then return false end
     local c = Char()
     local tool = c and c:FindFirstChildOfClass("Tool")
-    if not tool then
-        _G.BobonDiagnostics.Tool = "NO-TOOL"
-        _G.BobonDiagnostics.Packet = "blocked-tool"
-        DLog("ATTACK", "Waiting for combat tool")
+    local kind = ToolCombatKind(tool)
+    if not tool or not kind then
+        _G.BobonDiagnostics.Tool = tool and ("INVALID:" .. tool.Name) or "NO-TOOL"
+        _G.BobonDiagnostics.Packet = "BLOCKED-TOOL"
         return false
     end
     local targetRoot = preferredTarget and preferredTarget:IsA("BasePart")
@@ -1170,99 +1875,12 @@ local function Attack(preferredTarget, mobName)
         or (preferredTarget and preferredTarget:FindFirstChild("HumanoidRootPart"))
     local targetModel = targetRoot and targetRoot:FindFirstAncestorOfClass("Model")
     local targetHum = targetModel and targetModel:FindFirstChildOfClass("Humanoid")
-    local me = HRP()
-    if not me or not targetRoot or not targetRoot.Parent
-        or not targetHum or targetHum.Health <= 0 then
-        _G.BobonDiagnostics.Packet = "invalid-target"
+    if not targetRoot or not targetRoot.Parent or not targetHum or targetHum.Health <= 0 then
+        _G.BobonDiagnostics.Packet = "INVALID-TARGET"
         return false
     end
-
-    -- A real melee/sword M1 is range checked by the client/server. Do not
-    -- report a fake packet while the travel controller is still approaching.
-    local targetDistance = (targetRoot.Position - me.Position).Magnitude
-    if targetDistance > (_G.Settings.ClientAttackRange or 30) then
-        _G.BobonDiagnostics.Packet = "approaching"
-        return false
-    end
-    _G.State.LastAttackTime = now
-
-    -- Face the target before Tool:Activate/input. The previous order activated
-    -- first and only aimed afterwards, so sword/melee controllers attacked the
-    -- old camera direction while the character hovered above the NPC.
-    local camera = workspace.CurrentCamera
-    local viewport = camera and camera.ViewportSize
-    local clickPos = viewport and Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
-        or Vector2.new(640, 360)
-    if camera then
-        pcall(function()
-            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetRoot.Position)
-        end)
-    end
-    pcall(function()
-        local flatTarget = Vector3.new(targetRoot.Position.X, me.Position.Y, targetRoot.Position.Z)
-        if (flatTarget - me.Position).Magnitude > 0.05 then
-            me.CFrame = CFrame.lookAt(me.Position, flatTarget)
-        end
-    end)
-
-    local diag = _G.BobonDiagnostics
-    diag.Tool = tool.Name
-    local nearby = 0
-    local folder = workspace:FindFirstChild("Enemies")
-    if folder then
-        for _, enemy in ipairs(folder:GetChildren()) do
-            local hum = enemy:FindFirstChildOfClass("Humanoid")
-            local root = enemy:FindFirstChild("HumanoidRootPart")
-            if hum and hum.Health > 0 and root
-                and (enemy == targetModel or not mobName or IsEnemyNamed(enemy, mobName))
-                and (root.Position - me.Position).Magnitude
-                    <= (_G.Settings.ClientAttackRange or 30) then
-                nearby = nearby + 1
-            end
-        end
-    end
-    diag.Hits = math.max(nearby, 1)
-
-    -- Current servers attach a changing session value to their internal hit
-    -- packet. A guessed two-argument RegisterHit can pcall successfully while
-    -- the server discards it. Drive the equipped Tool through the real client
-    -- input path instead; this is shared by Combat, every melee style and all
-    -- swords. Gun tools retain their own live LeftClickRemote path.
-    if tool:FindFirstChild("LeftClickRemote") then
-        diag.Net = "GUN-REMOTE"
-        local activated = pcall(function() tool:Activate() end)
-        local fired = FireGunHits(tool, preferredTarget)
-        diag.Packet = (activated or fired) and "gun-sent" or "gun-error"
-        return activated or fired
-    end
-
-    diag.Net = "CLIENT-M1"
-    local activateOk = pcall(function() tool:Activate() end)
-    local vimDownOk = pcall(function()
-        VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, true, game, 0)
-    end)
-    local executorDownOk = false
-    if type(mouse1press) == "function" then
-        executorDownOk = pcall(mouse1press)
-    elseif type(mouse1click) == "function" then
-        executorDownOk = pcall(mouse1click)
-    end
-    local cameraCF = camera and camera.CFrame or CFrame.new()
-    local vuDownOk = pcall(function()
-        VU:CaptureController()
-        VU:Button1Down(clickPos, cameraCF)
-    end)
-    task.delay(0.04, function()
-        if not SessionAlive() then return end
-        pcall(function()
-            VIM:SendMouseButtonEvent(clickPos.X, clickPos.Y, 0, false, game, 0)
-        end)
-        if type(mouse1release) == "function" then pcall(mouse1release) end
-        pcall(function() VU:Button1Up(clickPos, cameraCF) end)
-    end)
-    local sent = activateOk or vimDownOk or executorDownOk or vuDownOk
-    diag.Packet = sent and "m1-sent" or "m1-error"
-    return sent
+    _G.BobonDiagnostics.Tool = tool.Name
+    return CombatController:Attack(tool, kind, targetModel, targetHum, targetRoot, mobName)
 end
 
 local function PrepareCombatTarget(target)
@@ -1270,20 +1888,10 @@ local function PrepareCombatTarget(target)
     local root = target:IsA("BasePart") and target or target:FindFirstChild("HumanoidRootPart")
     if not root or not root:IsA("BasePart") then return end
     pcall(function()
-        -- Local hitbox only; avoids relying on a one-frame exact contact while
-        -- hovering above enemies and matches the combat flow used by common
-        -- Blox Fruits farming sources.
-        local size = _G.Settings.HitboxSize
-        if size and root.Size.X < size then
-            root.Size = Vector3.new(size, size, size)
-        end
-        root.CanCollide = false
-        local model = target:IsA("Model") and target
-            or target:FindFirstAncestorOfClass("Model")
-        local hum = model and model:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
-            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+        -- Undo the exact 50^3 mutation made by the previous hotfix, then leave
+        -- enemy geometry untouched. Direct/client combat does not need it.
+        if root.Size == Vector3.new(50, 50, 50) then
+            root.Size = Vector3.new(2, 2, 1)
         end
     end)
 end
@@ -1293,7 +1901,7 @@ local MeleeList = {
     "Godhuman","Superhuman","Death Step","Electric Claw",
     "Dragon Talon","Sharkman Karate","Dragon Claw",
     "Fishman Karate","Water Kung Fu","Dark Step","Black Leg",
-    "Electro","Combat","Sanguine Art"
+    "Electro","Combat","Dragon Breath","Sanguine Art"
 }
 
 
@@ -1304,13 +1912,34 @@ EquipmentController.LastEquip = 0
 EquipmentController.LastResult = "none"
 EquipmentController.PendingName = nil
 
+local function ToolCategoryText(tool)
+    if not tool or not tool:IsA("Tool") then return "" end
+    local values = {}
+    local okTip, tip = pcall(function() return tool.ToolTip end)
+    if okTip and type(tip) == "string" then values[#values + 1] = tip end
+    for _, attributeName in ipairs({ "ToolType", "Type", "Category", "WeaponType" }) do
+        local okAttribute, value = pcall(function()
+            return tool:GetAttribute(attributeName)
+        end)
+        if okAttribute and type(value) == "string" then
+            values[#values + 1] = value
+        end
+        local valueObject = tool:FindFirstChild(attributeName)
+        if valueObject and valueObject:IsA("StringValue") then
+            values[#values + 1] = valueObject.Value
+        end
+    end
+    return string.lower(table.concat(values, " "))
+end
+
 local function IsMeleeTool(tool)
     if not tool or not tool:IsA("Tool") then return false end
     for _, name in ipairs(MeleeList) do
         if tool.Name == name then return true end
     end
-    local ok, tip = pcall(function() return tool.ToolTip end)
-    return ok and type(tip) == "string" and string.find(string.lower(tip), "melee", 1, true) ~= nil
+    local category = ToolCategoryText(tool)
+    return string.find(category, "melee", 1, true) ~= nil
+        or string.find(category, "fighting style", 1, true) ~= nil
 end
 
 
@@ -1374,10 +2003,14 @@ end
 -- danh sách tên và nhóm ToolType/ToolTip để nhận diện mà không phụ thuộc UI.
 local SwordList = {
     "Cutlass","Katana","Dual Katana","Triple Katana","Iron Mace",
-    "Shark Saw","Soul Cane","Bisento","Saber","Pole (1st Form)",
+    "Pipe","Dual-Headed Blade","Shark Saw","Soul Cane","Bisento",
+    "Saber","Pole (1st Form)","Pole (2nd Form)","Jitte","Longsword",
+    "Dragon Trident","Gravity Cane","Koko","Dark Blade",
+    "True Triple Katana","Saddi","Shisui","Wando",
     "Rengoku","Midnight Blade","Yama","Tushita","Buddy Sword",
     "Canvander","Twin Hooks","Spikey Trident","Cursed Dual Katana",
-    "Dark Dagger","Hallow Scythe","Shark Anchor","Dragonheart",
+    "Dark Dagger","Hallow Scythe","Shark Anchor","Fox Lamp",
+    "Gravity Blade","Dragonheart",
 }
 local GunList = {
     "Slingshot","Musket","Flintlock","Refined Flintlock","Cannon",
@@ -1394,53 +2027,57 @@ end
 
 local function IsSwordTool(tool)
     if ToolNameIn(SwordList, tool) then return true end
-    local ok, tip = pcall(function() return tool and tool.ToolTip end)
-    tip = ok and type(tip) == "string" and string.lower(tip) or ""
-    return string.find(tip, "sword", 1, true) ~= nil
-        or string.find(tip, "blade", 1, true) ~= nil
+    local category = ToolCategoryText(tool)
+    return string.find(category, "sword", 1, true) ~= nil
+        or string.find(category, "blade", 1, true) ~= nil
 end
 
 local function IsGunTool(tool)
     if ToolNameIn(GunList, tool) then return true end
-    local ok, tip = pcall(function() return tool and tool.ToolTip end)
-    tip = ok and type(tip) == "string" and string.lower(tip) or ""
-    return string.find(tip, "gun", 1, true) ~= nil
-        or string.find(tip, "rifle", 1, true) ~= nil
-        or string.find(tip, "bow", 1, true) ~= nil
+    local category = ToolCategoryText(tool)
+    return string.find(category, "gun", 1, true) ~= nil
+        or string.find(category, "rifle", 1, true) ~= nil
+        or string.find(category, "bow", 1, true) ~= nil
 end
 
-local WeaponController = {
+WeaponController = {
     LastEquip = 0,
     LastResult = "none",
+    HeldTool = nil,
+    ReadyAt = 0,
 }
-
-local NonCombatToolNames = {
-    Torch = true, Cup = true, Key = true, Relic = true,
-    Microchip = true, ["Holy Torch"] = true,
-}
-
-local function IsFallbackCombatTool(tool)
-    if not tool or not tool:IsA("Tool") or NonCombatToolNames[tool.Name] then return false end
-    local ok, tip = pcall(function() return tostring(tool.ToolTip or "") end)
-    tip = ok and string.lower(tip) or ""
-    return tip ~= "wear" and tip ~= "material" and tip ~= "quest"
-end
 
 function WeaponController:IsCombatTool(tool)
     return IsMeleeTool(tool) or IsSwordTool(tool) or IsGunTool(tool)
 end
 
+function WeaponController:IsReady(tool)
+    return tool ~= nil and tool.Parent == Char() and tool.Enabled ~= false
+        and self.HeldTool == tool and tick() >= (self.ReadyAt or 0)
+end
+
 function WeaponController:EquipPreferred()
     local c = Char()
     local hum = c and c:FindFirstChildOfClass("Humanoid")
-    if not c or not hum then self.LastResult = "noChar"; return false end
-    local held = c:FindFirstChildOfClass("Tool")
-    if held and (self:IsCombatTool(held) or IsFallbackCombatTool(held)) then
-        self.LastResult = "holding:" .. held.Name
-        _G.BobonDiagnostics.Tool = held.Name
-        return true
+    if not c or not hum then
+        self.HeldTool = nil
+        self.ReadyAt = 0
+        self.LastResult = "noChar"
+        return false
     end
     local now = tick()
+    local held = c:FindFirstChildOfClass("Tool")
+    if held and self:IsCombatTool(held) then
+        if self.HeldTool ~= held then
+            self.HeldTool = held
+            self.ReadyAt = now + (_G.Settings.EquipSettle or 0.35)
+        end
+        self.LastResult = "holding:" .. held.Name
+        _G.BobonDiagnostics.Tool = held.Name
+        return self:IsReady(held)
+    end
+    self.HeldTool = nil
+    self.ReadyAt = 0
     if now - self.LastEquip < 0.35 then
         self.LastResult = "cooldown"
         return false
@@ -1463,14 +2100,6 @@ function WeaponController:EquipPreferred()
         end
     end
     if not candidate then
-        -- New styles/items are not always present in the static name list.
-        -- The live client needs a held combat Tool for its M1 controller, so
-        -- use the first safe Tool instead of reporting a false ready state.
-        for _, tool in ipairs(backpack:GetChildren()) do
-            if IsFallbackCombatTool(tool) then candidate = tool; break end
-        end
-    end
-    if not candidate then
         self.LastResult = "noCombatTool"
         _G.BobonDiagnostics.Tool = "NO-TOOL"
         return false
@@ -1478,10 +2107,14 @@ function WeaponController:EquipPreferred()
     self.LastEquip = now
     local ok = pcall(function() hum:EquipTool(candidate) end)
     local equipped = ok and candidate.Parent == c
-    self.LastResult = equipped and "holding:" .. candidate.Name
+    if equipped then
+        self.HeldTool = candidate
+        self.ReadyAt = now + (_G.Settings.EquipSettle or 0.35)
+    end
+    self.LastResult = equipped and "settling:" .. candidate.Name
         or (ok and "equipping:" .. candidate.Name or "equipError")
     _G.BobonDiagnostics.Tool = equipped and candidate.Name or self.LastResult
-    return equipped
+    return false
 end
 
 local function EquipCombatTool()
@@ -1531,7 +2164,7 @@ local function FindNearestMob(mobName)
             local ok, pos = pcall(function() return root.Position end)
             if not ok then continue end
             -- [FIX-7] Bo qua mob o duoi bien / vi tri bat thuong
-            if not IsAllowedWorldY(pos.Y) then continue end
+            if not IsAllowedWorldPosition(pos) then continue end
             local d = (pos - hrp.Position).Magnitude
             if d < bd then best,bd=v,d end
         end
@@ -1557,7 +2190,7 @@ local function GetFarmPosition(mobPos)
     return Vector3.new(
         mobPos.X + _G.Settings.FarmOffsetX,
         math.max(mobPos.Y + _G.Settings.FarmHeight,
-            IsUnderwaterY(mobPos.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
+            IsSubmergedPosition(mobPos) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         mobPos.Z
     )
 end
@@ -1703,24 +2336,21 @@ local FarmPositionController = {
     LastGather = 0,
     LastSimulationTry = 0,
     SimulationReady = false,
-    -- [G-7] registry các root đã anchor cục bộ khi gom cụm
-    Anchored = {},
+    SavedMobState = setmetatable({}, { __mode = "k" }),
 }
 
 
-function FarmPositionController:GetFarmPos(mob)
+function FarmPositionController:GetFarmPos(mob, requestedHeight)
     if not mob then return nil end
     local root = mob:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
     local ok, pos = pcall(function() return root.Position end)
     if not ok or not IsValidPos(pos) then return nil end
-    -- PrepareCombatTarget enlarges this root to improve target acquisition.
-    -- Never use that synthetic Size.Y as hover height: it previously added
-    -- another 10 studs and left every real melee/sword M1 out of reach.
+    local hoverHeight = requestedHeight or _G.Settings.FarmHeight
     return Vector3.new(
         pos.X + _G.Settings.FarmOffsetX,
-        math.max(pos.Y + _G.Settings.FarmHeight,
-            IsUnderwaterY(pos.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
+        math.max(pos.Y + hoverHeight,
+            IsSubmergedPosition(pos) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         pos.Z
     )
 end
@@ -1745,7 +2375,7 @@ function FarmPositionController:GetClusterFarmPos(primary)
         if IsEnemyNamed(mob, wantedName) and hum and hum.Health > 0 and mobRoot then
             local valid, pos = pcall(function() return mobRoot.Position end)
             if valid and IsValidPos(pos)
-                and IsAllowedWorldY(pos.Y)
+                and IsAllowedWorldPosition(pos)
                 and (pos - origin).Magnitude <= _G.Settings.MobGatherRadius then
                 center = center + pos
                 count = count + 1
@@ -1757,7 +2387,7 @@ function FarmPositionController:GetClusterFarmPos(primary)
     return Vector3.new(
         avg.X + _G.Settings.FarmOffsetX,
         math.max(avg.Y + _G.Settings.FarmHeight,
-            IsUnderwaterY(avg.Y) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
+            IsSubmergedPosition(avg) and (_G.Settings.UnderwaterMinY + 25) or _G.Settings.MinY),
         avg.Z
     )
 end
@@ -1772,7 +2402,7 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
         if IsEnemyNamed(v, mobName) and v:FindFirstChild("Humanoid")
             and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
             local p = v.HumanoidRootPart.Position
-            if IsAllowedWorldY(p.Y)
+            if IsAllowedWorldPosition(p)
                 and (p - center).Magnitude <= _G.Settings.MobGatherRadius then
                 return true
             end
@@ -1781,16 +2411,56 @@ function FarmPositionController:HasNearbyMobs(mobName, center)
     return false
 end
 
--- Release roots anchored by an older execution of this controller. The safe
--- gather path below never anchors NPCs because doing so only changes the
--- client copy when the server owns that NPC.
+function FarmPositionController:SaveMob(root, hum)
+    if not root or not hum or self.SavedMobState[root] then return end
+    local ok, state = pcall(function() return hum:GetState() end)
+    self.SavedMobState[root] = {
+        Humanoid = hum,
+        Anchored = root.Anchored,
+        CanCollide = root.CanCollide,
+        LinearVelocity = root.AssemblyLinearVelocity,
+        AngularVelocity = root.AssemblyAngularVelocity,
+        WalkSpeed = hum.WalkSpeed,
+        JumpPower = hum.JumpPower,
+        AutoRotate = hum.AutoRotate,
+        HealthDisplayType = hum.HealthDisplayType,
+        DisplayDistanceType = hum.DisplayDistanceType,
+        State = ok and state or nil,
+    }
+end
+
+function FarmPositionController:RestoreMob(root)
+    local saved = root and self.SavedMobState[root]
+    if not saved then return end
+    pcall(function()
+        if root and root.Parent then
+            root.Anchored = saved.Anchored
+            root.CanCollide = saved.CanCollide
+            root.AssemblyLinearVelocity = saved.LinearVelocity
+            root.AssemblyAngularVelocity = saved.AngularVelocity
+        end
+        local hum = saved.Humanoid
+        if hum and hum.Parent then
+            hum.WalkSpeed = saved.WalkSpeed
+            hum.JumpPower = saved.JumpPower
+            hum.AutoRotate = saved.AutoRotate
+            hum.HealthDisplayType = saved.HealthDisplayType
+            hum.DisplayDistanceType = saved.DisplayDistanceType
+            if saved.State then hum:ChangeState(saved.State) end
+        end
+    end)
+    self.SavedMobState[root] = nil
+end
+
+-- Restore every NPC property modified by bring. This runs on quest/target
+-- changes, death, re-execution and unload.
 function FarmPositionController:ReleaseCluster()
-    for root in pairs(self.Anchored or {}) do
-        pcall(function()
-            if root and root.Parent then root.Anchored = false end
-        end)
+    local roots = {}
+    for root in pairs(self.SavedMobState or {}) do roots[#roots + 1] = root end
+    for _, root in ipairs(roots) do
+        self:RestoreMob(root)
     end
-    self.Anchored = {}
+    self.SavedMobState = setmetatable({}, { __mode = "k" })
 end
 
 local function ExpandSimulationRadius()
@@ -1833,6 +2503,13 @@ end
 -- nothing with a permanent zero-moved diagnostic.
 function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primary or not mobName then return 0 end
+    if not CombatController:IsFastReady() then
+        self:ReleaseCluster()
+        _G.BobonDiagnostics.Bring = "FAST-REQUIRED"
+        _G.BobonDiagnostics.BringCandidates = 0
+        _G.BobonDiagnostics.BringMoved = 0
+        return 0
+    end
     if (_G.State.IsTraveling and _G.State.MovementOwner ~= "Farm")
         or not _G.State:IsTargetValid(primary) then
         return 0
@@ -1845,26 +2522,14 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     if not primaryRoot or not folder then return 0 end
     local okOrigin, origin = pcall(function() return primaryRoot.Position end)
     if not okOrigin or not IsValidPos(origin) then return 0 end
-    pcall(function()
-        local primaryHum = primary:FindFirstChildOfClass("Humanoid")
-        primaryRoot.Anchored = false
-        primaryRoot.CanCollide = false
-        primaryRoot.AssemblyLinearVelocity = Vector3.zero
-        primaryRoot.AssemblyAngularVelocity = Vector3.zero
-        if primaryHum then
-            primaryHum.WalkSpeed = 0
-            primaryHum.JumpPower = 0
-            primaryHum:ChangeState(11)
-        end
-    end)
     local playerRoot = HRP()
-    local anchorPos = self:GetFarmPos(primary)
+    local activeHeight = CombatController:IsFastReady()
+        and (_G.Settings.FarmHeight or 15)
+        or (_G.Settings.ClientHoverHeight or 5)
+    local anchorPos = self:GetFarmPos(primary, activeHeight)
     if not playerRoot or not anchorPos then return 0 end
     local okPlayerPos, playerPos = pcall(function() return playerRoot.Position end)
-    -- [G-6] Anchor gate nới tối thiểu 35 studs: hover travel dừng ở
-    -- FarmArrivalThreshold nhưng dao động vật lý khiến vòng nhỏ cũ
-    -- hay tắt gom liên tục.
-    local anchorRadius = math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
+    local anchorRadius = _G.Settings.HoverConfirmRadius or 5
     if not okPlayerPos or not IsValidPos(playerPos)
         or (playerPos - anchorPos).Magnitude > anchorRadius then
         _G.BobonDiagnostics.Bring = "WAIT"
@@ -1876,51 +2541,84 @@ function FarmPositionController:GatherMobCluster(mobName, primary)
     local maxDistance = gatherAll
         and math.min(_G.Settings.GatherMaxDistance or 250, 250)
         or (_G.Settings.MobGatherRadius or 50)
-    local spacing = _G.Settings.GatherSpacing or 4
+    local spacing = _G.Settings.GatherSpacing or 0
     local simulationExpanded = ExpandSimulationRadius()
     local moved, slot, candidates = 0, 0, 0
-    local bringMode = simulationExpanded and "SIM" or "LOCAL"
+    local bringMode = simulationExpanded and "SIM-REQUEST" or "NO-SIM"
+    local activeRoots = { [primaryRoot] = true }
+
+    -- Freeze the anchor only when the client actually owns its physics.
+    local primaryHum = primary:FindFirstChildOfClass("Humanoid")
+    local primaryOwned = ClientOwnsMob(primaryRoot)
+    if primaryOwned == false and self.SavedMobState[primaryRoot] then
+        self:RestoreMob(primaryRoot)
+    elseif primaryHum and primaryOwned == true then
+        self:SaveMob(primaryRoot, primaryHum)
+        pcall(function()
+            primaryRoot.Anchored = false
+            primaryRoot.CanCollide = false
+            primaryRoot.AssemblyLinearVelocity = Vector3.zero
+            primaryRoot.AssemblyAngularVelocity = Vector3.zero
+            primaryHum.WalkSpeed = 0
+            primaryHum.JumpPower = 0
+            primaryHum.AutoRotate = false
+            primaryHum:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
+    end
+
     for _, mob in ipairs(folder:GetChildren()) do
         local hum = mob:FindFirstChildOfClass("Humanoid")
         local root = mob:FindFirstChild("HumanoidRootPart")
         if mob ~= primary and IsEnemyNamed(mob, mobName) and hum and hum.Health > 0 and root then
             local okPos, mobPos = pcall(function() return root.Position end)
             local offset = okPos and (mobPos - origin) or nil
-            if okPos and IsValidPos(mobPos) and IsAllowedWorldY(mobPos.Y)
+            if okPos and IsValidPos(mobPos) and IsAllowedWorldPosition(mobPos)
                 and offset.Magnitude <= maxDistance then
+                activeRoots[root] = true
                 candidates = candidates + 1
                 slot = slot + 1
                 local angle = slot * 2.4
                 local destination = origin + Vector3.new(math.cos(angle) * spacing, 0, math.sin(angle) * spacing)
+                local owned = ClientOwnsMob(root)
+                if owned == false and self.SavedMobState[root] then
+                    self:RestoreMob(root)
+                end
                 pcall(function()
-                    root.Anchored = false
-                    root.CanCollide = false
-                    hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
-                    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
-                    local owned = ClientOwnsMob(root)
-                    -- Re-apply the local move every gather tick for all quest
-                    -- mobs inside the configured 250-stud island radius. When
-                    -- the executor exposes ownership, SIM/OWN replicates it;
-                    -- otherwise LOCAL remains a visible best-effort bring.
-                    local canMove = owned ~= false or simulationExpanded
-                        or offset.Magnitude <= maxDistance
-                    if owned == true and not simulationExpanded then bringMode = "OWN" end
-                    if canMove then
-                        if offset.Magnitude > spacing + 1 then
-                            local destinationCF = CFrame.new(destination, origin)
-                            hum.WalkSpeed = 0
-                            hum.JumpPower = 0
-                            pcall(function() hum:ChangeState(11) end)
-                            root.CFrame = destinationCF
-                            root.AssemblyLinearVelocity = Vector3.zero
-                            root.AssemblyAngularVelocity = Vector3.zero
-                        end
+                    if owned == true or owned == nil then
+                        self:SaveMob(root, hum)
+                        hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOn
+                        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+                        root.Anchored = false
+                        root.CanCollide = false
+                        hum.WalkSpeed = 0
+                        hum.JumpPower = 0
+                        hum.AutoRotate = false
+                        hum:ChangeState(Enum.HumanoidStateType.Physics)
+                        root.CFrame = CFrame.new(destination)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                    end
+                    if owned == true then
                         moved = moved + 1
+                        bringMode = "OWNED"
+                    elseif owned == nil then
+                        -- Visual/local fallback only. Without an ownership API
+                        -- there is no honest way to claim server replication.
+                        bringMode = simulationExpanded
+                            and "LOCAL-UNVERIFIED" or "NO-OWNERSHIP-API"
+                    elseif owned == false and moved == 0 then
+                        bringMode = "WAIT-OWN"
                     end
                 end)
             end
         end
     end
+    local staleRoots = {}
+    for root in pairs(self.SavedMobState) do
+        if not activeRoots[root] then staleRoots[#staleRoots + 1] = root end
+    end
+    for _, root in ipairs(staleRoots) do self:RestoreMob(root) end
+    if candidates == 0 then bringMode = "SOLO" end
     _G.BobonDiagnostics.Bring = bringMode
     _G.BobonDiagnostics.BringCandidates = candidates
     _G.BobonDiagnostics.BringMoved = moved
@@ -1944,6 +2642,11 @@ local TravelManager = {}
 TravelManager.ActiveThread = nil
 TravelManager.CurrentToken = 0
 TravelManager.TargetRef = nil
+TravelManager.CurrentOptions = nil
+TravelManager.AtCombatAnchor = false
+TravelManager.AtCombatTarget = nil
+TravelManager.DodgeOffset = Vector3.zero
+TravelManager.DodgeUntil = 0
 TravelManager.NoclipConn = nil
 TravelManager.PhysicsBV = nil
 TravelManager.PhysicsBG = nil
@@ -1957,20 +2660,7 @@ function TravelManager:MaybeRequestEntrance(targetPos)
     local now = tick()
     if now - self.LastEntranceRequest < 5 then return end
     local entrance
-    if targetPos.Y < -1000 and targetPos.X > 8000 and targetPos.Z > 8000 then
-        -- Update 27 Submerged Island: use the live Net remote when present.
-        -- If the island is not unlocked, the call safely fails and normal
-        -- validation prevents a blind teleport to an invalid fallback.
-        local net = ResolveNet()
-        local speak = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
-        local ok = false
-        if speak then
-            ok = pcall(function() speak:InvokeServer("TravelToSubmergedIsland") end)
-        end
-        self.LastEntranceRequest = now
-        if not ok then DLog("TRAVEL", "Submerged entrance unavailable") end
-        return
-    elseif targetPos.X > 50000 then
+    if targetPos.X > 50000 then
         entrance = Vector3.new(61163.85, 11.68, 1819.78) -- Upper Sky/Fishman
     elseif targetPos.Z > 30000 then
         entrance = Vector3.new(923.21, 126.98, 32852.83) -- Cursed Ship
@@ -1997,18 +2687,8 @@ function TravelManager:CleanupPhysics(char)
     if self.PhysicsBG and self.PhysicsBG.Parent then self.PhysicsBG:Destroy() end
     self.PhysicsBV = nil
     self.PhysicsBG = nil
-    if char then
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
-            for _,v in ipairs(root:GetChildren()) do
-                if v:IsA("BodyVelocity") or v:IsA("BodyGyro")
-                    or v:IsA("AlignPosition") or v:IsA("AlignOrientation")
-                    or v:IsA("LinearVelocity") or v:IsA("AngularVelocity") then
-                    v:Destroy()
-                end
-            end
-        end
-    end
+    -- Never delete arbitrary movers created by the game, a weapon or another
+    -- controller. Bobon owns only the two references above.
 end
 
 
@@ -2053,11 +2733,40 @@ function TravelManager:Stop(reason)
     self.CurrentToken = self.CurrentToken + 1
     self.ActiveThread = nil
     self.TargetRef = nil
+    self.CurrentOptions = nil
+    self.AtCombatAnchor = false
+    self.AtCombatTarget = nil
+    self.DodgeOffset = Vector3.zero
+    self.DodgeUntil = 0
     _G.State.IsTraveling = false
     -- [A-3] Release movement owner qua MovementManager API
     MovementManager:Release()
     self:CleanupPhysics(Char())
     self:DisableNoclip()
+end
+
+function TravelManager:IsAtCombatAnchor(target)
+    return self.AtCombatAnchor and (not target or self.AtCombatTarget == target)
+end
+
+function TravelManager:ApplyDodgeOffset(offset, duration)
+    if typeof(offset) ~= "Vector3" or not self.AtCombatAnchor
+        or not self.CurrentOptions or not self.CurrentOptions.combatHover then
+        return false
+    end
+    self.DodgeOffset = offset
+    self.DodgeUntil = tick() + (duration or 0.25)
+    return true
+end
+
+local function SameTravelOptions(a, b)
+    if not a or not b then return false end
+    return a.arrivalThreshold == b.arrivalThreshold
+        and a.speed == b.speed
+        and a.fallback == b.fallback
+        and a.combatHover == b.combatHover
+        and a.persistent == b.persistent
+        and a.hoverHeight == b.hoverHeight
 end
 
 
@@ -2078,24 +2787,46 @@ function TravelManager:Request(targetCF, owner, options)
         return false, "InvalidTarget"
     end
 
+    local targetModel = nil
+    local targetHumanoid = nil
+    local targetPosition = nil
     if targetType == "Instance" then
         if not targetCF.Parent then return false, "InvalidTarget" end
-        local model = targetCF:IsA("Model") and targetCF
+        targetModel = targetCF:IsA("Model") and targetCF
             or targetCF:FindFirstAncestorOfClass("Model")
-        local hum = model and model:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health <= 0 then return false, "InvalidTarget" end
+        targetHumanoid = targetModel and targetModel:FindFirstChildOfClass("Humanoid")
+        if targetHumanoid and targetHumanoid.Health <= 0 then return false, "InvalidTarget" end
         local okPos, pos = pcall(function()
             if targetCF:IsA("BasePart") then return targetCF.Position end
             if targetCF:IsA("Model") then return targetCF:GetPivot().Position end
             return nil
         end)
         if not okPos or (pos and not IsValidPos(pos)) then return false, "InvalidTarget" end
-        if pos and not IsAllowedWorldY(pos.Y) then return false, "InvalidTarget" end
+        if pos and not IsAllowedWorldPosition(pos) then return false, "InvalidTarget" end
+        targetPosition = pos
     elseif targetType == "CFrame" or targetType == "Vector3" then
         -- [FIX-P11] Reject NaN/invalid position ngay tại Request()
         local pos = typeof(targetCF) == "CFrame" and targetCF.Position or targetCF
         if not IsValidPos(pos) then return false, "InvalidTarget" end
+        targetPosition = pos
     end
+
+    local enemyFolder = workspace:FindFirstChild("Enemies")
+    local inferredCombat = targetModel and targetHumanoid
+        and enemyFolder and targetModel.Parent == enemyFolder
+    local normalizedOptions = {
+        combatHover = options.combatHover == true
+            or (options.combatHover ~= false and inferredCombat == true),
+        hoverHeight = options.hoverHeight,
+        fallback = options.fallback,
+        speed = options.speed or _G.Settings.FlySpeed,
+        persistent = options.persistent == true
+            or (options.persistent ~= false and owner == "Farm"
+                and targetType ~= "Instance"),
+    }
+    normalizedOptions.arrivalThreshold = options.arrivalThreshold
+        or (normalizedOptions.combatHover and _G.Settings.FarmArrivalThreshold)
+        or _G.Settings.CloseThreshold
 
 
     -- A different owner must never invalidate the active travel token.
@@ -2103,26 +2834,35 @@ function TravelManager:Request(targetCF, owner, options)
         return false, "MovementBusy"
     end
 
-    -- Same owner already traveling: update ref only, NO restart
+    -- Same owner may reuse a thread only when the complete goal is unchanged.
+    -- Retargeting q.MC -> enemy must also replace threshold/fallback/cruise;
+    -- keeping the old 35-stud goal was the permanent APPROACHING bug.
+    local needsRetarget = false
     if _G.State.IsTraveling and _G.State.MovementOwner == owner and self.ActiveThread then
-        self.TargetRef = targetCF
-        return true, self.CurrentToken
+        if self.TargetRef == targetCF
+            and SameTravelOptions(self.CurrentOptions, normalizedOptions) then
+            return true, self.CurrentToken
+        end
+        needsRetarget = true
     end
 
 
     -- [FIX-P1] Detect long-distance travel → cruise mode + timeout động
     local startPos = HRP() and HRP().Position
     local startDist = nil
+    local startSubmerged = startPos and IsSubmergedPosition(startPos) or false
+    local targetSubmerged = targetPosition and IsSubmergedPosition(targetPosition) or false
+    -- Submerged entry/exit is handled by its verified access controller.
+    -- Reject a cross-boundary body flight before any ordinary entrance remote
+    -- can yield or alter the currently safe travel goal.
+    if targetSubmerged and not startSubmerged then
+        return false, "AwaitingSubmergedEntrance"
+    elseif startSubmerged and not targetSubmerged then
+        return false, "SubmergedExitRequired"
+    end
+
     if startPos and IsValidPos(startPos) then
-        local tpos
-        if targetType == "CFrame" then
-            tpos = targetCF.Position
-        elseif targetType == "Vector3" then
-            tpos = targetCF
-        elseif targetType == "Instance" and targetCF:IsA("BasePart") then
-            local ok, p = pcall(function() return targetCF.Position end)
-            tpos = ok and p or nil
-        end
+        local tpos = targetPosition
         if tpos and IsValidPos(tpos) then
             startDist = (startPos - tpos).Magnitude
             if owner == "Farm" and startDist > 10000 then
@@ -2135,6 +2875,10 @@ function TravelManager:Request(targetCF, owner, options)
             end
         end
     end
+
+    -- Validation above may yield while an entrance remote responds. Keep the
+    -- old safe travel alive until the replacement goal is fully accepted.
+    if needsRetarget then self:Stop("AtomicRetarget") end
 
 
     -- Acquire before invalidating any token. This prevents a failed request
@@ -2156,6 +2900,9 @@ function TravelManager:Request(targetCF, owner, options)
     _G.State.LastMoveTime = os.time()
     _G.State.LastPosition = HRP() and HRP().Position or nil
     self.TargetRef = targetCF
+    self.CurrentOptions = normalizedOptions
+    self.AtCombatAnchor = false
+    self.AtCombatTarget = nil
     DLog("TRAVEL", "Request by " .. owner .. ", dist="
         .. (startDist and string.format("%.0f", startDist) or "?"))
 
@@ -2194,15 +2941,21 @@ function TravelManager:Request(targetCF, owner, options)
         local stuckTimer = 0
         local targetLostTimer = 0
         local travelStart = os.time()
-        local arrivalThresh = options.arrivalThreshold or _G.Settings.CloseThreshold
-        local flySpeed = options.speed or _G.Settings.FlySpeed
-        local isFarmHover = (owner == "Farm")
-        local fallback = options.fallback
+        local travelOptions = self.CurrentOptions or normalizedOptions
+        local arrivalThresh = travelOptions.arrivalThreshold
+        local flySpeed = travelOptions.speed
+        local isCombatHover = travelOptions.combatHover == true
+        local isPersistent = travelOptions.persistent == true
+        local fallback = travelOptions.fallback
 
         -- [FIX-P1] Long-distance/cruise mode + timeout động theo khoảng cách
-        local longTravel = startDist ~= nil and startDist > _G.Settings.CruiseThreshold
+        local longTravel = startDist ~= nil
+            and startDist > _G.Settings.CruiseThreshold
+            and not (startSubmerged and targetSubmerged)
         local cruiseLogged = false
         local travelTimeout = _G.Settings.TravelTimeout
+        local lastStepTime = tick()
+        local safeRetreat = false
         if longTravel and startDist then
             travelTimeout = math.max(_G.Settings.TravelTimeout,
                 startDist / flySpeed + _G.Settings.TravelTimeoutMargin)
@@ -2216,6 +2969,11 @@ function TravelManager:Request(targetCF, owner, options)
             if fallback then
                 self.TargetRef = fallback
                 fallback = nil
+                isCombatHover = false
+                isPersistent = true
+                arrivalThresh = _G.Settings.CloseThreshold
+                self.AtCombatAnchor = false
+                self.AtCombatTarget = nil
                 travelStart = os.time()
                 stuckTimer = 0
                 _G.BobonStatus = "Farm: " .. reason .. ", returning to farm area"
@@ -2229,11 +2987,19 @@ function TravelManager:Request(targetCF, owner, options)
             and char and char.Parent
             and IsAlive() do
 
+            local stepNow = tick()
+            local stepDt = math.clamp(stepNow - lastStepTime, 0, 0.1)
+            lastStepTime = stepNow
+            if _G.State.ActiveActionToken ~= 0
+                and _G.State.ActionOwner == owner then
+                _G.State:TouchAction(_G.State.ActiveActionToken)
+            end
+
 
             -- Travel timeout (động theo khoảng cách khi long travel) [FIX-P1]
             if os.time() - travelStart > travelTimeout then
                 -- Farm timeout → về khu farm (fallback), không recover giữa biển [FIX-13]
-                if isFarmHover and HandleFarmInvalid("Timeout") then
+                if isCombatHover and HandleFarmInvalid("Timeout") then
                     continue
                 end
                 warn("[Travel] Timeout by " .. owner)
@@ -2245,11 +3011,12 @@ function TravelManager:Request(targetCF, owner, options)
 
             -- Resolve target position + validate mỗi tick [FIX-4]
             local targetPos
+            local combatLookPos = nil
             local targetType = typeof(self.TargetRef)
             if targetType == "Instance" then
                 if not self.TargetRef.Parent then
                     -- Mob biến mất: farm → về khu farm (fallback), không drop giữa không trung [FIX-13]
-                    if isFarmHover then
+                    if isCombatHover then
                         if HandleFarmInvalid("Target lost") then
                             continue
                         end
@@ -2262,10 +3029,12 @@ function TravelManager:Request(targetCF, owner, options)
                     end
                     continue
                 end
-                local hum = self.TargetRef.Parent:FindFirstChild("Humanoid")
+                local liveModel = self.TargetRef:IsA("Model") and self.TargetRef
+                    or self.TargetRef:FindFirstAncestorOfClass("Model")
+                local hum = liveModel and liveModel:FindFirstChildOfClass("Humanoid")
                 if hum and hum.Health <= 0 then
                     -- Mob chết: farm → về khu farm (fallback) để tiếp tục [FIX-13]
-                    if isFarmHover then
+                    if isCombatHover then
                         if HandleFarmInvalid("Target defeated") then
                             continue
                         end
@@ -2281,7 +3050,7 @@ function TravelManager:Request(targetCF, owner, options)
                 end)
                 -- [FIX-P11] Reject NaN/invalid position
                 if not okP or not IsValidPos(p) then
-                    if isFarmHover then
+                    if isCombatHover then
                         if HandleFarmInvalid("Invalid target") then
                             continue
                         end
@@ -2290,10 +3059,43 @@ function TravelManager:Request(targetCF, owner, options)
                     break
                 end
                 targetLostTimer = 0
-                if isFarmHover then
+                if isCombatHover then
                     -- Always anchor on the selected mob first.  Other quest
                     -- mobs are gathered only after the player arrives above it.
-                    targetPos = FarmPositionController:GetFarmPos(self.TargetRef.Parent)
+                    local model = self.TargetRef:IsA("Model") and self.TargetRef
+                        or self.TargetRef:FindFirstAncestorOfClass("Model")
+                    local hoverHeight = travelOptions.hoverHeight
+                    if not hoverHeight then
+                        if CombatController:IsFastReady()
+                            or not CombatController:WantsClientRange() then
+                            hoverHeight = owner == "Farm"
+                                and (_G.Settings.FarmHeight or 15)
+                                or (_G.Settings.BossFarmHeight or 24)
+                        else
+                            hoverHeight = _G.Settings.ClientHoverHeight or 5
+                        end
+                    end
+                    local playerHum = char:FindFirstChildOfClass("Humanoid")
+                    if playerHum and playerHum.MaxHealth > 0 then
+                        local ratio = playerHum.Health / playerHum.MaxHealth
+                        if ratio <= 0.35 then
+                            safeRetreat = true
+                        elseif ratio >= 0.75 then
+                            safeRetreat = false
+                        end
+                    end
+                    if safeRetreat then
+                        hoverHeight = math.max(hoverHeight,
+                            _G.Settings.BossFarmHeight or 24)
+                        _G.BobonStatus = "Combat: Low HP safe hover"
+                    end
+                    combatLookPos = p
+                    targetPos = FarmPositionController:GetFarmPos(model, hoverHeight)
+                    if tick() < self.DodgeUntil then
+                        targetPos = targetPos and (targetPos + self.DodgeOffset) or nil
+                    else
+                        self.DodgeOffset = Vector3.zero
+                    end
                     if not targetPos then
                         targetPos = GetFarmPosition(p)
                     end
@@ -2307,9 +3109,9 @@ function TravelManager:Request(targetCF, owner, options)
                     targetPos = p
                 end
                 -- Reject target dưới biển
-                if not IsAllowedWorldY(targetPos.Y) then
+                if not IsAllowedWorldPosition(targetPos) then
                     warn("[Travel] Reject target dưới biển (Y=" .. string.format("%.1f", targetPos.Y) .. ")")
-                    if isFarmHover then
+                    if isCombatHover then
                         if HandleFarmInvalid("Target below sea level") then
                             continue
                         end
@@ -2330,7 +3132,8 @@ function TravelManager:Request(targetCF, owner, options)
 
 
             -- Anti-fall clamp target Y (chỉ cho target cố định CFrame/Vector3)
-            if targetPos.Y < _G.Settings.MinY and not IsUnderwaterY(targetPos.Y) then
+            if targetPos.Y < _G.Settings.MinY and not IsSubmergedPosition(targetPos) then
+                if targetPos.Y <= -100 then break end
                 targetPos = Vector3.new(targetPos.X, _G.Settings.MinY, targetPos.Z)
             end
 
@@ -2364,11 +3167,16 @@ function TravelManager:Request(targetCF, owner, options)
 
             -- [FIX-P1] Anti-fall trong travel: VỪA nâng lên VỪA bay ngang về
             -- target (không kẹt vòng lặp "chỉ đi lên")
-            if currentPos.Y < _G.Settings.MinY and not IsUnderwaterY(targetPos.Y) then
+            if currentPos.Y < _G.Settings.MinY
+                and not IsSubmergedPosition(currentPos) then
                 local liftOffset = targetPos - currentPos
                 local liftDir = liftOffset.Magnitude > 0.1 and liftOffset.Unit or Vector3.new(0, 0, 0)
                 bv.Velocity = Vector3.new(liftDir.X * flySpeed, 60, liftDir.Z * flySpeed)
-                bg.CFrame = CFrame.lookAt(currentPos, targetPos)
+                local liftFace = combatLookPos or targetPos
+                local liftFlat = Vector3.new(liftFace.X, currentPos.Y, liftFace.Z)
+                if (liftFlat - currentPos).Magnitude > 0.05 then
+                    bg.CFrame = CFrame.lookAt(currentPos, liftFlat)
+                end
                 task.wait(0.03)
                 continue
             end
@@ -2377,8 +3185,33 @@ function TravelManager:Request(targetCF, owner, options)
             -- Arrival detection
             if dist <= arrivalThresh then
                 bv.Velocity = Vector3.zero
-                bg.CFrame = CFrame.lookAt(currentPos, targetPos) * CFrame.Angles(0, math.pi, 0)
-                if not isFarmHover then break end
+                if not isCombatHover then
+                    self.AtCombatAnchor = false
+                    self.AtCombatTarget = nil
+                    if not isPersistent then break end
+                    root.CFrame = CFrame.new(targetPos) * root.CFrame.Rotation
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    travelStart = os.time()
+                    stuckTimer = 0
+                    _G.State.LastMoveTime = os.time()
+                    task.wait(0.03)
+                    continue
+                end
+                local look = combatLookPos or targetPos
+                local flatLook = Vector3.new(look.X, targetPos.Y, look.Z)
+                local anchorCF
+                if (flatLook - targetPos).Magnitude > 0.05 then
+                    anchorCF = CFrame.lookAt(targetPos, flatLook)
+                else
+                    anchorCF = CFrame.new(targetPos) * root.CFrame.Rotation
+                end
+                root.CFrame = anchorCF
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                bg.CFrame = anchorCF
+                self.AtCombatAnchor = true
+                self.AtCombatTarget = self.TargetRef
                 -- [FIX-11] Hover hợp lệ = activity, reset travel timeout
                 travelStart = os.time()
                 stuckTimer = 0
@@ -2389,21 +3222,27 @@ function TravelManager:Request(targetCF, owner, options)
 
 
             -- Movement with deceleration
+            self.AtCombatAnchor = false
+            self.AtCombatTarget = nil
             local direction = (targetPos - currentPos).Unit
             local speed = flySpeed
             if dist < 60 then speed = speed * math.max(dist / 60, 0.15) end
 
 
             bv.Velocity = direction * speed
-            bg.CFrame = CFrame.lookAt(currentPos, targetPos)
+            local face = combatLookPos or targetPos
+            local flatFace = Vector3.new(face.X, currentPos.Y, face.Z)
+            if (flatFace - currentPos).Magnitude > 0.05 then
+                bg.CFrame = CFrame.lookAt(currentPos, flatFace)
+            end
 
 
             -- Stuck detection (riêng cho từng mode) [FIX-P1]
             local moveDelta = (currentPos - lastPos).Magnitude
             if moveDelta < 1 then
-                stuckTimer = stuckTimer + task.wait(0.5)
+                stuckTimer = stuckTimer + stepDt
                 local stuckLimit = _G.Settings.StuckTimeout
-                if isFarmHover then
+                if isCombatHover then
                     stuckLimit = _G.Settings.HoverStuckTimeout
                 elseif longTravel then
                     stuckLimit = _G.Settings.CruiseStuckTimeout
@@ -2443,6 +3282,11 @@ function TravelManager:Request(targetCF, owner, options)
             _G.State.MovementOwner = nil
             self.ActiveThread = nil
             self.TargetRef = nil
+            self.CurrentOptions = nil
+            self.AtCombatAnchor = false
+            self.AtCombatTarget = nil
+            self.DodgeOffset = Vector3.zero
+            self.DodgeUntil = 0
         end
     end)
 
@@ -2481,6 +3325,7 @@ end
 LP.CharacterRemoving:Connect(function()
     if not SessionAlive() then return end
     HakiController:Reset()
+    CombatController:Cleanup()
     FarmPositionController:ReleaseCluster()
     TravelManager:Stop("CharacterRemoving")
     _G.State:SetMode("Dead")
@@ -2578,7 +3423,8 @@ task.spawn(function()
             if _G.State.IsTraveling then return end
             local root = HRP()
             if not root then return end
-            if root.Position.Y < _G.Settings.MinY then
+            if root.Position.Y < _G.Settings.MinY
+                and not IsSubmergedPosition(root.Position) then
                 root.AssemblyLinearVelocity = Vector3.new(
                     root.AssemblyLinearVelocity.X, 45, root.AssemblyLinearVelocity.Z)
             end
@@ -2682,12 +3528,9 @@ function DodgeController:TryDodge()
     -- giữ rotation; hover của TravelManager sẽ kéo về điểm farm sau đó.
     local dir = (dangerRoot.Position - me.Position).Unit
     local side = Vector3.new(-dir.Z, 0, dir.X)
-    local newPos = me.Position + side * (_G.Settings.DodgeDistance or 12)
+    local dodgeOffset = side * (_G.Settings.DodgeDistance or 12)
         + Vector3.new(0, _G.Settings.DodgeHeight or 4, 0)
-    pcall(function()
-        me.CFrame = CFrame.new(newPos) * me.CFrame.Rotation
-        me.AssemblyLinearVelocity = Vector3.zero
-    end)
+    if not TravelManager:ApplyDodgeOffset(dodgeOffset, 0.25) then return false end
     self.LastDodge = now
     DLog("DODGE", "Né chiêu " .. tostring(danger.Name))
     _G.BobonStatus = "Farm: Né chiêu"
@@ -2819,11 +3662,10 @@ task.spawn(function()
                     end
                 end
             end
-            -- LIGHT 2: melee mất → re-equip (EquipmentController có cooldown,
-            -- không spam)
-            local eq = EquipmentController:EquipMelee()
-            if eq and EquipmentController:GetLastResult() == "equipped" then
-                DLog("RECOVERY", "Light fix: re-equip melee")
+            -- LIGHT 2: verify one shared melee/sword/gun controller. Never
+            -- steal an equipped sword by running a separate melee watchdog.
+            if EquipCombatTool() then
+                DLog("RECOVERY", "Light fix: combat tool verified")
             end
             -- LIGHT 3: target chết/mất → main loop tự clear + chọn mới
             -- (không cần làm gì thêm ở đây, tránh duplicate logic)
@@ -2920,7 +3762,8 @@ local QDB = {
     {Min=2400,Max=2424,Q="CandyQuest1",M="Candy Pirate",QL=1,QC=CFrame.new(-1150.04,20.38,-14446.33),MC=CFrame.new(-1310.50,26.02,-14562.40)},
     {Min=2425,Max=2449,Q="CandyQuest1",M="Snow Demon",QL=2,QC=CFrame.new(-1150.04,20.38,-14446.33),MC=CFrame.new(-880.20,71.25,-14538.61)},
     {Min=2450,Max=2474,Q="TikiQuest1",M="Isle Outlaw",QL=1,QC=CFrame.new(-16547.75,61.14,-173.41),MC=CFrame.new(-16442.81,116.14,-264.46)},
-    {Min=2475,Max=2524,Q="TikiQuest1",M="Island Boy",QL=2,QC=CFrame.new(-16547.75,61.14,-173.41),MC=CFrame.new(-16901.26,84.07,-192.89)},
+    {Min=2475,Max=2499,Q="TikiQuest1",M="Island Boy",QL=2,QC=CFrame.new(-16547.75,61.14,-173.41),MC=CFrame.new(-16901.26,84.07,-192.89)},
+    {Min=2500,Max=2524,Q="TikiQuest2",M="Sun-kissed Warrior",QL=1,QC=CFrame.new(-16539.078,55.686,1051.574),MC=CFrame.new(-16321.292,92.102,1111.195)},
     {Min=2525,Max=2549,Q="TikiQuest2",M="Isle Champion",QL=2,QC=CFrame.new(-16539.08,55.69,1051.57),MC=CFrame.new(-16641.68,235.78,1031.28)},
     {Min=2550,Max=2574,Q="TikiQuest3",M="Serpent Hunter",QL=1,QC=CFrame.new(-16665.19,104.60,1579.69),MC=CFrame.new(-16521.06,106.09,1488.78)},
     {Min=2575,Max=2599,Q="TikiQuest3",M="Skull Slayer",QL=2,QC=CFrame.new(-16665.19,104.60,1579.69),MC=CFrame.new(-16855.04,122.46,1478.15)},
@@ -2933,9 +3776,94 @@ local QDB = {
     {Min=2725,Max=2800,Q="SubmergedQuest3",M="Grand Devotee",QL=2,QC=CFrame.new(9640.088,-1992.445,9613.652),MC=CFrame.new(9611.705,-1993.471,9882.688)},
 }
 
+local SubmergedAccessController = {
+    Confirmed = false,
+    PendingUntil = 0,
+    NextTry = 0,
+    Failures = 0,
+    LastResult = "idle",
+}
+
+function SubmergedAccessController:IsInside()
+    local root = HRP()
+    local inside = GetSea() == 3 and root
+        and IsSubmergedPosition(root.Position) or false
+    if inside then
+        self.Confirmed = true
+        self.PendingUntil = 0
+        self.NextTry = 0
+        self.Failures = 0
+        self.LastResult = "inside"
+    end
+    return inside == true
+end
+
+function SubmergedAccessController:Fail(reason, now)
+    self.PendingUntil = 0
+    self.Failures = self.Failures + 1
+    self.NextTry = now
+        + math.min(15 * (2 ^ math.min(self.Failures - 1, 3)), 120)
+    self.LastResult = reason
+    _G.BobonStatus = "Sea: Submerged unavailable - farming Tiki"
+    return "fallback"
+end
+
+function SubmergedAccessController:Tick(canAttempt)
+    if GetSea() ~= 3 or Level() < 2600 then return "not-needed" end
+    if self:IsInside() then return "inside" end
+    local now = tick()
+    if self.PendingUntil > 0 then
+        if now < self.PendingUntil then return "pending" end
+        return self:Fail("not-entered", now)
+    end
+    if not canAttempt or now < self.NextTry then return "fallback" end
+    local net = ResolveNet()
+    local speak = net and net:FindFirstChild("RF/SubmarineWorkerSpeak")
+    if not speak or not speak:IsA("RemoteFunction") then
+        return self:Fail("remote-missing", now)
+    end
+    local ok, result = pcall(function()
+        return speak:InvokeServer("TravelToSubmergedIsland")
+    end)
+    if not ok then
+        return self:Fail("invoke-error", now)
+    end
+    if self:IsInside() then return "inside" end
+    self.PendingUntil = now + 4
+    self.LastResult = "pending:" .. tostring(result)
+    return "pending"
+end
+
+local TikiFallbackQuest = nil
+for _, entry in ipairs(QDB) do
+    if entry.M == "Skull Slayer" then
+        TikiFallbackQuest = entry
+        break
+    end
+end
 
 local function GetQ()
     local lv = Level()
+    local sea = GetSea()
+    -- At a sea boundary the normal level table already points into the next
+    -- world. Prove combat on the highest valid local quest before starting a
+    -- mandatory boss/progression action; this avoids using a boss as a lethal
+    -- first-click probe.
+    if not CombatController:IsDamageReady() then
+        local bootstrapMob = sea == 1 and lv >= 700 and "Galley Captain"
+            or (sea == 2 and lv >= 1500 and "Water Fighter")
+        if bootstrapMob then
+            for _, entry in ipairs(QDB) do
+                if entry.M == bootstrapMob then return entry end
+            end
+        end
+    end
+    -- Access is gated by Tyrant/Tiki progression. Until the entrance really
+    -- moves the character underwater, keep farming a valid Tiki quest instead
+    -- of flying blindly toward negative-Y coordinates.
+    if GetSea() == 3 and lv >= 2600 and not SubmergedAccessController:IsInside() then
+        return TikiFallbackQuest
+    end
     for _, q in ipairs(QDB) do
         if lv >= q.Min and lv <= q.Max then return q end
     end
@@ -2987,6 +3915,7 @@ function SkipRouteController:Reset(reason)
         if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
             TravelManager:Stop("SkipRouteReset")
         end
+        FarmPositionController:ReleaseCluster()
         _G.State:ClearTargets()
         self.CurrentKey = nil
     end
@@ -3008,6 +3937,12 @@ function SkipRouteController:FindTarget(route)
 end
 
 function SkipRouteController:Run()
+    -- High-level skip targets are lethal with ordinary M1. Normal quest farm
+    -- is the runtime self-test; skip unlocks only after confirmed fast damage.
+    if not CombatController:IsFastReady() then
+        self:Reset("fast attack not health-verified")
+        return false
+    end
     local route = self:GetRoute()
     if not route then
         self:Reset("Sea or level outside skip route")
@@ -3062,6 +3997,7 @@ function SkipRouteController:Run()
             TravelManager:Request(targetRoot, "Farm", {
                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
                 fallback = route.Fallback,
+                combatHover = true,
             })
         end
 
@@ -3070,8 +4006,9 @@ function SkipRouteController:Run()
             local a = Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
             local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
             local farmHolds = not _G.State.IsTraveling or _G.State.MovementOwner == "Farm"
-            if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds then
-                -- Equip first, then Attack drives the real client M1 shared by
+            if (a - b).Magnitude <= _G.Settings.AttackRange and farmHolds
+                and TravelManager:IsAtCombatAnchor(targetRoot) then
+                -- Equip first; the shared health-verified adapter handles
                 -- every melee style and sword.
                 EquipCombatTool()
                 Attack(target, targetName)
@@ -3081,7 +4018,8 @@ function SkipRouteController:Run()
                 local skipHrp = HRP()
                 if skipFarmPos and skipHrp
                     and (skipHrp.Position - skipFarmPos).Magnitude
-                        <= math.max(_G.Settings.FarmArrivalThreshold or 15, 35) then
+                        <= (_G.Settings.HoverConfirmRadius or 5)
+                    and TravelManager:IsAtCombatAnchor(targetRoot) then
                     FarmPositionController:GatherMobCluster(targetName, target)
                 end
                 DLog("SKIP", "Attacking " .. tostring(targetName or target.Name))
@@ -3157,13 +4095,27 @@ function ItemProgression:GetMissingCatalog()
     return missing
 end
 
+local function PrepareClaimedAction(owner)
+    -- ClaimAction protects logical work; movement ownership is independent.
+    -- Hand it over explicitly so a persistent Farm hover cannot make every
+    -- Saber/Sea/Bartilo request fail with MovementBusy.
+    if _G.State.IsTraveling then
+        TravelManager:Stop(tostring(owner) .. "Priority")
+    end
+    FarmPositionController:ReleaseCluster()
+    _G.State:ClearTargets()
+    CombatController:WatchTarget(nil, nil)
+end
+
 
 function ItemProgression:CheckSaber()
     if not _G.Settings.AutoItems then return false end
     if HasItem("Saber") or Level() < 200 or GetSea() ~= 1 then return false end
+    if not CombatController:IsDamageReady() then return false end
     if not self:OptionalReady("Saber") then return false end
     local myToken = _G.State:ClaimAction("Saber")
     if myToken == 0 then return false end
+    PrepareClaimedAction("Saber")
     self:DelayOptional("Saber")
     _G.State:SetMode("GettingItem")
     _G.BobonStatus = "Item: Saber Sword"
@@ -3250,8 +4202,13 @@ function ItemProgression:CheckSaber()
                     if not bh or bh.Health <= 0 or not br then break end
                     PrepareCombatTarget(boss)
                     EquipCombatTool()
-                    TravelManager:Request(br, "Saber", {arrivalThreshold=15})
-                    Attack(boss, "Mob Leader")
+                    TravelManager:Request(br, "Saber", {
+                        arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                        combatHover = true,
+                    })
+                    if TravelManager:IsAtCombatAnchor(br) then
+                        Attack(boss, "Mob Leader")
+                    end
                     task.wait(0.12)
                 end
                 pcall(function() CommF_:InvokeServer("ProQuestProgress", "RichSon") end)
@@ -3286,8 +4243,11 @@ function ItemProgression:CheckSaber()
                     EquipCombatTool()
                     TravelManager:Request(boss.HumanoidRootPart, "Saber", {
                         arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                        combatHover = true,
                     })
-                    Attack(boss, "Saber Expert")
+                    if TravelManager:IsAtCombatAnchor(boss.HumanoidRootPart) then
+                        Attack(boss, "Saber Expert")
+                    end
                 else
                     break
                 end
@@ -3295,6 +4255,9 @@ function ItemProgression:CheckSaber()
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: Saber: " .. tostring(err)) end
+        if _G.State.IsTraveling and _G.State.MovementOwner == "Saber" then
+            TravelManager:Stop("SaberComplete")
+        end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "GettingItem" then
             _G.State:SetMode("Idle")
@@ -3307,6 +4270,7 @@ end
 function ItemProgression:CheckPoleV1()
     if not _G.Settings.AutoItems then return false end
     if HasItem("Pole (1st Form)") or Level() < 575 or GetSea() ~= 1 then return false end
+    if not CombatController:IsDamageReady() then return false end
     if not self:OptionalReady("PoleV1") then return false end
     local boss = FindBoss("Thunder God")
     if not boss then
@@ -3315,6 +4279,7 @@ function ItemProgression:CheckPoleV1()
     end
     local myToken = _G.State:ClaimAction("PoleV1")
     if myToken == 0 then return false end
+    PrepareClaimedAction("PoleV1")
     self:DelayOptional("PoleV1")
     _G.State:SetMode("GettingItem")
     _G.BobonStatus = "Item: Pole v1"
@@ -3334,12 +4299,18 @@ function ItemProgression:CheckPoleV1()
                 EquipCombatTool()
                 TravelManager:Request(root, "PoleV1", {
                     arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                    combatHover = true,
                 })
-                Attack(boss, "Thunder God")
+                if TravelManager:IsAtCombatAnchor(root) then
+                    Attack(boss, "Thunder God")
+                end
                 task.wait(0.12)
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: PoleV1: " .. tostring(err)) end
+        if _G.State.IsTraveling and _G.State.MovementOwner == "PoleV1" then
+            TravelManager:Stop("PoleV1Complete")
+        end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "GettingItem" then
             _G.State:SetMode("Idle")
@@ -3351,9 +4322,11 @@ end
 
 function ItemProgression:CheckSecondSea()
     if GetSea() >= 2 or Level() < 700 then return false end
+    if not CombatController:IsDamageReady() then return false end
     if not self:OptionalReady("Sea2") then return false end
     local myToken = _G.State:ClaimAction("Sea2")
     if myToken == 0 then return false end
+    PrepareClaimedAction("Sea2")
     self.NextOptional.Sea2 = tick() + 10
     _G.State:SetMode("UnlockingSea")
     _G.BobonStatus = "Sea: Unlock 2nd Sea"
@@ -3392,8 +4365,11 @@ function ItemProgression:CheckSecondSea()
                 EquipCombatTool()
                 TravelManager:Request(br, "Sea2", {
                     arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                    combatHover = true,
                 })
-                Attack(boss, "Ice Admiral")
+                if TravelManager:IsAtCombatAnchor(br) then
+                    Attack(boss, "Ice Admiral")
+                end
                 task.wait(0.12)
             end
 
@@ -3407,6 +4383,9 @@ function ItemProgression:CheckSecondSea()
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: Sea2: " .. tostring(err)) end
+        if _G.State.IsTraveling and _G.State.MovementOwner == "Sea2" then
+            TravelManager:Stop("Sea2Complete")
+        end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "UnlockingSea" then
             _G.State:SetMode("Idle")
@@ -3418,6 +4397,7 @@ end
 
 function ItemProgression:CheckBartilo()
     if GetSea() ~= 2 or Level() < 800 then return false end
+    if not CombatController:IsDamageReady() then return false end
     if not self:OptionalReady("Bartilo") then return false end
     local progress
     local okProgress = pcall(function()
@@ -3427,6 +4407,7 @@ function ItemProgression:CheckBartilo()
 
     local myToken = _G.State:ClaimAction("Bartilo")
     if myToken == 0 then return false end
+    PrepareClaimedAction("Bartilo")
     self.NextOptional.Bartilo = tick() + 10
     _G.State:SetMode("GettingItem")
     _G.BobonStatus = "Progression: Bartilo " .. tostring(progress)
@@ -3452,8 +4433,11 @@ function ItemProgression:CheckBartilo()
                         EquipCombatTool()
                         TravelManager:Request(mob.HumanoidRootPart, "Bartilo", {
                             arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                            combatHover=true,
                         })
-                        Attack(mob, "Swan Pirate")
+                        if TravelManager:IsAtCombatAnchor(mob.HumanoidRootPart) then
+                            Attack(mob, "Swan Pirate")
+                        end
                     else
                         TravelManager:Request(CFrame.new(932.62,156.11,1180.27), "Bartilo")
                         task.wait(1)
@@ -3475,8 +4459,11 @@ function ItemProgression:CheckBartilo()
                     EquipCombatTool()
                     TravelManager:Request(br, "Bartilo", {
                         arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                        combatHover=true,
                     })
-                    Attack(boss, "Jeremy")
+                    if TravelManager:IsAtCombatAnchor(br) then
+                        Attack(boss, "Jeremy")
+                    end
                     task.wait(0.12)
                 end
             elseif progress == 2 then
@@ -3506,9 +4493,11 @@ end
 
 function ItemProgression:CheckThirdSea()
     if GetSea() ~= 2 or Level() < 1500 then return false end
+    if not CombatController:IsDamageReady() then return false end
     if not self:OptionalReady("Sea3") then return false end
     local myToken = _G.State:ClaimAction("Sea3")
     if myToken == 0 then return false end
+    PrepareClaimedAction("Sea3")
     self.NextOptional.Sea3 = tick() + 10
     _G.State:SetMode("UnlockingSea")
     _G.BobonStatus = "Sea: Unlock 3rd Sea"
@@ -3534,8 +4523,11 @@ function ItemProgression:CheckThirdSea()
                         EquipCombatTool()
                         TravelManager:Request(br, "Sea3", {
                             arrivalThreshold=_G.Settings.FarmArrivalThreshold,
+                            combatHover=true,
                         })
-                        Attack(donSwan, "Don Swan")
+                        if TravelManager:IsAtCombatAnchor(br) then
+                            Attack(donSwan, "Don Swan")
+                        end
                         task.wait(0.12)
                     end
                     pcall(function()
@@ -3567,8 +4559,11 @@ function ItemProgression:CheckThirdSea()
                     EquipCombatTool()
                     TravelManager:Request(br, "Sea3", {
                         arrivalThreshold = _G.Settings.FarmArrivalThreshold,
+                        combatHover = true,
                     })
-                    Attack(boss, "rip_indra")
+                    if TravelManager:IsAtCombatAnchor(br) then
+                        Attack(boss, "rip_indra")
+                    end
                     task.wait(0.12)
                 end
             end
@@ -3583,6 +4578,9 @@ function ItemProgression:CheckThirdSea()
             end
         end, debug.traceback)
         if not ok then warn("[BobonHub] Module Error: Sea3: " .. tostring(err)) end
+        if _G.State.IsTraveling and _G.State.MovementOwner == "Sea3" then
+            TravelManager:Stop("Sea3Complete")
+        end
         _G.State:ReleaseAction(myToken)
         if _G.State.Mode == "UnlockingSea" then
             _G.State:SetMode("Idle")
@@ -3674,11 +4672,13 @@ function BossManager:FindLiveBoss()
         if hum and hum.Health > 0 and mobRoot then
             for _, entry in ipairs(BossDatabase) do
                 local wantedItem = BossDropItems[entry.N]
-                if wantedItem and not HasItem(wantedItem)
+                local progressionBoss = entry.N == "Tyrant of the Skies"
+                    and level >= 2600 and not SubmergedAccessController.Confirmed
+                if ((wantedItem and not HasItem(wantedItem)) or progressionBoss)
                     and entry.Sea == sea and level >= entry.MinLevel
                     and IsEnemyNamed(mob, entry.N) then
                     local p = mobRoot.Position
-                    if IsValidPos(p) and IsAllowedWorldY(p.Y) then
+                    if IsValidPos(p) and IsAllowedWorldPosition(p) then
                         local d = (p - root.Position).Magnitude
                         if d < bestDist then
                             best, bestDist, bestEntry = mob, d, entry
@@ -3715,19 +4715,24 @@ function BossManager:_RunBoss(boss, entry, token)
                 self.LastKill = tick()
                 break
             end
-            if not IsValidPos(targetRoot.Position) or not IsAllowedWorldY(targetRoot.Position.Y) then
+            local okTargetPos, liveTargetPos = pcall(function()
+                return targetRoot.Position
+            end)
+            if not okTargetPos or not IsAllowedWorldPosition(liveTargetPos) then
                 break
             end
             PrepareCombatTarget(targetRoot)
             TravelManager:Request(targetRoot, "Boss", {
                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
                 fallback = nil,
+                combatHover = true,
             })
             local me = HRP()
             if me then
                 local a = Vector3.new(me.Position.X, 0, me.Position.Z)
                 local b = Vector3.new(targetRoot.Position.X, 0, targetRoot.Position.Z)
-                if (a - b).Magnitude <= _G.Settings.AttackRange then
+                if (a - b).Magnitude <= _G.Settings.AttackRange
+                    and TravelManager:IsAtCombatAnchor(targetRoot) then
                     EquipCombatTool()
                     Attack(boss)
                 end
@@ -3741,13 +4746,12 @@ end
 
 function BossManager:TryFightBoss()
     if not _G.Settings.BossEnabled or self.Active or not _G.State:CanAct() then return false end
+    if not CombatController:IsDamageReady() then return false end
     local boss, entry = self:FindLiveBoss()
     if not boss or not entry then return false end
     local token = _G.State:ClaimAction("Boss")
     if token == 0 then return false end
-    if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
-        TravelManager:Stop("BossPriority")
-    end
+    PrepareClaimedAction("Boss")
     self.Active = true
     task.spawn(function() self:_RunBoss(boss, entry, token) end)
     return true
@@ -3803,6 +4807,32 @@ task.spawn(function()
             -- optional progression.  A valid quest always wins, so item and
             -- boss routines cannot pull the player away mid-farm.
             local lv = Level()
+            local questState = HasQuest() -- true / false / nil (UI not ready)
+            if GetSea() == 3 and lv >= 2600
+                and not SubmergedAccessController:IsInside() then
+                local canAttemptEntrance = SubmergedAccessController.Confirmed
+                    or questState == false
+                local willInvokeEntrance = canAttemptEntrance
+                    and SubmergedAccessController.PendingUntil <= 0
+                    and tick() >= SubmergedAccessController.NextTry
+                if willInvokeEntrance then
+                    if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
+                        TravelManager:Stop("SubmergedEntranceStart")
+                    end
+                    FarmPositionController:ReleaseCluster()
+                    _G.State:ClearTargets()
+                end
+                local accessState = SubmergedAccessController:Tick(canAttemptEntrance)
+                if accessState == "pending" then
+                    if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
+                        TravelManager:Stop("SubmergedEntrancePending")
+                    end
+                    FarmPositionController:ReleaseCluster()
+                    _G.State:ClearTargets()
+                    _G.BobonStatus = "Sea: Verifying Submerged entrance"
+                    return
+                end
+            end
             local q = GetQ()
 
 
@@ -3822,7 +4852,6 @@ task.spawn(function()
 
 
             -- ═══ QUEST HANDLING (FIX-P2/P3) ═══
-            local questState = HasQuest() -- true / false / nil (UI not ready)
             local questMatch = QuestMatches(q.M)
             -- [G-6] Farm khi wrapper quest đang mở VÀ match KHÔNG bị xác
             -- nhận là SAI (nil = UI đổi cấu trúc sau update, đọc không ra
@@ -3885,9 +4914,8 @@ task.spawn(function()
 
                 FarmPositionController:ReleaseCluster()
                 _G.State:ClearTargets()
-                if _G.State.IsTraveling then
-                    TravelManager:Stop("QuestRefresh")
-                end
+                -- Request(q.QC) below atomically replans a stale Farm goal.
+                -- Do not destroy/recreate BodyMovers every 0.15 seconds.
                 _G.State:SetMode("GettingQuest")
                 _G.BobonStatus = "Quest: Refreshing " .. q.M
                 DLog("QUEST", "Quest missing/complete/wrong → refresh " .. q.M)
@@ -3982,7 +5010,7 @@ task.spawn(function()
 
                     -- [FIX-6] Target quá xa hoặc dưới biển → clear, về khu farm
                     if dist > _G.Settings.MaxFarmDistance + 50
-                        or not IsAllowedWorldY(targetPos.Y) then
+                        or not IsAllowedWorldPosition(targetPos) then
                         _G.State:ClearTargets()
                         _G.State.FState = "NEXT_TARGET"
                         _G.BobonStatus = "Farm: Invalid target, returning to farm area"
@@ -3998,13 +5026,15 @@ task.spawn(function()
                     if _G.State.IsTraveling and _G.State.MovementOwner == "Farm" then
                         TravelManager:Request(targetHRP, "Farm", {
                             arrivalThreshold = _G.Settings.FarmArrivalThreshold,
-                            fallback = q.MC
+                            fallback = q.MC,
+                            combatHover = true,
                         })
                     else
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(targetHRP, "Farm", {
                                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
-                                fallback = q.MC
+                                fallback = q.MC,
+                                combatHover = true,
                             })
                         end
                     end
@@ -4017,11 +5047,11 @@ task.spawn(function()
                             - Vector3.new(targetPos.X, 0, targetPos.Z)).Magnitude
                         local farmHolds = not _G.State.IsTraveling
                             or _G.State.MovementOwner == "Farm"
-                        if flatDist <= _G.Settings.AttackRange and farmHolds then
+                        if flatDist <= _G.Settings.AttackRange and farmHolds
+                            and TravelManager:IsAtCombatAnchor(targetHRP) then
                             _G.State.FState = "ATTACK"
-                            -- Equip is asynchronous; if it completes on the
-                            -- next controller tick, Attack will immediately
-                            -- drive that melee/sword through real client M1.
+                            -- Equip is asynchronous; the next tick runs the
+                            -- same verified adapter for melee or sword.
                             EquipCombatTool()
                             Attack(_G.State.FarmTarget, q.M)
                             if os.time() - lastAttackLog >= 5 then
@@ -4037,20 +5067,29 @@ task.spawn(function()
                     -- `hasQuest` is the strict UI-verified quest state above;
                     -- q.M is therefore the mob of the quest currently held,
                     -- never a stale/next-level mob name.
-                    local anchorFarmPos = FarmPositionController:GetFarmPos(_G.State.FarmTarget)
+                    local anchorHeight = (CombatController:IsFastReady()
+                        or not CombatController:WantsClientRange())
+                        and (_G.Settings.FarmHeight or 15)
+                        or (_G.Settings.ClientHoverHeight or 5)
+                    local anchorFarmPos = FarmPositionController:GetFarmPos(
+                        _G.State.FarmTarget, anchorHeight)
                     local atAnchor = false
                     if anchorFarmPos and hrp then
-                        -- [G-9] nới 35 studs cho khớp anchorRadius của gather
                         atAnchor = (hrp.Position - anchorFarmPos).Magnitude
-                            <= math.max(_G.Settings.FarmArrivalThreshold or 15, 35)
+                            <= (_G.Settings.HoverConfirmRadius or 5)
+                            and TravelManager:IsAtCombatAnchor(targetHRP)
                     end
                     -- [G-6] Gom mob không còn phụ thuộc strict quest-match
-                    if _G.Settings.GatherMobs and atAnchor then
+                    if _G.Settings.GatherMobs and atAnchor
+                        and CombatController:IsFastReady() then
                         FarmPositionController:GatherMobCluster(q.M, _G.State.FarmTarget)
+                    elseif not _G.Settings.GatherMobs
+                        or not CombatController:IsFastReady() then
+                        FarmPositionController:ReleaseCluster()
                     end
                     local farmPos = FarmPositionController:GetClusterFarmPos(_G.State.FarmTarget)
                     if farmPos and FarmPositionController:HasNearbyMobs(q.M, farmPos)
-                        and (not _G.State.IsTraveling or _G.State.MovementOwner == "Farm") then
+                        and TravelManager:IsAtCombatAnchor(targetHRP) then
                         EquipCombatTool()
                         Attack(_G.State.FarmTarget, q.M)
                     end
@@ -4082,7 +5121,8 @@ task.spawn(function()
                         if _G.State:CanRequestTravel() then
                             TravelManager:Request(mob.HumanoidRootPart, "Farm", {
                                 arrivalThreshold = _G.Settings.FarmArrivalThreshold,
-                                fallback = q.MC
+                                fallback = q.MC,
+                                combatHover = true,
                             })
                         end
                     end
@@ -4212,6 +5252,7 @@ _G.BobonUnload = function()
     if not SessionAlive() then return end
     _G.BobonSessionID = SessionID + 1
     pcall(function() TravelManager:Stop("Reexecute") end)
+    pcall(function() CombatController:Cleanup() end)
     pcall(function() FarmPositionController:ReleaseCluster() end)
     pcall(function() if SG and SG.Parent then SG:Destroy() end end)
 end
@@ -4220,7 +5261,7 @@ end
 print("[BobonHub v16.6 LIVE] Full Script Loaded Successfully!")
 print("[BobonHub v16.6 LIVE] Architecture: Persistent Travel | ActionToken | Single Owner")
 print("[BobonHub v16.6 LIVE] Core: TravelManager(v7+P1) | StateManager(v7) | RecoveryManager(v7+P10)")
-print("[BobonHub v16.6 LIVE] Modules: QuestFarm | Current FastAttack | Safe Bring | Responsive Glass HUD")
+print("[BobonHub v16.6 LIVE] Modules: QuestFarm | Health-Verified Combat | Ownership Bring | Responsive Glass HUD")
 print("[BobonHub v16.6 LIVE] Progression: Saber | Pole | Sea2 | Bartilo | Sea3")
 print("[BobonHub v16.6 LIVE] Data: Sea1/2/3 QDB 1-2800 | Submerged | Boss/item catalog")
 print("[BobonHub v16.6 LIVE] Sea: " .. _G.State.Sea .. " | Level: " .. Level())
