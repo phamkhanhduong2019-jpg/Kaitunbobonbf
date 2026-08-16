@@ -3583,9 +3583,8 @@ task.spawn(function()
                             EquipCombatTool()
                             Attack(_G.State.FarmTarget, q.M)
                             if os.time() - lastAttackLog >= 5 then
-                                    lastAttackLog = os.time()
-                                    DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
-                                end
+                                lastAttackLog = os.time()
+                                DLog("ATTACK", "Target: " .. _G.State.FarmTarget.Name)
                             end
                         end
                     end
